@@ -1,0 +1,42 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+yarn.lock
+
+# Electron
+out/
+dist/
+release/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# User data (contains session/cookies)
+userData/
+
+# Temp
+*.tmp
+temp/
+
+# Project specific
+.cuckooCode/
+.claude/
+
+# Coverage reports
+coverage.lcov
+test/coverage.lcov
+/wyp/

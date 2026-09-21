@@ -1,0 +1,60 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      max-parallel: 1
+      matrix:
+        include:
+          - os: windows-latest
+            command: build:win
+          - os: macos-latest
+            command: build:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Sync version from tag
+        run: node scripts/sync-version.js
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and Publish (正式版)
+        if: ${{ !contains(github.ref_name, '-beta') }}
+        run: npm run ${{ matrix.command }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build only (beta)
+        if: ${{ contains(github.ref_name, '-beta') }}
+        run: npm run ${{ matrix.command }}:local
+
+      - name: Upload beta artifacts
+        if: ${{ contains(github.ref_name, '-beta') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/*.zip
+            dist/*.dmg
+          retention-days: 30

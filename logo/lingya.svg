@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-label="LingYa">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8b93ff"/>
+      <stop offset="1" stop-color="#6d76ff"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="128" fill="url(#lg)"/>
+  <g fill="#ffffff">
+    <!-- 冠羽 -->
+    <polygon points="87,77 77,36 102,72"/>
+    <polygon points="108,72 108,31 128,69"/>
+    <!-- 后脑 + 头 -->
+    <ellipse cx="100" cy="110" rx="44" ry="44"/>
+    <ellipse cx="123" cy="141" rx="62" ry="64"/>
+    <!-- 上喙 / 下喙 -->
+    <polygon points="161,118 246,141 164,154"/>
+    <polygon points="164,161 225,154 169,179"/>
+  </g>
+  <!-- 眼睛 -->
+  <circle cx="125" cy="123" r="15" fill="#6d76ff"/>
+</svg>

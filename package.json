@@ -1,0 +1,157 @@
+{
+  "name": "lingya",
+  "version": "0.5.1",
+  "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
+  "main": "main.js",
+  "scripts": {
+    "start": "node start.js",
+    "test": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-reporter=lcov test/tools/*.test.js test/main/*.test.js test/preload/*.test.js > coverage.lcov",
+    "test:ci": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
+    "build": "electron-builder --publish always",
+    "build:win": "electron-builder --win --publish always",
+    "build:win:nsis": "electron-builder --win --config.win.target=nsis --publish always",
+    "build:win:portable": "electron-builder --win --config.win.target=portable --publish always",
+    "build:mac": "electron-builder --mac --publish always",
+    "build:mac:dmg": "electron-builder --mac --config.mac.target=dmg --publish always",
+    "build:local": "electron-builder --publish never",
+    "build:win:local": "electron-builder --win --publish never",
+    "build:win:nsis:local": "electron-builder --win --config.win.target=nsis --publish never",
+    "build:win:portable:local": "electron-builder --win --config.win.target=portable --publish never",
+    "build:mac:local": "electron-builder --mac --publish never",
+    "build:mac:dmg:local": "electron-builder --mac --config.mac.target=dmg --publish never"
+  },
+  "keywords": [
+    "deepseek",
+    "electron",
+    "ai",
+    "cli",
+    "command-execution",
+    "developer-tools",
+    "lingya"
+  ],
+  "author": {
+    "name": "cymylive (LingYa 二次开发)"
+  },
+  "contributors": [
+    {
+      "name": "Cuckoo Code Contributors (上游原作者)",
+      "url": "https://github.com/wangyongpeng90/cuckoo-code"
+    }
+  ],
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cymylive/lingya.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cymylive/lingya/issues"
+  },
+  "homepage": "https://github.com/cymylive/lingya#readme",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "build": {
+    "appId": "com.lingya.lingya",
+    "productName": "LingYa",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "cymylive",
+        "repo": "lingya"
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable",
+        "zip"
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "lingya-win-v${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "artifactName": "lingya-mac-v${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "lingya-win-v${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "lingya-win-v${version}-portable.${ext}"
+    },
+    "asarUnpack": [
+      "**/node_modules/@vscode/ripgrep/**",
+      "**/node_modules/@vscode/ripgrep-win32-x64/**"
+    ],
+    "extraResources": [
+      {
+        "from": "tools/lingya-tools.d.ts",
+        "to": "tools/lingya-tools.d.ts"
+      },
+      {
+        "from": "assets/tray-icon.png",
+        "to": "assets/tray-icon.png"
+      },
+      {
+        "from": "assets/icon.png",
+        "to": "assets/icon.png"
+      }
+    ],
+    "files": [
+      "**/*",
+      "!node_modules/.bin",
+      "!dist",
+      "!build",
+      "!**/*.md",
+      "!LICENSE",
+      "systemPrompt.md",
+      "tools/rules.md",
+      "src/prompt/*.md"
+    ]
+  },
+  "dependencies": {
+    "@joplin/turndown-plugin-gfm": "^1.0.67",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
+    "mysql2": "^3.24.2",
+    "turndown": "^7.2.4"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

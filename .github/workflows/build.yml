@@ -1,0 +1,56 @@
+name: Build Electron Apps
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  release:
+    types: [ created ]
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 18
+      - run: npm install
+      - run: npm run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Windows-build
+          path: dist/
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          files: dist/*.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 18
+      - run: npm install
+      - run: npm run build:mac
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: macOS-build
+          path: dist/
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          files: |
+            dist/*.dmg
+            dist/*.zip
