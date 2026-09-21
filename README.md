@@ -1,30 +1,43 @@
-# LingYa
+# LingYa（灵鸦）
 
 > **本项目是 [wangyongpeng90/cuckoo-code](https://github.com/wangyongpeng90/cuckoo-code) 的二次开发版（fork / secondary development），遵循 GPL-3.0-only 许可。**
 > 上游原作者与项目归属：Cuckoo Code Contributors — https://github.com/wangyongpeng90/cuckoo-code
-> 本分支（cymylive/lingya-mod）的改动与发行由 cymylive 维护。
->
-> **本分支新增功能**：任务停止（面板「⏹ 停止」按钮 / 悬浮球右键，立即中断 AI 生成 + 工具执行 + 自动循环；发送任意消息即恢复）。详见 `MOD-INSTALL.md`。
+> 本分支（[cymylive/lingya](https://github.com/cymylive/lingya)）的改动与发行由 cymylive 维护。
 
 <p align="center">
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/releases/latest"><img src="https://img.shields.io/github/v/release/wangyongpeng90/cuckoo-code?style=flat-square&color=8b93ff" alt="Latest Release"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/wangyongpeng90/cuckoo-code/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/wangyongpeng90/cuckoo-code/release.yml?style=flat-square&label=Release" alt="Release Status"></a>
-  <a href="https://codecov.io/gh/wangyongpeng90/cuckoo-code"><img src="https://codecov.io/gh/wangyongpeng90/cuckoo-code/branch/master/graph/badge.svg" alt="codecov"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/github/stars/wangyongpeng90/cuckoo-code?style=flat-square&color=yellow" alt="Stars"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/releases"><img src="https://img.shields.io/github/downloads/wangyongpeng90/cuckoo-code/total?style=flat-square&color=green" alt="Downloads"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-8b93ff?style=flat-square" alt="Platform"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/badge/Electron-33-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron"></a>
+  <a href="https://github.com/cymylive/lingya/releases/latest"><img src="https://img.shields.io/github/v/release/cymylive/lingya?style=flat-square&color=2dd4bf" alt="Latest Release"></a>
+  <a href="https://github.com/cymylive/lingya/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/cymylive/lingya/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/github/stars/cymylive/lingya?style=flat-square&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/cymylive/lingya/releases"><img src="https://img.shields.io/github/downloads/cymylive/lingya/total?style=flat-square&color=green" alt="Downloads"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2dd4bf?style=flat-square" alt="Platform"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/badge/Electron-33-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron"></a>
 </p>
 
 [English](README.en.md) | 中文
 
-[下载最新版本](https://github.com/wangyongpeng90/cuckoo-code/releases/latest)
+[下载最新版本](https://github.com/cymylive/lingya/releases/latest)
 
-**LingYa** 是一个零 Token 成本的 AI Agent 桌面端。
+**LingYa（灵鸦）** 是一个零 Token 成本的 AI Agent 桌面端。
 
-它通过 Electron 将 AI 网页版（DeepSeek、Claude 等）嵌入本地窗口，并注入侧边覆盖层。AI 被系统提示词引导生成工具调用（JavaScript 代码块），经用户确认后在本地沙箱中执行，再把结果回传给 AI。整个过程不需要 API Key，不产生 API 调用费用——你用的是网页版账号，而不是按 Token 计费的接口。
+它通过 Electron 将 AI 网页版（DeepSeek、ChatGPT、Claude 等）嵌入本地窗口，并注入覆盖层（悬浮球 + 面板）。AI 被系统提示词引导生成工具调用（`lingya` 代码块），在本地沙箱中执行，再把结果回传给 AI。整个过程不需要 API Key，不产生 API 调用费用——你用的是网页版账号，而不是按 Token 计费的接口。
+
+---
+
+## 本分支特性（相对上游 cuckoo-code）
+
+LingYa 在上游基础上做了品牌重塑与功能扩展：
+
+| 特性 | 说明 |
+|------|------|
+| **品牌重塑** | Cuckoo Code → **LingYa（灵鸦）**，包名 `lingya`，独立数据目录 |
+| **墨鸦主题 UI** | 青碧主色 `#2dd4bf` + 墨黑底 + 方形「灵」球，与上游靛蓝紫截然不同 |
+| **分页签布局** | 主页 / 会话 / 日志三页签 + 2×3 快捷操作网格，取代单列长滚动 |
+| **安全增强 MOD** | 移植 Codex Session Patcher：CTF 提示词注入 + 拒绝拦截 + AI 改写 |
+| **任务停止** | 面板「停止」按钮 + 悬浮球右键，三层全断（AI 生成 / 工具执行 / 自动循环） |
+| **鸦头图标** | 全新设计的品牌图标（icon / tray / logo） |
+
+安全增强 MOD 详见 [SECURITY-MOD.md](SECURITY-MOD.md)，改名记录见 [RENAME-LINGYA.md](RENAME-LINGYA.md)。
 
 ---
 
@@ -36,7 +49,7 @@
 
 ### 多平台 Provider 框架
 
-- 内置 **DeepSeek** 和 **Claude** 两个平台
+- 内置 **DeepSeek**、**ChatGPT**、**Claude** 三个平台
 - 每个平台独立封装输入框定位、发送按钮检测、回复完成判断、消息解析等差异
 - 新建窗口时可选择平台，也可**导入自定义 Provider**（提供类型声明和模板，降低扩展门槛）
 
@@ -54,8 +67,9 @@
 - **命令拦截**：自动检测 cmd / powershell / bash 代码块，确认后执行
 - **MCP 支持**：采用 Claude Desktop 兼容格式配置，支持 stdio / http 类型 server
 - **覆盖层面板**：显示命令预览、执行结果和历史记录，支持 Ctrl+Shift+C 或 Esc 切换
-- **自动重试**：JS 代码执行失败且疑似代码不完整时，自动等待 1 秒重新获取并重试（最多 3 次），仍失败才回传 AI
-- **会话持久化**：登录状态和设置保存到 %APPDATA%/lingya-ai-pro-session
+- **长期记忆与技能**：跨会话记忆注入 + 技能库（支持本地文件夹导入 SKILL.md）
+- **自动重试**：JS 代码执行失败且疑似代码不完整时，自动等待 1 秒重新获取并重试（最多 3 次）
+- **会话持久化**：登录状态和设置保存到 `%APPDATA%/lingya-ai-pro-session`
 - **安全机制**：30 秒命令超时、60 秒沙箱超时、1MB 输出缓冲区、危险命令确认
 
 ---
@@ -71,7 +85,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/wangyongpeng90/cuckoo-code.git
+git clone https://github.com/cymylive/lingya.git
 cd lingya
 
 # 安装依赖
@@ -87,11 +101,15 @@ npm install
 npm start
 ```
 
+### 直接下载
+
+Windows 便携版：见 [Releases](https://github.com/cymylive/lingya/releases)。
+
 ---
 
 ## 使用指南
 
-1. 启动应用，选择平台（DeepSeek / Claude / 自定义 Provider）
+1. 启动应用，选择平台（DeepSeek / ChatGPT / Claude / 自定义 Provider）
 2. 正常登录对应平台的网页版账号
 3. 点击「初始化项目」选择项目目录，AI 会获得目录树和系统提示词
 4. 与 AI 对话，让它帮你修改文件、运行命令、查询代码等
@@ -128,6 +146,7 @@ await write("src/utils/helper.js", content.replace("formatDate", "formatTime"));
 | `todoWrite(todos)` | 管理结构化任务列表 |
 | `deleteFile(path)` | 删除文件（不可恢复） |
 | `webFetch(url)` | 获取 HTTP(S) URL 内容（HTML 转 Markdown） |
+| `webSearch(query, opts)` | 联网搜索 |
 | `mysql(options)` | 执行 MySQL SQL |
 | `openBrowserWindow(url, options?)` | 打开 Electron 浏览器窗口 |
 | `injectJS(windowId, code)` | 向指定窗口注入 JS |
@@ -137,6 +156,20 @@ await write("src/utils/helper.js", content.replace("formatDate", "formatTime"));
 | `log(...args)` | 输出中间结果到执行日志 |
 
 所有文件操作均相对于当前绑定的项目目录，确保安全。
+
+---
+
+## 安全增强 MOD
+
+移植自 [Codex Session Patcher](https://github.com/cymylive/codex-session-patcher)，默认全部关闭，不影响原有行为。
+
+- **CTF 提示词注入**：可开关。两种生效方式 —— 自动（初始化项目时注入 systemPrompt）/ 手动（面板「立即注入当前对话」，任意会话可用）
+- **拒绝拦截**：检测 AI 回复是否为拒绝（两级检测：强短语全文 + 弱关键词开头 150 字），命中则自动改写重发
+  - 改写模式 1：**用当前对话改写**（免 API，推荐）
+  - 改写模式 2：外部 API 改写（OpenAI 兼容接口）
+- **重试保护**：同一轮连续拒绝最多 3 次（60 秒窗口），避免无限循环
+
+配置存 `lingya-security.json`。详见 [SECURITY-MOD.md](SECURITY-MOD.md)。
 
 ---
 
@@ -174,19 +207,22 @@ MCP 配置采用 **Claude Desktop 兼容格式**（可直接分享/导入）：
 
 ## 项目结构
 
-```
+```text
 lingya/
 ├── main.js                 # Electron 主进程入口（薄壳，转发到 src/main/）
+├── preload.js              # Preload 入口（薄壳，转发到 src/preload/）
 ├── start.js                # 跨平台启动脚本（日志写入 wyp/log/）
-├── preload.js              # Preload 入口
 ├── src/
 │   ├── main/               # 主进程逻辑
 │   │   ├── index.js        # 应用入口、窗口创建、IPC 注册
 │   │   ├── window.js       # 多窗口管理（每窗口 profile 上下文）
 │   │   ├── ipc.js          # IPC 处理器
-│   │   ├── profile-manager.js  # 窗口 Profile 管理
 │   │   ├── project-context.js  # 项目初始化、目录树、systemPrompt 组装
 │   │   ├── session-store.js    # 会话持久化
+│   │   ├── memory-store.js     # 长期记忆存储
+│   │   ├── skill-store.js      # 技能存储
+│   │   ├── security-store.js   # 安全增强配置
+│   │   ├── refusal-rewriter.js # AI 改写服务
 │   │   ├── mcp-config.js       # MCP 配置管理
 │   │   ├── mcp-client.js       # MCP SDK 客户端
 │   │   ├── tool-registry.js    # 工具注册（主进程侧）
@@ -195,17 +231,22 @@ lingya/
 │   ├── preload/            # 渲染进程逻辑
 │   │   ├── index.js        # Preload 入口
 │   │   ├── api.js          # contextBridge API 暴露
-│   │   ├── overlay/        # 覆盖层 UI（模板、事件、样式）
-│   │   └── dom/            # DOM 监测、解析、执行
+│   │   ├── overlay/        # 覆盖层 UI（模板、事件、样式、各管理面板）
+│   │   └── dom/            # DOM 监测、解析、执行、拒绝检测
+│   ├── prompt/             # 系统提示词模板（含 ctf.md）
 │   └── providers/          # 平台 Provider
 │       ├── deepseek.js     # DeepSeek 平台定义
+│       ├── chatgpt.js      # ChatGPT 平台定义
 │       ├── claude.js       # Claude 平台定义
 │       └── custom/         # 自定义 Provider 加载器和模板
 ├── tools/                  # 工具实现
 │   ├── ToolRegistry.js     # 工具注册表
 │   ├── JsRunner.js         # JS 沙箱执行器
+│   ├── lingya-tools.d.ts   # 工具 API 类型声明
 │   └── *.js                # 各工具实现
-├── test/                   # 单元测试
+├── test/                   # 单元测试（246 用例）
+├── assets/                 # 图标
+├── .lingyaCode/            # AI 助手项目说明（LINGYA.md）
 └── dist/                   # 构建产物
 ```
 
@@ -213,8 +254,8 @@ lingya/
 
 ## 构建与发布
 
-- 本仓库已配置 GitHub Actions，推送 `v*` 标签（如 `v0.3.0`）会自动构建 Windows 和 macOS 安装包并发布到 Releases
-- 本地手动构建：`npm run build:win:local` 或 `npm run build:mac:local`
+- 本仓库已配置 GitHub Actions，推送 `v*` 标签会自动构建 Windows 和 macOS 安装包并发布到 Releases
+- 本地手动构建： `npm run build:win:portable:local` 或 `npm run build:mac:local`
 - 构建产物输出到 `dist/` 目录
 
 ---
@@ -222,16 +263,6 @@ lingya/
 ## Roadmap
 
 下一阶段计划见 [Roadmap.md](Roadmap.md)。
-
----
-
-## 交流群
-
-加入 LingYa 用户微信群，与其他用户交流使用经验：
-
-![微信群](assets/wechat-group.jpg)
-
-> 群二维码约 7 天过期，如已失效请在 Issues 中提醒更新。
 
 ---
 
@@ -248,11 +279,15 @@ lingya/
 
 本项目使用 GNU General Public License v3.0 许可证。详见 LICENSE 文件。
 
+本项目是 cuckoo-code 的二次开发版，遵循 GPL-3.0-only。**上游原作者归属信息（LICENSE、contributors、上游链接）依法保留，不得移除。**
+
 ---
 
 ## 致谢
 
-- DeepSeek、Claude 提供强大的 AI 能力
+- 上游项目 [wangyongpeng90/cuckoo-code](https://github.com/wangyongpeng90/cuckoo-code) 及全体 Cuckoo Code Contributors
+- [Codex Session Patcher](https://github.com/cymylive/codex-session-patcher)：安全增强 MOD 的能力来源
+- DeepSeek、ChatGPT、Claude 提供强大的 AI 能力
 - Electron 提供跨平台桌面框架
 - [@27584](https://github.com/27584)：Provider 发送扩展接口、流式稳定性双通道、自定义 Provider 渲染进程加载、MCP 工具识别等框架级改进（PR #9）
 - 所有贡献者和用户

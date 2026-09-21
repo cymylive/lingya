@@ -1,24 +1,43 @@
 # LingYa
 
+> **This project is a fork / secondary development of [wangyongpeng90/cuckoo-code](https://github.com/wangyongpeng90/cuckoo-code), licensed under GPL-3.0-only.**
+> Original author and project attribution: Cuckoo Code Contributors — https://github.com/wangyongpeng90/cuckoo-code
+> This branch ([cymylive/lingya](https://github.com/cymylive/lingya)) is maintained by cymylive.
+
 <p align="center">
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/releases/latest"><img src="https://img.shields.io/github/v/release/wangyongpeng90/cuckoo-code?style=flat-square&color=8b93ff" alt="Latest Release"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/wangyongpeng90/cuckoo-code/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/wangyongpeng90/cuckoo-code/release.yml?style=flat-square&label=Release" alt="Release Status"></a>
-  <a href="https://codecov.io/gh/wangyongpeng90/cuckoo-code"><img src="https://codecov.io/gh/wangyongpeng90/cuckoo-code/branch/master/graph/badge.svg" alt="codecov"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/github/stars/wangyongpeng90/cuckoo-code?style=flat-square&color=yellow" alt="Stars"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code/releases"><img src="https://img.shields.io/github/downloads/wangyongpeng90/cuckoo-code/total?style=flat-square&color=green" alt="Downloads"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-8b93ff?style=flat-square" alt="Platform"></a>
-  <a href="https://github.com/wangyongpeng90/cuckoo-code"><img src="https://img.shields.io/badge/Electron-33-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron"></a>
+  <a href="https://github.com/cymylive/lingya/releases/latest"><img src="https://img.shields.io/github/v/release/cymylive/lingya?style=flat-square&color=2dd4bf" alt="Latest Release"></a>
+  <a href="https://github.com/cymylive/lingya/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/cymylive/lingya/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/github/stars/cymylive/lingya?style=flat-square&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/cymylive/lingya/releases"><img src="https://img.shields.io/github/downloads/cymylive/lingya/total?style=flat-square&color=green" alt="Downloads"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2dd4bf?style=flat-square" alt="Platform"></a>
+  <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/badge/Electron-33-47848f?style=flat-square&logo=electron&logoColor=white" alt="Electron"></a>
 </p>
 
 English | [中文](README.md)
 
-[Download the latest release](https://github.com/wangyongpeng90/cuckoo-code/releases/latest)
+[Download the latest release](https://github.com/cymylive/lingya/releases/latest)
 
 **LingYa** is a zero-token-cost AI Agent desktop application.
 
-It uses Electron to embed the web versions of AI assistants (DeepSeek, Claude, etc.) into a local window and injects a sidebar overlay. The AI is guided by the system prompt to generate tool calls (JavaScript code blocks). After user confirmation, those calls are executed in a local sandbox and the results are sent back to the AI. The whole flow requires no API key and incurs no API usage fees — you use your web account instead of a pay-per-token API.
+It uses Electron to embed the web versions of AI assistants (DeepSeek, ChatGPT, Claude, etc.) into a local window and injects an overlay (floating ball + panel). The AI is guided by the system prompt to generate tool calls (`lingya` code blocks), which are executed in a local sandbox and the results are sent back to the AI. The whole flow requires no API key and incurs no API usage fees — you use your web account instead of a pay-per-token API.
+
+---
+
+## Features in This Branch (vs. upstream cuckoo-code)
+
+LingYa adds rebranding and feature extensions on top of upstream:
+
+| Feature | Description |
+|------|------|
+| **Rebranding** | Cuckoo Code → **LingYa**, package `lingya`, separate user data directory |
+| **Ink-Raven Theme** | Teal primary `#2dd4bf` + ink-black background + square "灵" ball, distinct from upstream's indigo |
+| **Tabbed Layout** | Home / Chat / Log tabs + 2×3 quick-action grid, replacing the single long scroll |
+| **Security MOD** | Ported from Codex Session Patcher: CTF prompt injection + refusal interception + AI rewrite |
+| **Task Stop** | Panel "Stop" button + floating-ball right-click, cutting AI generation / tool execution / auto loop |
+| **Raven Icon** | Newly designed brand icons (icon / tray / logo) |
+
+See [SECURITY-MOD.md](SECURITY-MOD.md) for the security MOD, and [RENAME-LINGYA.md](RENAME-LINGYA.md) for the rename record.
 
 ---
 
@@ -30,9 +49,9 @@ No AI platform API is called, and no API token is used. It directly reuses the c
 
 ### Multi-Platform Provider Framework
 
-- Built-in **DeepSeek** and **Claude** platforms
+- Built-in **DeepSeek**, **ChatGPT**, and **Claude** platforms
 - Each platform independently encapsulates differences such as input box location, send button detection, reply completion detection, and message parsing
-- You can choose a platform when creating a new window, or **import a custom Provider** (type declarations and templates are provided to lower the barrier to extension)
+- You can choose a platform when creating a new window, or **import a custom Provider** (type declarations and templates are provided)
 
 ### A True AI Agent
 
@@ -42,14 +61,15 @@ Not just chat. The AI can read/write files, search code, execute commands, query
 
 ## Main Features
 
-- **Multi-window management**: each window has an independent profile context without interference
-- **Project initialization**: after selecting a project directory, the AI gets the directory tree and system prompt, so operations are based on real project context
+- **Multi-window management**: each window has an independent profile context
+- **Project initialization**: after selecting a project directory, the AI gets the directory tree and system prompt
 - **Tool call system**: the AI can call tools for reading/writing files, searching code, executing commands, querying databases, and more
 - **Command interception**: automatically detects cmd / powershell / bash code blocks and executes them after confirmation
 - **MCP support**: uses Claude Desktop compatible configuration format and supports stdio / http server types
 - **Overlay panel**: shows command previews, execution results, and history; toggle with Ctrl+Shift+C or Esc
-- **Automatic retry**: when JS execution fails and the code appears incomplete, it automatically waits 1 second, refetches, and retries (up to 3 times); only reports back to the AI if it still fails
-- **Session persistence**: login state and settings are saved to %APPDATA%/lingya-ai-pro-session
+- **Long-term memory & skills**: cross-session memory injection + skill library (supports importing SKILL.md from local folders)
+- **Automatic retry**: when JS execution fails and the code appears incomplete, it retries up to 3 times
+- **Session persistence**: login state and settings are saved to `%APPDATA%/lingya-ai-pro-session`
 - **Safety mechanisms**: 30-second command timeout, 60-second sandbox timeout, 1MB output buffer, dangerous command confirmation
 
 ---
@@ -65,7 +85,7 @@ Not just chat. The AI can read/write files, search code, execute commands, query
 
 ```bash
 # Clone the repository
-git clone https://github.com/wangyongpeng90/cuckoo-code.git
+git clone https://github.com/cymylive/lingya.git
 cd lingya
 
 # Install dependencies
@@ -75,17 +95,20 @@ npm install
 #   npm install-scripts ls
 #   npm install-scripts approve electron
 #   npm install
-# Otherwise the electron binary will not be downloaded and startup will fail.
 
 # Start the app
 npm start
 ```
 
+### Direct Download
+
+Windows portable build: see [Releases](https://github.com/cymylive/lingya/releases).
+
 ---
 
 ## Usage Guide
 
-1. Launch the app and choose a platform (DeepSeek / Claude / custom Provider)
+1. Launch the app and choose a platform (DeepSeek / ChatGPT / Claude / custom Provider)
 2. Log in to the corresponding web platform normally
 3. Click "Initialize Project" and select a project directory; the AI will get the directory tree and system prompt
 4. Chat with the AI and ask it to modify files, run commands, inspect code, etc.
@@ -122,6 +145,7 @@ Supported tools (called through `lingya` code blocks):
 | `todoWrite(todos)` | Manage a structured task list |
 | `deleteFile(path)` | Delete a file (irreversible) |
 | `webFetch(url)` | Fetch HTTP(S) URL content (HTML to Markdown) |
+| `webSearch(query, opts)` | Search the web |
 | `mysql(options)` | Execute MySQL SQL |
 | `openBrowserWindow(url, options?)` | Open an Electron browser window |
 | `injectJS(windowId, code)` | Inject JS into a specified window |
@@ -131,6 +155,20 @@ Supported tools (called through `lingya` code blocks):
 | `log(...args)` | Output intermediate results to the execution log |
 
 All file operations are relative to the currently bound project directory for safety.
+
+---
+
+## Security MOD
+
+Ported from [Codex Session Patcher](https://github.com/cymylive/codex-session-patcher). All features are off by default.
+
+- **CTF prompt injection**: toggleable. Two ways to apply — automatic (injects into systemPrompt at project initialization) / manual (panel button to inject into the current conversation, works on any session)
+- **Refusal interception**: detects whether an AI reply is a refusal (two-tier detection: strong phrases full-text + weak keywords at the first 150 chars), and rewrites/resends when matched
+  - Rewrite mode 1: **rewrite via current conversation** (no API needed, recommended)
+  - Rewrite mode 2: external API rewrite (OpenAI-compatible)
+- **Retry guard**: at most 3 consecutive rewrites in a 60-second window
+
+Configuration is stored in `lingya-security.json`. See [SECURITY-MOD.md](SECURITY-MOD.md).
 
 ---
 
@@ -149,7 +187,7 @@ MCP configuration uses the **Claude Desktop compatible format** (can be shared/i
 }
 ```
 
-Both stdio (command + args) and http (url + headers) types are supported. Enable/disable state is stored separately and does not pollute the main configuration. Open the management panel via the "MCP" button in the overlay.
+Both stdio (command + args) and http (url + headers) types are supported. Enable/disable state is stored separately. Open the management panel via the "MCP" button in the overlay.
 
 ---
 
@@ -160,46 +198,27 @@ Want to integrate a new AI platform? Copy `src/providers/custom/provider.templat
 - Basic info such as `id` / `name` / `homeUrl`
 - Selectors for the input box and send button
 - Methods such as `matchesUrl()` and `extractSessionId()`
-- Auto-parsing related methods (completion detection, message location, etc.)
 
-See `src/providers/custom/provider.d.ts` for type declarations. Import the JS file from the platform selection page in the app to use it.
+See `src/providers/custom/provider.d.ts` for type declarations. Import the JS file from the platform selection page in the app.
 
 ---
 
 ## Project Structure
 
-```
+```text
 lingya/
-├── main.js                 # Electron main process entry (thin shell, forwards to src/main/)
+├── main.js                 # Electron main process entry (thin shell -> src/main/)
+├── preload.js              # Preload entry (thin shell -> src/preload/)
 ├── start.js                # Cross-platform startup script (logs to wyp/log/)
-├── preload.js              # Preload entry
 ├── src/
 │   ├── main/               # Main process logic
-│   │   ├── index.js        # App entry, window creation, IPC registration
-│   │   ├── window.js       # Multi-window management (per-window profile context)
-│   │   ├── ipc.js          # IPC handlers
-│   │   ├── profile-manager.js  # Window profile management
-│   │   ├── project-context.js  # Project initialization, directory tree, systemPrompt assembly
-│   │   ├── session-store.js    # Session persistence
-│   │   ├── mcp-config.js       # MCP configuration management
-│   │   ├── mcp-client.js       # MCP SDK client
-│   │   ├── tool-registry.js    # Tool registration (main process side)
-│   │   ├── dangerous-commands.js  # Dangerous command detection
-│   │   └── updater.js          # Auto update
-│   ├── preload/            # Renderer process logic
-│   │   ├── index.js        # Preload entry
-│   │   ├── api.js          # contextBridge API exposure
-│   │   ├── overlay/        # Overlay UI (templates, events, styles)
-│   │   └── dom/            # DOM monitoring, parsing, execution
-│   └── providers/          # Platform providers
-│       ├── deepseek.js     # DeepSeek platform definition
-│       ├── claude.js       # Claude platform definition
-│       └── custom/         # Custom Provider loader and template
-├── tools/                  # Tool implementations
-│   ├── ToolRegistry.js     # Tool registry
-│   ├── JsRunner.js         # JS sandbox executor
-│   └── *.js                # Individual tool implementations
-├── test/                   # Unit tests
+│   ├── preload/            # Renderer process logic (overlay UI + DOM handling)
+│   ├── prompt/             # System prompt templates (incl. ctf.md)
+│   └── providers/          # Platform providers (deepseek / chatgpt / claude / custom)
+├── tools/                  # Tool implementations (JsRunner + individual tools)
+├── test/                   # Unit tests (246 cases)
+├── assets/                 # Icons
+├── .lingyaCode/            # AI assistant project guide (LINGYA.md)
 └── dist/                   # Build output
 ```
 
@@ -207,8 +226,8 @@ lingya/
 
 ## Build and Release
 
-- This repository has GitHub Actions configured. Pushing a `v*` tag (e.g. `v0.3.0`) automatically builds Windows and macOS installers and publishes them to Releases
-- Local manual builds: `npm run build:win:local` or `npm run build:mac:local`
+- GitHub Actions is configured; pushing a `v*` tag builds Windows and macOS installers and publishes to Releases
+- Local manual builds: `npm run build:win:portable:local` or `npm run build:mac:local`
 - Build output goes to the `dist/` directory
 
 ---
@@ -230,13 +249,17 @@ Issues and Pull Requests are welcome.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See the LICENSE file for details.
+This project is licensed under the GNU General Public License v3.0. See the LICENSE file.
+
+This project is a secondary development of cuckoo-code, licensed under GPL-3.0-only. **Upstream attribution (LICENSE, contributors, upstream links) is preserved as required and must not be removed.**
 
 ---
 
 ## Acknowledgements
 
-- DeepSeek and Claude for providing powerful AI capabilities
+- Upstream project [wangyongpeng90/cuckoo-code](https://github.com/wangyongpeng90/cuckoo-code) and all Cuckoo Code Contributors
+- [Codex Session Patcher](https://github.com/cymylive/codex-session-patcher): source of the Security MOD capabilities
+- DeepSeek, ChatGPT, Claude for providing powerful AI capabilities
 - Electron for the cross-platform desktop framework
-- [@27584](https://github.com/27584): framework-level improvements including the Provider send extension interface, dual-channel streaming stability, custom Provider renderer loading, and MCP tool recognition (PR #9)
+- [@27584](https://github.com/27584): framework-level improvements (PR #9)
 - All contributors and users
