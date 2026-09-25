@@ -15,6 +15,7 @@ const path = require('path');
 const { DANGEROUS_CMDS } = require('./BashTool');
 const { decodeOutput, normalizeCommand } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
+const { inspectCommand } = require('./readonly-guard');
 
 // 同步执行超时（vm timeout，覆盖无 await 的死循环）
 const SYNC_TIMEOUT = 30 * 1000;
@@ -192,11 +193,22 @@ function resolveDir(dir, projectDir) {
  * 与 JSON 工具的 bash 不同：非零退出码不视为失败，而是通过 exitCode/error 字段返回，
  * 让 AI 代码可以像普通 shell 一样判断结果。
  */
-function runBash(args, projectDir) {
+function runBash(args, projectDir, readonlyShell) {
   const command = normalizeCommand(String(args.command || '').trim());
   if (!command) return Promise.resolve({ success: false, error: 'invalid command: expected a non-empty string' });
   if (DANGEROUS_CMDS.some((pattern) => pattern.test(command))) {
     return Promise.resolve({ success: false, error: '命令被安全策略拒绝（危险命令）: ' + command });
+  }
+  // Plan 模式只读守卫：拦截 bash 中的写操作
+  if (readonlyShell) {
+    const guard = inspectCommand(command);
+    if (guard.write) {
+      return Promise.resolve({
+        success: false,
+        error: '当前 Agent 模式为只读（Plan），禁止执行写操作：' + guard.reason +
+          '。请改用只读命令探索代码，或在回复中输出实现计划。',
+      });
+    }
   }
   const timeout = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 30000;
   const cwd = resolveDir(args.workdir || args.cwd, projectDir);
@@ -265,9 +277,11 @@ class JsRunner {
    * 执行 AI 生成的 JS 工具代码
    * @param {string} code - AI 生成的 JavaScript 代码（无需函数包裹，支持顶层 await）
    * @param {string|null} projectDir - 当前项目目录（相对路径基准）
+   * @param {object} [options] - 运行选项
+   * @param {string[]} [options.deniedTools] - 当前 agent 禁用的工具名（硬拒绝）
    * @returns {Promise<{success: boolean, output?: string, error?: string}>}
    */
-  async run(code, projectDir) {
+  async run(code, projectDir, options) {
     if (!code || typeof code !== 'string' || !code.trim()) {
       return { success: false, error: '无效的 JS 代码' };
     }
@@ -275,6 +289,9 @@ class JsRunner {
     if (activeProcesses.isAborted()) {
       return { success: false, error: '任务已被用户停止' };
     }
+
+    const deniedTools = new Set((options && options.deniedTools) || []);
+    const readonlyShell = !!(options && options.readonlyShell);
 
     const startTime = Date.now();
     const deadlineMs = RUN_DEADLINE;
@@ -299,14 +316,21 @@ class JsRunner {
 
       let result;
       if (op === '__bash') {
-        result = await runBash(args, projectDir);
+        result = await runBash(args, projectDir, readonlyShell);
+      } else if (deniedTools.has(op)) {
+        // Agent 权限硬拒绝：plan 模式下写/改/删工具在此被拦截
+        result = {
+          success: false,
+          error: '当前 Agent 模式禁止使用工具 "' + op + '"（只读/规划模式）。请勿尝试修改文件；' +
+            '改为在回复中输出实现计划，由用户批准后切换到 Build 模式执行。',
+        };
       } else {
         const tool = this.registry.get(op);
         if (!tool) {
           result = { success: false, error: '未知工具: ' + op };
         } else {
           try {
-            result = await tool.execute(Object.assign({}, args, { projectDir }));
+            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell }));
           } catch (err) {
             result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
           }

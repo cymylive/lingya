@@ -100,6 +100,16 @@ let electronAPI = {
   importSkillFolder: () => {
     return ipcRenderer.invoke('skill-import-folder');
   },
+  // ========== Agent 系统 API（Plan / Build 模式）==========
+  listAgents: () => {
+    return ipcRenderer.invoke('agent-list');
+  },
+  setAgent: (agentId) => {
+    return ipcRenderer.invoke('agent-set', { agentId });
+  },
+  getCurrentAgent: () => {
+    return ipcRenderer.invoke('agent-current');
+  },
   // ========== 安全增强 API（CTF 注入 + 拒绝拦截）==========
   getSecurityConfig: () => {
     return ipcRenderer.invoke('security-get-config').then(r => (r && r.success ? r.config : null));

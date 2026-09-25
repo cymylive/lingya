@@ -3,6 +3,7 @@ const { execFile } = require('child_process');
 const path = require('path');
 const { decodeOutput } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
+const { inspectCommand } = require('./readonly-guard');
 
 // PowerShell 危险命令列表（额外覆盖 PowerShell 特有危险操作）
 const DANGEROUS_PWSH_CMDS = [
@@ -68,7 +69,7 @@ class PwshTool extends Tool {
   }
 
   async execute(params) {
-    const { command, description, workdir, timeoutMs, projectDir } = params;
+    const { command, description, workdir, timeoutMs, projectDir, readonlyShell } = params;
 
     try {
       if (!command || typeof command !== 'string') {
@@ -83,6 +84,17 @@ class PwshTool extends Tool {
       // 危险命令检查
       if (DANGEROUS_PWSH_CMDS.some((p) => p.test(trimmed))) {
         return ToolResult.error('命令被安全策略拒绝（危险命令）: ' + trimmed);
+      }
+
+      // Plan 模式只读守卫：拦截写操作
+      if (readonlyShell) {
+        const guard = inspectCommand(trimmed);
+        if (guard.write) {
+          return ToolResult.error(
+            '当前 Agent 模式为只读（Plan），禁止执行写操作：' + guard.reason +
+            '。请改用只读命令探索代码，或在回复中输出实现计划。'
+          );
+        }
       }
 
       // 确定工作目录

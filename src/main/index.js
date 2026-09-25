@@ -47,6 +47,13 @@ try {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }
 
+// 初始化 Agent 状态存储（Plan / Build 模式，per-profile）
+try {
+  require('./agent-store').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化 Agent 存储失败:', err.message);
+}
+
 // 渲染进程日志输出目录（仅开发环境持久化；打包版不写日志文件）
 const RENDERER_LOG_DIR = app.isPackaged
   ? null
@@ -398,6 +405,9 @@ ipcMainForProfile.handle('delete-profile', async (_event, { profileId }) => {
     ctx.win.destroy();
   }
   const ok = profileManager.deleteProfile(profileId);
+  if (ok) {
+    try { require('./agent-store').clearProfile(profileId); } catch (_) {}
+  }
   return { success: ok, error: ok ? null : '窗口不存在' };
 });
 

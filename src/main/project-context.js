@@ -12,6 +12,8 @@ const mcpClient = require('./mcp-client');
 const memoryStore = require('./memory-store');
 const skillStore = require('./skill-store');
 const securityStore = require('./security-store');
+const agentStore = require('./agent-store');
+const { getAgent } = require('./agents');
 
 // 提示词模板目录
 const PROMPT_DIR = path.join(__dirname, '..', 'prompt');
@@ -185,11 +187,18 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     console.error('[LingYa] 读取 lingya-tools.d.ts 失败：所有候选路径均不可读', toolApiTypePaths);
   }
 
-  // 获取工具库描述（JS API 格式：AI 通过生成 JS 代码调用这些函数）
-  const toolsDescription = toolRegistry.getFormattedJsApiForPrompt();
+  // 当前 Agent 模式（per-profile）：plan 模式禁用写/改/删工具
+  const profileId = ctx ? ctx.profileId : null;
+  const agent = getAgent(agentStore.getAgentId(profileId));
+  const deniedTools = new Set(agent.deniedTools || []);
+  console.log('[LingYa] 当前 Agent:', agent.id, '禁用工具:', [...deniedTools].join(',') || '无');
 
-  // 获取工具使用指导（section 机制，仿 dsh）
-  const promptSections = toolRegistry.getFormattedPromptSections();
+  // 获取工具库描述（JS API 格式：AI 通过生成 JS 代码调用这些函数）
+  // 按当前 agent 过滤掉被禁用的工具，避免 AI 看到却无法调用
+  const toolsDescription = toolRegistry.getFormattedJsApiForPrompt(deniedTools);
+
+  // 获取工具使用指导（section 机制，仿 dsh），同样按 agent 过滤
+  const promptSections = toolRegistry.getFormattedPromptSections(deniedTools);
 
   stepLog('工具描述生成完成');
   // 确保已启用的 MCP server 已连接（8 秒超时，避免阻塞初始化）
@@ -297,6 +306,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{MEMORY_SECTION}}': memorySection,
     '{{SKILL_SECTION}}': skillSection,
     '{{CTF_SECTION}}': ctfSection,
+    '{{AGENT_SECTION}}': agent.section || '',
   };
   let combined = templateContent;
   for (const [key, value] of Object.entries(placeholders)) {

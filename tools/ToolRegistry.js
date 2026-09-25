@@ -36,6 +36,13 @@ class Tool {
   }
 }
 
+/** 归一化排除集合（接受 Set / Array / null） */
+function normalizeExclude(excludeNames) {
+  if (excludeNames instanceof Set) return excludeNames;
+  if (Array.isArray(excludeNames)) return new Set(excludeNames);
+  return new Set();
+}
+
 class ToolRegistry {
   constructor() {
     this.tools = new Map();
@@ -124,10 +131,12 @@ class ToolRegistry {
 
   /**
    * 获取格式化的 JS API 列表，用于 Prompt（AI 生成 JS 代码调用这些函数）
+   * @param {Set<string>|Array<string>|null} excludeNames 要排除的工具名（如 plan 模式禁用的写工具）
    * @returns {string}
    */
-  getFormattedJsApiForPrompt() {
-    const descriptions = this.getDescriptions().filter((t) => t.jsApi);
+  getFormattedJsApiForPrompt(excludeNames) {
+    const excluded = normalizeExclude(excludeNames);
+    const descriptions = this.getDescriptions().filter((t) => t.jsApi && !excluded.has(t.name));
     if (descriptions.length === 0) return '暂无可用工具';
 
     return descriptions.map((t, i) => {
@@ -141,9 +150,11 @@ class ToolRegistry {
    * 仿 dsh 的 systemPrompt section 机制。
    * @returns {Array<{name: string, order: number, text: string}>}
    */
-  getPromptSections() {
+  getPromptSections(excludeNames) {
+    const excluded = normalizeExclude(excludeNames);
     const sections = [];
     for (const tool of this.tools.values()) {
+      if (excluded.has(tool.name)) continue;
       const section = tool.getPromptSection();
       if (section && typeof section.text === 'string' && section.text.trim().length > 0) {
         sections.push({
@@ -161,8 +172,8 @@ class ToolRegistry {
    * 获取格式化后的工具使用指导（所有 section 文本拼接）。
    * @returns {string}
    */
-  getFormattedPromptSections() {
-    const sections = this.getPromptSections();
+  getFormattedPromptSections(excludeNames) {
+    const sections = this.getPromptSections(excludeNames);
     if (sections.length === 0) return '';
     return sections.map(s => s.text).join('\n\n');
   }

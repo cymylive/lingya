@@ -13,6 +13,8 @@ const { isDangerous } = require('./dangerous-commands');
 const memoryStore = require('./memory-store');
 const skillStore = require('./skill-store');
 const securityStore = require('./security-store');
+const agentStore = require('./agent-store');
+const { getAgent, listAgents } = require('./agents');
 const refusalRewriter = require('./refusal-rewriter');
 const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
@@ -113,8 +115,22 @@ function registerIpcHandlers() {
     const ctx = windowState.getContextByWebContents(event.sender);
     const store = ctx ? ctx.sessionStore : null;
     const selectedDir = store ? store.state.selectedProjectDir : null;
+    // Agent 权限：plan 模式下禁用写/改/删工具
+    const profileId = ctx ? ctx.profileId : null;
+    const agent = getAgent(agentStore.getAgentId(profileId));
+    if ((agent.deniedTools || []).includes(toolName)) {
+      return {
+        callId,
+        success: false,
+        error: '当前 Agent 模式禁止使用工具 "' + toolName + '"（只读/规划模式）。请在回复中输出实现计划，由用户批准后切换到 Build 模式执行。',
+      };
+    }
     try {
-      const result = await toolRegistry.execute(toolName, { ...params, projectDir: selectedDir });
+      const result = await toolRegistry.execute(toolName, {
+        ...params,
+        projectDir: selectedDir,
+        readonlyShell: !!agent.readonlyShell,
+      });
       return { callId, success: result.success, data: result.data, error: result.error };
     } catch (err) {
       return { callId, success: false, error: err.message };
@@ -179,8 +195,14 @@ function registerIpcHandlers() {
     const ctx = windowState.getContextByWebContents(event.sender);
     const store = ctx ? ctx.sessionStore : null;
     const selectedDir = store ? store.state.selectedProjectDir : null;
+    // Agent 权限：plan 模式下写/改/删工具在 JsRunner 执行层被硬拒绝
+    const profileId = ctx ? ctx.profileId : null;
+    const agent = getAgent(agentStore.getAgentId(profileId));
     try {
-      const result = await jsRunner.run(code, selectedDir);
+      const result = await jsRunner.run(code, selectedDir, {
+        deniedTools: agent.deniedTools,
+        readonlyShell: !!agent.readonlyShell,
+      });
       return { callId, ...result };
     } catch (err) {
       return { callId, success: false, error: err.message };
@@ -277,6 +299,48 @@ function registerIpcHandlers() {
       }
       const res = skillStore.importFromFolder(result[0]);
       return { success: true, ...res };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ========== Agent 系统（Plan / Build 模式）==========
+  // 列出所有 agent 定义 + 当前 profile 的当前 agent
+  ipcMain.handle('agent-list', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const profileId = ctx ? ctx.profileId : null;
+      return {
+        success: true,
+        agents: listAgents(),
+        current: agentStore.getAgentId(profileId),
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 切换当前 profile 的 agent
+  ipcMain.handle('agent-set', async (event, { agentId } = {}) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const profileId = ctx ? ctx.profileId : null;
+      if (!profileId) return { success: false, error: '无法确定当前窗口 profile' };
+      const applied = agentStore.setAgentId(profileId, agentId);
+      return { success: true, agentId: applied };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 获取当前 agent 的完整定义（含 section 文本，供前端提示用）
+  ipcMain.handle('agent-current', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const profileId = ctx ? ctx.profileId : null;
+      const id = agentStore.getAgentId(profileId);
+      const agent = getAgent(id);
+      return { success: true, agentId: id, name: agent.name, icon: agent.icon };
     } catch (err) {
       return { success: false, error: err.message };
     }

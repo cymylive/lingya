@@ -10,6 +10,7 @@ const { runCompaction, checkPendingInit } = require('../dom/compaction');
 const { bindMemoryPanelEvents, closeMemoryManager } = require('./memory-panel');
 const { bindSkillPanelEvents, closeSkillManager } = require('./skill-panel');
 const { bindSecurityPanelEvents, closeSecurityManager } = require('./security-panel');
+const { bindAgentPanelEvents } = require('./agent-panel');
 
 /**
  * 绑定页签切换：点击页签显示对应面板，并记住上次选择
@@ -763,6 +764,8 @@ function bindEvents() {
   bindSkillPanelEvents();
   // 安全增强面板事件
   bindSecurityPanelEvents();
+  // Agent 模式（Plan / Build）切换
+  bindAgentPanelEvents();
 
   // 新会话自动注入开关：恢复状态 + 保存
   const autoInjectEl = document.getElementById('lingya-auto-inject');
