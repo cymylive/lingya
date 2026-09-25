@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.0] - 2026-09-25
+
+### Added
+- **Agent 系统 + Plan/Build 双模式**（移植自 opencode）
+  - 内置 build / plan 两个 agent，各有独立权限集与系统提示词 section
+  - Home 页新增 Plan/Build 切换按钮，状态按窗口 profile 独立持久化（lingya-agents.json）
+  - 系统提示词注入 {{AGENT_SECTION}}，并按当前 agent 过滤工具清单与使用指导
+    （plan 模式下 write / edit / deleteFile 不再出现）
+- **Plan 模式只读守卫（方案 B）**：拦截 shell 通道的写操作
+  - 检测并拒绝：输出重定向（> / >>）、文件增删改（rm/cp/mv/mkdir/del/copy/move...）、
+    PowerShell 写 cmdlet（Set-Content/Out-File/Remove-Item...）、git 写操作
+    （add/commit/push...）、包安装（npm/pip install）、交互式编辑器等
+  - 放行纯只读命令：ls/cat/dir/type/grep/find/git status/log/diff 等
+  - 忽略 fd 合并（>&2）、null 设备（>nul）与 cmd 转义（^>）
+- 执行层三重防线：工具调用（JsRunner / execute-tool）+ shell（BashTool / PwshTool）
+  均按 agent 权限硬拒绝
+
+### Changed
+- ToolRegistry.getFormattedJsApiForPrompt / getFormattedPromptSections 支持按排除集过滤
+- JsRunner.run 新增 options.deniedTools 与 options.readonlyShell
+- 4 个平台提示词模板（deepseek/default/claude/chatgpt）加入 {{AGENT_SECTION}} 占位符
+
+### Tests
+- 新增 test/tools/agent.test.js（11 用例）：agent 定义、工具过滤、agent-store 持久化、
+  执行层拒绝、只读守卫判定
+
 ## [0.5.1] - 2026-09-15
 
 ### Fixed

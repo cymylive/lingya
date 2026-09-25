@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
