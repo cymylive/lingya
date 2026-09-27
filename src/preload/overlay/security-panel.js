@@ -47,9 +47,13 @@ async function loadConfig() {
     const key = el('lingya-security-ai-key');
     const model = el('lingya-security-ai-model');
     const mock = el('lingya-security-mock');
+    const autoContinueEnabled = el('lingya-security-auto-continue-enabled');
+    const autoContinueText = el('lingya-security-auto-continue-text');
 
     if (ctfEnabled) ctfEnabled.checked = !!cfg.ctfInjectionEnabled;
     if (ctfPrompt) ctfPrompt.value = cfg.ctfPrompt || '';
+    if (autoContinueEnabled) autoContinueEnabled.checked = !!cfg.autoContinueEnabled;
+    if (autoContinueText) autoContinueText.value = cfg.autoContinueText || '';
     if (refusalEnabled) refusalEnabled.checked = !!cfg.refusalEnabled;
     if (aiRewrite) aiRewrite.checked = !!cfg.aiRewriteEnabled;
     const aiRewriteViaChat = el('lingya-security-ai-rewrite-via-chat');
@@ -73,6 +77,8 @@ async function saveConfig() {
   const patch = {
     ctfInjectionEnabled: !!(el('lingya-security-ctf-enabled') && el('lingya-security-ctf-enabled').checked),
     ctfPrompt: el('lingya-security-ctf-prompt') ? el('lingya-security-ctf-prompt').value : '',
+    autoContinueEnabled: !!(el('lingya-security-auto-continue-enabled') && el('lingya-security-auto-continue-enabled').checked),
+    autoContinueText: el('lingya-security-auto-continue-text') ? el('lingya-security-auto-continue-text').value : '',
     refusalEnabled: !!(el('lingya-security-refusal-enabled') && el('lingya-security-refusal-enabled').checked),
     aiRewriteEnabled: !!(el('lingya-security-ai-rewrite') && el('lingya-security-ai-rewrite').checked),
     aiRewriteViaChat: !!(el('lingya-security-ai-rewrite-via-chat') && el('lingya-security-ai-rewrite-via-chat').checked),

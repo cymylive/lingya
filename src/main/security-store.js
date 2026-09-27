@@ -21,6 +21,8 @@ const DEFAULT_MOCK_RESPONSE =
 const DEFAULT_CONFIG = {
   ctfInjectionEnabled: false,
   ctfPrompt: '',
+  autoContinueEnabled: false,
+  autoContinueText: '上一条回复在生成中被中断（未正常结束）。请从中断处继续完成，不要重复已输出的内容；若上次内容已完成，请继续下一步。',
   refusalEnabled: false,
   aiRewriteEnabled: false,
   aiRewriteViaChat: false,
@@ -97,7 +99,7 @@ function updateConfig(patch) {
     if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
     if (key === 'customKeywords') {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）

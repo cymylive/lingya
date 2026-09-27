@@ -34,6 +34,13 @@ let lastRefusalAt = 0;
 const REFUSAL_RETRY_MAX = 3;
 const REFUSAL_WINDOW_MS = 60000;
 
+// 自动续写：检测到生成中断时自动发送"继续"
+// 时间窗口判定连续性：距上次中断超过 AUTO_CONTINUE_WINDOW_MS 视为新一轮，计数清零
+let autoContinueCount = 0;
+let lastAutoContinueAt = 0;
+const AUTO_CONTINUE_MAX = 5;
+const AUTO_CONTINUE_WINDOW_MS = 120000;
+
 
 function looksLikeIncompleteCodeError(error) {
   if (!error || typeof error !== 'string') return false;
@@ -63,6 +70,45 @@ async function executeJsBlocksWithRetry(blocks) {
     if (attempt < MAX_JS_RETRY) await sleep(1000);
   }
   return results;
+}
+
+/**
+ * 处理"生成被中断"的回复：按配置自动发送"继续"，让 AI 接着完成。
+ * 返回 true 表示已处理（调用方应停止后续普通文本流程）。
+ * @param {string} raw 中断时的已生成文本
+ */
+async function handleInterruptedIfNeeded(raw) {
+  let cfg;
+  try {
+    cfg = await window.electronAPI.getSecurityConfig();
+  } catch (_) {
+    return false;
+  }
+  if (!cfg || !cfg.autoContinueEnabled) return false;
+
+  // 用户主动停止：不自动继续
+  if (state.stopped) return false;
+
+  // 空文本说明还没开始输出就断了，自动继续无意义
+  if (!raw || raw.trim().length === 0) return false;
+
+  // 时间窗口：距上次中断超过窗口视为新一轮
+  const now = Date.now();
+  if (now - lastAutoContinueAt > AUTO_CONTINUE_WINDOW_MS) autoContinueCount = 0;
+  lastAutoContinueAt = now;
+
+  if (autoContinueCount >= AUTO_CONTINUE_MAX) {
+    console.log('[LingYa][拦截] 已连续自动续写 ' + autoContinueCount + ' 次，停止（防止无限循环）');
+    return false;
+  }
+  autoContinueCount++;
+
+  const text = (cfg.autoContinueText || '').trim() ||
+    '上一条回复在生成中被中断（未正常结束）。请从中断处继续完成，不要重复已输出的内容；若上次内容已完成，请继续下一步。';
+
+  console.log('[LingYa][拦截] 检测到生成中断（第 ' + autoContinueCount + ' 次），自动发送继续指令');
+  sendMessageToChat(text, '自动续写');
+  return true;
 }
 
 /**
@@ -143,7 +189,7 @@ async function handleRefusalIfNeeded(raw) {
  * @param {string} text 完整回复文本（Markdown 原文）
  * @param {boolean} [force] 为 true 时跳过去重（手动解析重新执行同一条时使用）
  */
-async function processInterceptedResponse(text, force) {
+async function processInterceptedResponse(text, force, interrupted) {
   const raw = (text || '').trim();
   if (!raw) return;
   // 用户已点停止：丢弃本次回复，不执行任何工具、不回传结果
@@ -155,6 +201,16 @@ async function processInterceptedResponse(text, force) {
   lastProcessedText = raw;
 
   console.log('[LingYa][拦截] 收到完整回复，长度=' + raw.length);
+
+  // 生成中断检测：优先于工具/文本处理（中断内容可能不完整，不执行）
+  if (interrupted) {
+    const handled = await handleInterruptedIfNeeded(raw);
+    if (handled) return;
+    console.log('[LingYa][拦截] 生成中断但未自动续写（配置关闭或达到上限），丢弃中断内容');
+    return; // 中断内容不可信，不执行其中的工具调用
+  }
+  // 正常完成：清空续写计数
+  autoContinueCount = 0;
 
   // 0. 是否正在等待"用当前对话改写拒绝"的回复
   if (state.awaitingRefusalRewrite) {
@@ -299,7 +355,7 @@ function startInterceptObserver() {
       for (const cb of responseListeners) {
         try { cb(detail.text || ''); } catch (_) { /* ignore */ }
       }
-      processInterceptedResponse(detail.text);
+      processInterceptedResponse(detail.text, false, !!detail.interrupted);
     } catch (err) {
       console.error('[LingYa][拦截] 处理回复事件出错:', err);
     }

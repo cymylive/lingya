@@ -726,7 +726,7 @@ function bindEvents() {
     const max = parseInt(delayMaxInput?.value, 10);
     if (Number.isNaN(min) || min < 0) { showToast('最小延迟必须是非负整数', 3000); return; }
     if (Number.isNaN(max) || max < min) { showToast('最大延迟不能小于最小延迟', 3000); return; }
-    if (max > 10000) { showToast('最大延迟不能超过 10000ms', 3000); return; }
+    if (max > 600000) { showToast('最大延迟不能超过 600000ms（10 分钟）', 3000); return; }
     state.sendDelayMin = min;
     state.sendDelayMax = max;
     // 保存到 localStorage

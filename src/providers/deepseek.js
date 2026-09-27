@@ -26,10 +26,10 @@ function deepseekHookInstaller() {
     }
   }
 
-  function dispatch(text, finished, tokenUsage, msgIds) {
+  function dispatch(text, finished, tokenUsage, msgIds, interrupted) {
     try {
       window.dispatchEvent(new CustomEvent('lingya-ai-response', {
-        detail: { text: text || '', finished: !!finished, tokenUsage: tokenUsage || null, msgIds: msgIds || null }
+        detail: { text: text || '', finished: !!finished, tokenUsage: tokenUsage || null, msgIds: msgIds || null, interrupted: !!interrupted }
       }));
     } catch (e) { /* ignore */ }
   }
@@ -87,6 +87,8 @@ function deepseekHookInstaller() {
     var observed = false;
     var text = '';
     var finished = false;
+    // 生成被中断（服务端明确标记 INTERRUPTED/BROKEN/FAILED）
+    var interrupted = false;
     // 服务端权威 token 统计（accumulated_token_usage 含 prompt/context + 输出）
     var tokenUsage = null;
     // 本条回复的消息 id：requestMessageId（用户提问）+ responseMessageId（AI 回复）
@@ -225,14 +227,17 @@ function deepseekHookInstaller() {
         if (!isThink(typeAt(currentIndex))) text += parsed.v;
         return;
       }
-      if (parsed.p === 'response/status' && parsed.v === 'FINISHED') finished = true;
-      else if (parsed.p === 'quasi_status' && parsed.v === 'FINISHED') finished = true;
+      if (parsed.p === 'response/status' || parsed.p === 'quasi_status') {
+        if (parsed.v === 'FINISHED') finished = true;
+        else if (parsed.v === 'INTERRUPTED' || parsed.v === 'BROKEN' || parsed.v === 'FAILED') interrupted = true;
+      }
     }
 
     return {
       consume: consume,
       get text() { return text; },
       get finished() { return finished; },
+      get interrupted() { return interrupted; },
       get tokenUsage() { return tokenUsage; },
       get msgIds() { return msgIds; }
     };
@@ -254,28 +259,35 @@ function deepseekHookInstaller() {
       }
       if (extractor.finished && !dispatched) {
         dispatched = true;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds);
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
       }
+    }
+
+    // 流结束（正常读完或异常断开）时统一收尾：未收到 FINISHED 即判定为中断
+    function finalize() {
+      if (dispatched) return;
+      dispatched = true;
+      try {
+        var tail = decoder.decode();
+        if (tail) feed(tail);
+      } catch (e) { /* ignore */ }
+      try {
+        var rest = frameDecoder.finish();
+        for (var i = 0; i < rest.length; i++) {
+          var parsed = parseBlock(rest[i]);
+          if (parsed) extractor.consume(parsed);
+        }
+      } catch (e) { /* ignore */ }
+      var isInterrupted = extractor.interrupted || !extractor.finished;
+      dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted);
     }
 
     function pump() {
       reader.read().then(function (r) {
-        if (r.done) {
-          var tail = decoder.decode();
-          if (tail) feed(tail);
-          var rest = frameDecoder.finish();
-          for (var i = 0; i < rest.length; i++) {
-            var parsed = parseBlock(rest[i]);
-            if (parsed) extractor.consume(parsed);
-          }
-          if (!dispatched) { dispatched = true; dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds); }
-          return;
-        }
+        if (r.done) { finalize(); return; }
         feed(decoder.decode(r.value, { stream: true }));
         pump();
-      }).catch(function () {
-        if (!dispatched) { dispatched = true; dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds); }
-      });
+      }).catch(function () { finalize(); });
     }
     pump();
   }
@@ -376,7 +388,7 @@ function deepseekHookInstaller() {
       }
       if (extractor.finished && !dispatched) {
         dispatched = true;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds);
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
       }
     }
 
@@ -389,7 +401,9 @@ function deepseekHookInstaller() {
           if (parsed) extractor.consume(parsed);
         }
         dispatched = true;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds);
+        // 请求结束但未收到 FINISHED → 判定为中断
+        var isInterrupted = extractor.interrupted || !extractor.finished;
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted);
       }
     });
   }
