@@ -1,0 +1,15 @@
+<!-- 把以下 <uses-permission> 合并进 android/app/src/main/AndroidManifest.xml 的 <manifest> 下 -->
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="29" />
+<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+    tools:ignore="ScopedStorage" />
+
+<!-- 说明：
+     - Android 13+ (API 33+) 通过 SAF 授权即可，无需上述危险权限
+     - 若想获得"管理所有文件"能力（类似桌面的全盘访问），需要 MANAGE_EXTERNAL_STORAGE，
+       并引导用户在系统设置里手动开启（Google Play 会限制此类应用上架）
+     - 最小可行方案：只用 SAF，不声明任何存储权限
+-->
+

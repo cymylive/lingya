@@ -1,0 +1,9 @@
+node_modules/
+# cap add 生成的整个原生工程（CI 里重新生成）
+android/
+# 构建产物
+*.apk
+*.aab
+.gradle/
+build/
+local.properties

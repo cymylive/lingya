@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>LingYa</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部状态栏 -->
+    <header class="topbar">
+      <span class="brand">灵鸦</span>
+      <span id="status" class="status">未连接插件</span>
+    </header>
+
+    <!-- AI 网页容器（内嵌 DeepSeek 等网页版） -->
+    <main id="webview-slot" class="webview-slot">
+      <div class="placeholder">
+        <p>AI 网页容器</p>
+        <p class="hint">此处将内嵌 AI 网页版（需在原生侧用 Capacitor WebView 或 iframe 适配）</p>
+      </div>
+    </main>
+
+    <!-- 底部操作条 -->
+    <nav class="toolbar">
+      <button id="btn-pick" type="button">授权目录</button>
+      <button id="btn-roots" type="button">已授权</button>
+      <button id="btn-log" type="button">日志</button>
+    </nav>
+  </div>
+
+  <pre id="log-panel" class="log-panel" hidden></pre>
+
+  <script src="js/bridge.js"></script>
+  <script src="js/runner.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
