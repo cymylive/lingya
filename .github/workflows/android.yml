@@ -11,7 +11,7 @@ on:
   pull_request:
     paths:
       - 'android-app/**'
-  workflow_dispatch:      # 支持手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,8 +34,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest runner 预装 Android SDK（ANDROID_HOME 已设置），
+      # 不需要 android-actions/setup-android，避免其初始化失败。
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_HOME" || true
+          which sdkmanager || true
 
       - name: Install dependencies
         working-directory: android-app
