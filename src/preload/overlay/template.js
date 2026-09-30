@@ -329,6 +329,7 @@ const OVERLAY_HTML = [
 '      <button id="lingya-feishu-disconnect" class="lingya-btn lingya-btn-secondary">断开</button>',
 '    </div>',
 '    <div class="lingya-feishu-hint">提示：需先在开放平台创建应用、开启机器人能力与事件订阅（长连接），并把应用加入目标群。手机发消息即进入当前窗口。</div>',
+'    <div class="lingya-feishu-hint">📲 手机可用指令：<b>/new</b> 开新对话 · <b>/list</b> 列出会话 · <b>/help</b> 帮助</div>',
 '  </div>',
 '</div>',
 '<div id="lingya-status-badge" class="lingya-state-idle" title="LingYa">',

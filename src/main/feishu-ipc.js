@@ -20,7 +20,7 @@ let feishuInited = false;
  * - 群消息（chatId 非空）：只发给绑了该群的窗口
  * - 单聊（chatId 为空）：回退给最近活跃窗口
  */
-function forwardUserMessage(text, chatId) {
+async function forwardUserMessage(text, chatId) {
   let ctx = null;
   if (chatId) {
     const profile = profileManager.getProfileByFeishuChat(chatId);
@@ -36,6 +36,15 @@ function forwardUserMessage(text, chatId) {
   } else {
     ctx = windowState.getMainContext();
   }
+
+  // 斜杠命令：优先于转发（/new /list /help）
+  try {
+    const handled = await handleFeishuCommand(text, chatId, ctx);
+    if (handled) return;
+  } catch (err) {
+    console.error('[Feishu] 命令处理异常:', err.message);
+  }
+
   const win = ctx && ctx.win;
   if (!win || win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) {
     console.warn('[Feishu] 目标窗口不可用，消息丢弃');
@@ -47,6 +56,66 @@ function forwardUserMessage(text, chatId) {
   } catch (err) {
     console.error('[Feishu] 转发失败:', err.message);
   }
+}
+
+/**
+ * 处理飞书来消息里的斜杠命令。
+ * @returns {Promise<boolean>} true 表示已作为命令处理（不再转发给 AI）
+ */
+async function handleFeishuCommand(text, chatId, ctx) {
+  const cmd = String(text || '').trim();
+  if (!cmd.startsWith('/')) return false;
+  const [name] = cmd.slice(1).split(/\s+/);
+  const win = ctx && ctx.win;
+
+  const reply = async (msg) => {
+    try { await feishuClient.sendText(msg, chatId); } catch (_) {}
+    return true;
+  };
+
+  if (name === 'help' || name === '?') {
+    return reply([
+      '🤖 LingYa 指令：',
+      '/new — 开新对话（导航到平台首页，下一条消息即新会话）',
+      '/list — 列出当前窗口的会话',
+      '/help — 显示本帮助',
+    ].join('\n'));
+  }
+
+  if (name === 'new') {
+    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
+    // 从 provider 取首页 URL
+    let homeUrl = null;
+    try {
+      const { getProviderByUrl } = require('../providers');
+      const provider = getProviderByUrl(win.webContents.getURL());
+      if (provider && provider.homeUrl) homeUrl = provider.homeUrl;
+    } catch (_) {}
+    if (!homeUrl) return reply('❌ 无法确定平台首页（当前平台未提供 homeUrl）');
+    try {
+      await win.webContents.loadURL(homeUrl);
+      return reply('🆕 已开新对话（已导航到 ' + homeUrl + '）\n下一条消息将进入新会话。');
+    } catch (err) {
+      return reply('❌ 开新对话失败：' + err.message);
+    }
+  }
+
+  if (name === 'list') {
+    const store = ctx && ctx.sessionStore;
+    if (!store) return reply('❌ 当前窗口无会话存储');
+    const all = store.readSessionStore();
+    const ids = Object.keys(all);
+    if (ids.length === 0) return reply('📭 当前窗口暂无历史会话');
+    const current = store.state && store.state.currentSessionId;
+    const lines = ids.slice(0, 50).map((sid) => {
+      const dir = all[sid] || '(未绑定目录)';
+      const mark = sid === current ? ' 👈当前' : '';
+      return '· ' + sid.slice(0, 8) + '…  ' + dir + mark;
+    });
+    return reply('📋 会话列表（' + ids.length + '）：\n' + lines.join('\n'));
+  }
+
+  return reply('❓ 未知指令：' + name + '（发送 /help 查看可用指令）');
 }
 
 /** 通知所有 AI 页面：飞书启用状态（bridge 据此决定是否上报） */
@@ -213,4 +282,4 @@ function registerFeishuIpc() {
   });
 }
 
-module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode };
+module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode, forwardUserMessage, handleFeishuCommand };
