@@ -49,14 +49,43 @@ function extractChatId(event) {
   }
 }
 
-/** 从事件中提取纯文本（只处理文本消息） */
+/** 从事件中取 chat_type：'p2p'（单聊）/ 'group'（群聊） */
+function extractChatType(event) {
+  try {
+    const msg = event && event.message;
+    if (!msg) return '';
+    return typeof msg.chat_type === 'string' ? msg.chat_type : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/** 剥离 @ 提及：群里 @ 机器人时文本含 @_user_N 占位或 @机器人名 */
+function stripMentions(text, mentions) {
+  let t = String(text || '');
+  t = t.replace(/@_user_\d+/g, '');
+  if (Array.isArray(mentions)) {
+    for (const m of mentions) {
+      if (m && m.key) t = t.split(m.key).join('');
+      if (m && m.name) t = t.split('@' + m.name).join('');
+    }
+  }
+  return t.trim();
+}
+
+/** 从事件中提取纯文本（只处理文本消息），并剥离 @ 提及 */
 function extractText(event) {
   try {
     const msg = event && event.message;
     if (!msg) return '';
     if (msg.message_type !== 'text') return '';
     const content = JSON.parse(msg.content || '{}');
-    return typeof content.text === 'string' ? content.text : '';
+    const raw = typeof content.text === 'string' ? content.text : '';
+    const cleaned = stripMentions(raw, msg.mentions);
+    if (cleaned !== raw) {
+      console.log('[Feishu] 已剥离 @ 提及: ' + JSON.stringify(raw) + ' -> ' + JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch (_) {
     return '';
   }
@@ -123,9 +152,10 @@ function connect(cb) {
           }
           const text = extractText(data);
           const chatId = extractChatId(data);
+          const chatType = extractChatType(data);
           if (text) {
-            console.log('[Feishu] 收到消息, 长度=' + text.length + (chatId ? ' 群=' + chatId : ' 单聊'));
-            try { if (callbacks.onUserMessage) callbacks.onUserMessage(text, chatId); } catch (_) {}
+            console.log('[Feishu] 收到消息, 长度=' + text.length + ' 类型=' + (chatType || '未知') + (chatId ? ' chat=' + chatId : '') + ' 内容=' + JSON.stringify(text.slice(0, 60)));
+            try { if (callbacks.onUserMessage) callbacks.onUserMessage(text, chatId, chatType); } catch (_) {}
           }
         } catch (err) {
           console.error('[Feishu] 处理消息失败:', err.message);

@@ -15,14 +15,19 @@ const profileManager = require('./profile-manager');
 
 let feishuInited = false;
 
+// 每个 profile 最近的飞书消息来源 { chatId, chatType }，用于把 AI 回复发回来源会话
+const lastFeishuSource = new Map();
+
 /**
  * 飞书来消息 → 按 chatId 找到"绑定了该群的窗口" → 转发给它的 AI 页面。
  * - 群消息（chatId 非空）：只发给绑了该群的窗口
  * - 单聊（chatId 为空）：回退给最近活跃窗口
  */
-async function forwardUserMessage(text, chatId) {
+async function forwardUserMessage(text, chatId, chatType) {
   let ctx = null;
-  if (chatId) {
+  const isGroup = chatType === 'group';
+  if (isGroup) {
+    // 群聊：按绑定的群路由
     const profile = profileManager.getProfileByFeishuChat(chatId);
     if (!profile) {
       console.warn('[Feishu] 收到群消息，但没有窗口绑定该群，丢弃。chatId=' + chatId);
@@ -34,7 +39,13 @@ async function forwardUserMessage(text, chatId) {
       return;
     }
   } else {
+    // 单聊（p2p）或未知类型：回退最近活跃窗口
     ctx = windowState.getMainContext();
+  }
+
+  // 记录本次消息来源（供 AI 回复按来源回推：私聊→私聊，群→群）
+  if (ctx && ctx.profileId) {
+    lastFeishuSource.set(ctx.profileId, { chatId: chatId || '', chatType: chatType || '' });
   }
 
   // 斜杠命令：优先于转发（/new /list /help）
@@ -52,7 +63,7 @@ async function forwardUserMessage(text, chatId) {
   }
   try {
     win.webContents.send('feishu-user-message', { text });
-    console.log('[Feishu] 已转发消息到 AI 页面, 长度=' + text.length + (chatId ? ' (群)' : ' (活跃窗口)'));
+    console.log('[Feishu] 已转发消息到 AI 页面, 长度=' + text.length + (isGroup ? ' (群)' : ' (活跃窗口/单聊)'));
   } catch (err) {
     console.error('[Feishu] 转发失败:', err.message);
   }
@@ -63,9 +74,12 @@ async function forwardUserMessage(text, chatId) {
  * @returns {Promise<boolean>} true 表示已作为命令处理（不再转发给 AI）
  */
 async function handleFeishuCommand(text, chatId, ctx) {
-  const cmd = String(text || '').trim();
+  // 容错：剥离行首可能残留的 @提及 与空白
+  const cmd = String(text || '').replace(/^(@\S+\s*)+/, '').trim();
   if (!cmd.startsWith('/')) return false;
-  const [name] = cmd.slice(1).split(/\s+/);
+  const parts = cmd.slice(1).split(/\s+/);
+  const name = parts[0];
+  const arg = parts.slice(1).join(' ').trim();
   const win = ctx && ctx.win;
 
   const reply = async (msg) => {
@@ -76,7 +90,7 @@ async function handleFeishuCommand(text, chatId, ctx) {
   if (name === 'help' || name === '?') {
     return reply([
       '🤖 LingYa 指令：',
-      '/new — 开新对话（导航到平台首页，下一条消息即新会话）',
+      '/new [项目名] — 开新对话：桌面新建项目文件夹 + 注入提示词（AI 可访问电脑）',
       '/list — 列出当前窗口的会话',
       '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
       '/help — 显示本帮助',
@@ -93,12 +107,54 @@ async function handleFeishuCommand(text, chatId, ctx) {
       if (provider && provider.homeUrl) homeUrl = provider.homeUrl;
     } catch (_) {}
     if (!homeUrl) return reply('❌ 无法确定平台首页（当前平台未提供 homeUrl）');
+
+    // 1) 桌面新建项目文件夹（名称可用参数自定义：/new 我的项目）
+    let newDir = null;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const { app } = require('electron');
+      const desktop = app.getPath('desktop');
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const stamp = '' + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) +
+        '_' + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+      const baseName = (arg ? arg.replace(/[\\/:*?"<>|]/g, '_') : 'LingYa项目') + '_' + stamp;
+      newDir = path.join(desktop, baseName);
+      fs.mkdirSync(newDir, { recursive: true });
+      console.log('[Feishu] /new 新建项目目录:', newDir);
+    } catch (err) {
+      console.error('[Feishu] /new 建目录失败:', err.message);
+      newDir = null;
+    }
+
+    // 2) 导航到平台首页（开新会话）
     try {
       await win.webContents.loadURL(homeUrl);
-      return reply('🆕 已开新对话（已导航到 ' + homeUrl + '）\n下一条消息将进入新会话。');
     } catch (err) {
       return reply('❌ 开新对话失败：' + err.message);
     }
+
+    // 3) 注入初始化提示词（工具能力 + 项目目录上下文）
+    if (newDir) {
+      try {
+        // 等页面 preload 监听器就绪（导航后 preload 重新加载）
+        await new Promise((r) => setTimeout(r, 1200));
+        const { initProject } = require('./project-context');
+        await initProject(false, ctx, newDir);
+        console.log('[Feishu] /new 已注入初始化提示词');
+      } catch (err) {
+        console.error('[Feishu] /new 初始化失败:', err.message);
+        return reply('🆕 已开新对话，但项目初始化失败：' + err.message);
+      }
+    }
+
+    return reply(
+      '🆕 已开新对话' +
+      (newDir ? ('\n📁 项目目录：' + newDir) : '') +
+      '\n✅ 已注入项目提示词与工具能力，AI 可直接访问该目录及电脑。' +
+      '\n\n💡 用法：/new 自定义项目名'
+    );
   }
 
   if (name === 'stop') {
@@ -139,6 +195,18 @@ function broadcastFeishuMode(enabled) {
   }
 }
 
+/**
+ * 决定 AI 回复/工具状态的推送目标。
+ * 优先回"最近一条飞书消息的来源"（私聊→私聊，群→群）；无来源时回退到窗口绑定的群。
+ * @returns {string} chat_id，空串表示无处可推
+ */
+function resolveReportTarget(ctx) {
+  const src = ctx && ctx.profileId ? lastFeishuSource.get(ctx.profileId) : null;
+  if (src && src.chatId) return src.chatId;
+  const profile = ctx ? profileManager.getProfileById(ctx.profileId) : null;
+  return (profile && profile.feishuChatId) || '';
+}
+
 /** 初始化飞书（启动时调用：若配置为启用则自动连接） */
 function initFeishu() {
   if (feishuInited) return;
@@ -146,7 +214,7 @@ function initFeishu() {
   const cfg = readConfig();
   if (!cfg.enabled || !cfg.appId || !cfg.appSecret) return;
   feishuClient.connect({
-    onUserMessage: (text, chatId) => forwardUserMessage(text, chatId),
+    onUserMessage: (text, chatId, chatType) => forwardUserMessage(text, chatId, chatType),
   });
   broadcastFeishuMode(true);
   console.log('[Feishu] 启动时自动连接（已启用）');
@@ -199,7 +267,7 @@ function registerFeishuIpc() {
     if (!connChanged) return { success: true };
     // 按启用状态连接/断开
     if (cfg.enabled && cfg.appId && cfg.appSecret) {
-      feishuClient.connect({ onUserMessage: (text, chatId) => forwardUserMessage(text, chatId) });
+      feishuClient.connect({ onUserMessage: (text, chatId, chatType) => forwardUserMessage(text, chatId, chatType) });
       broadcastFeishuMode(true);
     } else {
       feishuClient.disconnect();
@@ -238,7 +306,7 @@ function registerFeishuIpc() {
   ipcMain.handle('feishu-reconnect', async () => {
     const cfg = readConfig();
     if (!cfg.appId || !cfg.appSecret) return { success: false, error: '未配置凭证' };
-    feishuClient.connect({ onUserMessage: (text, chatId) => forwardUserMessage(text, chatId) });
+    feishuClient.connect({ onUserMessage: (text, chatId, chatType) => forwardUserMessage(text, chatId, chatType) });
     return { success: true };
   });
 
@@ -253,12 +321,13 @@ function registerFeishuIpc() {
   ipcMain.handle('feishu-report', async (event, payload) => {
     const cfg = readConfig();
     if (!cfg.enabled) return { success: false };
-    // 从发起方（AI 页面）反查窗口 → 取该窗口绑定的群
+    // 从发起方（AI 页面）反查窗口
     const ctx = windowState.getContextByWebContents(event.sender);
-    const profile = ctx ? profileManager.getProfileById(ctx.profileId) : null;
-    const chatId = (profile && profile.feishuChatId) || '';
+    // 推送目标：优先回"最近一条飞书消息的来源"（私聊→私聊，群→群）；
+    // 无来源时才回退到该窗口绑定的群。
+    const chatId = resolveReportTarget(ctx);
     if (!chatId) {
-      // 该窗口未绑定群：不推送（按需求：未绑定=飞书功能关闭）
+      // 既无来源也未绑定群：不推送
       return { success: false, error: 'no-chat-bound' };
     }
     const type = payload && payload.type;
@@ -291,4 +360,4 @@ function registerFeishuIpc() {
   });
 }
 
-module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode, forwardUserMessage, handleFeishuCommand };
+module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode, forwardUserMessage, handleFeishuCommand, resolveReportTarget, lastFeishuSource };
