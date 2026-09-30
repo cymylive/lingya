@@ -203,6 +203,11 @@ let electronAPI = {
     ipcRenderer.on('feishu-user-message', handler);
     return () => ipcRenderer.removeListener('feishu-user-message', handler);
   },
+  onFeishuStop: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('feishu-stop', handler);
+    return () => ipcRenderer.removeListener('feishu-stop', handler);
+  },
 };
 
 try {

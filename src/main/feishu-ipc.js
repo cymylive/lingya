@@ -78,6 +78,7 @@ async function handleFeishuCommand(text, chatId, ctx) {
       '🤖 LingYa 指令：',
       '/new — 开新对话（导航到平台首页，下一条消息即新会话）',
       '/list — 列出当前窗口的会话',
+      '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
       '/help — 显示本帮助',
     ].join('\n'));
   }
@@ -98,6 +99,14 @@ async function handleFeishuCommand(text, chatId, ctx) {
     } catch (err) {
       return reply('❌ 开新对话失败：' + err.message);
     }
+  }
+
+  if (name === 'stop') {
+    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
+    // 复用渲染进程的 stopTask：kill 子进程 + 点击页面「停止生成」+ 置停止标志
+    try { win.webContents.send('feishu-stop'); } catch (_) {}
+    console.log('[Feishu] 收到 /stop，已通知窗口停止任务');
+    return reply('🛑 已停止：中断 AI 生成 + 终止工具执行。发送任意消息即可恢复。');
   }
 
   if (name === 'list') {

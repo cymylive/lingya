@@ -84,6 +84,18 @@ function initFeishuBridge() {
       sendToChat(text, '飞书', 300).catch(() => {});
     });
   } catch (_) {}
+
+  // 5. 飞书 /stop 命令 → 停止当前任务（复用面板「停止」按钮的同一逻辑）
+  try {
+    window.electronAPI.onFeishuStop(() => {
+      try {
+        const { stopTask } = require('../overlay/events');
+        if (typeof stopTask === 'function') stopTask(true);
+      } catch (err) {
+        console.error('[LingYa Feishu] /stop 执行失败:', err.message);
+      }
+    });
+  } catch (_) {}
 }
 
 module.exports = { initFeishuBridge, stripToolBlocks };
