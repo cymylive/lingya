@@ -10,6 +10,7 @@ const { runCompaction, checkPendingInit } = require('../dom/compaction');
 const { bindMemoryPanelEvents, closeMemoryManager } = require('./memory-panel');
 const { bindSkillPanelEvents, closeSkillManager } = require('./skill-panel');
 const { bindSecurityPanelEvents, closeSecurityManager } = require('./security-panel');
+const { bindFeishuPanelEvents, closeFeishuManager } = require('./feishu-panel');
 const { bindAgentPanelEvents } = require('./agent-panel');
 
 /**
@@ -764,6 +765,8 @@ function bindEvents() {
   bindSkillPanelEvents();
   // 安全增强面板事件
   bindSecurityPanelEvents();
+  // 飞书同步面板事件
+  bindFeishuPanelEvents();
   // Agent 模式（Plan / Build）切换
   bindAgentPanelEvents();
 
@@ -807,6 +810,7 @@ function bindEvents() {
       closeMemoryManager();
       closeSkillManager();
       closeSecurityManager();
+      closeFeishuManager();
       hideFirstTimeDialog();
     }
   });

@@ -18,8 +18,12 @@ const { getAgent, listAgents } = require('./agents');
 const refusalRewriter = require('./refusal-rewriter');
 const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
+const { registerFeishuIpc } = require('./feishu-ipc');
 
 function registerIpcHandlers() {
+  // 飞书同步 IPC
+  registerFeishuIpc();
+
   // 初始化项目
   ipcMain.handle('init-project', async (event, { skipPrompt = false, projectDir = null, isCompaction = false } = {}) => {
     const ctx = windowState.getContextByWebContents(event.sender);

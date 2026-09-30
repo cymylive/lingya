@@ -73,6 +73,9 @@ function init() {
 
     // 启动新会话自动注入监视（记忆+技能）
     require('./dom/auto-inject').startAutoInjectWatcher();
+
+    // 飞书同步：上报用户消息/AI回复/工具状态，并接收飞书来消息
+    require('./dom/feishu-bridge').initFeishuBridge();
   } catch (err) {
     console.error('[LingYa] init() 出错:', err);
     // 兜底：即使出错也强制显示面板

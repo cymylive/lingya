@@ -233,7 +233,9 @@ async function processInterceptedResponse(text, force, interrupted) {
   if (jsBlocks.length > 0) {
     console.log('[LingYa][拦截] 检测到 JS 工具代码块（' + jsBlocks.length + ' 个），开始执行');
     xmlHintCount = 0;
+    emitToolCall({ phase: 'start' });
     const results = await executeJsBlocksWithRetry(jsBlocks);
+    emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
     if (results.length > 0) {
       if (state.stopped) {
         console.log('[LingYa][拦截] 已停止，丢弃 JS 结果回传');
@@ -257,7 +259,9 @@ async function processInterceptedResponse(text, force, interrupted) {
       return;
     }
     console.log('[LingYa][拦截] 工具存在: ' + toolCall.toolName + ', 开始执行');
+    emitToolCall({ phase: 'start', toolName: toolCall.toolName });
     await handleToolCall(toolCall);
+    emitToolCall({ phase: 'end', toolName: toolCall.toolName });
     return;
   }
 
@@ -293,6 +297,27 @@ async function processInterceptedResponse(text, force, interrupted) {
   try {
     window.electronAPI.showAiNotification().catch(() => {});
   } catch (e) { /* ignore */ }
+}
+
+// 工具调用监听器（供飞书同步等订阅工具 start/end 状态）
+const toolCallListeners = new Set();
+
+/**
+ * 注册"工具调用"监听器
+ * @param {Function} cb 参数 { phase: 'start'|'end', code?, success?, output?, error? }
+ * @returns {Function} 取消注册
+ */
+function onToolCall(cb) {
+  toolCallListeners.add(cb);
+  return () => toolCallListeners.delete(cb);
+}
+
+/** 派发工具调用事件（无监听者时零开销） */
+function emitToolCall(ev) {
+  if (toolCallListeners.size === 0) return;
+  for (const cb of toolCallListeners) {
+    try { cb(ev); } catch (_) { /* ignore */ }
+  }
 }
 
 // 回复完成监听器（供压缩等流程等待 AI 回复完成）
@@ -374,4 +399,4 @@ function resetGenerating() {
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, onInterceptedResponse, resetGenerating };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, onInterceptedResponse, onToolCall, resetGenerating };

@@ -40,6 +40,13 @@ try {
   console.error('[LingYa] 初始化技能存储失败:', err.message);
 }
 
+// 初始化飞书配置存储（全局共享）
+try {
+  require('../feishu/config').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化飞书配置存储失败:', err.message);
+}
+
 // 初始化安全增强配置存储（CTF 注入 + 拒绝拦截）
 try {
   require('./security-store').init(app.getPath('userData'));
@@ -380,6 +387,13 @@ function setupAppMenu() {
 
 // ========== IPC 处理器 ==========
 registerIpcHandlers();
+
+// 飞书同步：若已配置并启用则自动连接
+try {
+  require('./feishu-ipc').initFeishu();
+} catch (err) {
+  console.error('[LingYa] 初始化飞书失败:', err.message);
+}
 
 // 覆盖层"新建窗口"按钮触发
 const { ipcMain: ipcMainForProfile } = require('electron');

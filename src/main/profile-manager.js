@@ -53,6 +53,8 @@ function createProfile(name, providerId) {
     name: name || ('窗口' + (profiles.length + 1)),
     partition: 'persist:' + (pid ? pid + ':' : '') + id,
     createdAt: new Date().toISOString(),
+    feishuChatId: '',
+    feishuChatName: '',
   };
   profiles.push(profile);
   writeProfiles(profiles);
@@ -134,6 +136,24 @@ function updateProfileName(id, name) {
   return p;
 }
 
+/** 设置某 profile 绑定的飞书群（chatId/chatName）；空串表示解绑 */
+function setProfileFeishuChat(id, chatId, chatName) {
+  const profiles = readProfiles();
+  const p = profiles.find(x => x.id === id);
+  if (!p) return null;
+  p.feishuChatId = chatId || '';
+  p.feishuChatName = chatName || '';
+  writeProfiles(profiles);
+  console.log('[Profile] 飞书群绑定更新:', id, chatId ? (chatName + '(' + chatId + ')') : '(解绑)');
+  return p;
+}
+
+/** 按飞书群 chatId 反查 profile（哪个窗口绑了这个群） */
+function getProfileByFeishuChat(chatId) {
+  if (!chatId) return null;
+  return readProfiles().find(p => p.feishuChatId === chatId) || null;
+}
+
 module.exports = {
   readProfiles,
   writeProfiles,
@@ -144,4 +164,6 @@ module.exports = {
   updateProfileProvider,
   updateProfileBounds,
   deleteProfile,
+  setProfileFeishuChat,
+  getProfileByFeishuChat,
 };

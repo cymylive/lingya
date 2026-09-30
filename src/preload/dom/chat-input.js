@@ -79,6 +79,19 @@ async function setInputContent(input, msg) {
  * @param {Function} [afterSent] - 发送后回调
  * @returns {boolean} 是否成功
  */
+// 用户消息已发出回调（供飞书同步等订阅；系统消息 tag 由订阅方自行过滤）
+let onUserMessageSentCb = null;
+
+/**
+ * 注册"用户消息已发出"监听器
+ * @param {Function} cb 参数 (text, tag)
+ * @returns {Function} 取消注册
+ */
+function onUserMessageSent(cb) {
+  onUserMessageSentCb = cb;
+  return () => { if (onUserMessageSentCb === cb) onUserMessageSentCb = null; };
+}
+
 async function sendToChat(msg, tag, fixedDelay, afterSent) {
   // 用户主动发消息：清除「已停止」状态，恢复正常自动执行
   if (state.stopped) {
@@ -108,6 +121,7 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     console.log('[LingYa] 等待结束，开始触发发送');
     triggerSend(input);
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
+    if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();
   }, sendDelay);
   return true;
@@ -355,4 +369,5 @@ module.exports = {
   waitForInitialPromptAndSend,
   triggerSend,
   registerIpcListeners,
+  onUserMessageSent,
 };

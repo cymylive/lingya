@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -144,6 +144,7 @@
   },
   "dependencies": {
     "@joplin/turndown-plugin-gfm": "^1.0.67",
+    "@larksuiteoapi/node-sdk": "^1.74.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vscode/ripgrep": "^1.18.0",
     "electron-log": "^5.4.4",

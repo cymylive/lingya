@@ -164,6 +164,45 @@ let electronAPI = {
   replaceProvider: (providerId) => {
     return ipcRenderer.invoke('replace-provider', { providerId });
   },
+  // ========== 飞书同步 API ==========
+  getFeishuEnabled: () => {
+    return ipcRenderer.invoke('feishu-is-enabled');
+  },
+  getFeishuConfig: () => {
+    return ipcRenderer.invoke('feishu-get-config');
+  },
+  saveFeishuConfig: (data) => {
+    return ipcRenderer.invoke('feishu-save-config', { data });
+  },
+  listFeishuChats: () => {
+    return ipcRenderer.invoke('feishu-list-chats');
+  },
+  getFeishuBinding: () => {
+    return ipcRenderer.invoke('feishu-get-binding');
+  },
+  bindFeishuChat: (chatId, chatName) => {
+    return ipcRenderer.invoke('feishu-bind-chat', { chatId, chatName });
+  },
+  reconnectFeishu: () => {
+    return ipcRenderer.invoke('feishu-reconnect');
+  },
+  disconnectFeishu: () => {
+    return ipcRenderer.invoke('feishu-disconnect');
+  },
+  feishuReport: (payload) => {
+    return ipcRenderer.invoke('feishu-report', payload);
+  },
+  // 主进程 → 渲染进程的事件监听（监听器注册，返回取消函数）
+  onFeishuMode: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('feishu-mode', handler);
+    return () => ipcRenderer.removeListener('feishu-mode', handler);
+  },
+  onFeishuUserMessage: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('feishu-user-message', handler);
+    return () => ipcRenderer.removeListener('feishu-user-message', handler);
+  },
 };
 
 try {

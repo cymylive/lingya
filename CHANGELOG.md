@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.2] - 2026-09-30
+
+### Added
+- **飞书同步（手机收发对话）**：把手机变成 AI 的远程遥控器
+  - 推送方向（LingYa → 飞书）：用户经 LingYa 发送的消息、AI 文本回复、工具调用状态（仅"调用中/完成"两条，默认不带工具名/参数/结果）
+  - 接收方向（飞书 → LingYa）：手机发文本 → 转发到绑定的窗口 → 发给 AI（等同本机输入）
+  - 连接方式：飞书官方 SDK 长连接（无需公网 IP、无需回调地址）
+  - 覆盖层新增「📱 飞书」面板：App ID/Secret、启用开关、连接状态、群绑定下拉、推送选项
+  - 多窗口路由：每个窗口 profile 可绑定一个飞书群，消息按群精确路由；未绑定的窗口不推送
+  - 依赖：`@larksuiteoapi/node-sdk` ^1.74.0
+
+### Changed
+- `src/preload/dom/intercept-observer.js` 新增并导出 `onToolCall` / `emitToolCall`（工具调用 start/end 事件）
+- `src/preload/dom/chat-input.js` 新增并导出 `onUserMessageSent`（用户消息发出回调）
+- `profile-manager.js` profile 结构新增 `feishuChatId` / `feishuChatName` 字段
+
+### Notes
+- 飞书功能默认关闭，需在面板配置凭证并绑定群后启用
+- 配置存储：`<userData>/feishu.json`
+
 ## [0.6.1] - 2026-09-27
 
 ### Added
