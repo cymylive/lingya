@@ -91,7 +91,8 @@ async function handleFeishuCommand(text, chatId, ctx) {
     return reply([
       '🤖 LingYa 指令：',
       '/new [项目名] — 开新对话：桌面新建项目文件夹 + 注入提示词（AI 可访问电脑）',
-      '/list — 列出当前窗口的会话',
+      '/list — 列出当前窗口的会话（显示 ID）',
+      '/say <ID> — 切换到指定会话（ID 用 /list 查看，支持前缀）',
       '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
       '/help — 显示本帮助',
     ].join('\n'));
@@ -177,7 +178,50 @@ async function handleFeishuCommand(text, chatId, ctx) {
       const mark = sid === current ? ' 👈当前' : '';
       return '· ' + sid.slice(0, 8) + '…  ' + dir + mark;
     });
-    return reply('📋 会话列表（' + ids.length + '）：\n' + lines.join('\n'));
+    return reply('📋 会话列表（' + ids.length + '）：\n' + lines.join('\n') +
+      '\n\n💡 切换到某会话：/say <ID前几位>');
+  }
+
+  if (name === 'say' || name === 'switch' || name === 'to') {
+    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
+    if (!arg) return reply('用法：/say <会话ID>（用 /list 查看，支持前缀匹配）');
+    const store = ctx && ctx.sessionStore;
+    if (!store) return reply('❌ 当前窗口无会话存储');
+    const all = store.readSessionStore();
+    const ids = Object.keys(all);
+    if (ids.length === 0) return reply('📭 当前窗口暂无历史会话');
+    // 精确匹配 → 前缀匹配
+    let target = ids.find((id) => id === arg);
+    if (!target) {
+      const matches = ids.filter((id) => id.startsWith(arg));
+      if (matches.length === 0) {
+        return reply('❌ 未找到会话：' + arg + '（用 /list 查看可用 ID）');
+      }
+      if (matches.length > 1) {
+        return reply('❌ 前缀不唯一（' + matches.length + ' 个匹配）：' +
+          matches.map((m) => m.slice(0, 8)).join('、') + '\n请输入更长的前缀。');
+      }
+      target = matches[0];
+    }
+    // 拼会话 URL（复用 provider.sessionUrlBase）
+    let url = null;
+    try {
+      const { getProviderByUrl } = require('../providers');
+      const provider = getProviderByUrl(win.webContents.getURL());
+      if (provider && typeof provider.sessionUrlBase === 'string' && provider.sessionUrlBase) {
+        url = provider.sessionUrlBase + target;
+      }
+    } catch (_) {}
+    if (!url) return reply('❌ 无法确定会话 URL（当前平台未提供 sessionUrlBase）');
+    try {
+      await win.webContents.loadURL(url);
+    } catch (err) {
+      return reply('❌ 切换会话失败：' + err.message);
+    }
+    const dir = all[target] || '(未绑定目录)';
+    console.log('[Feishu] /say 已切换会话:', target);
+    return reply('✅ 已切换到会话：\n· ID：' + target + '\n· 目录：' + dir +
+      '\n\n后续消息将发送到该会话。');
   }
 
   return reply('❓ 未知指令：' + name + '（发送 /help 查看可用指令）');
