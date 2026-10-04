@@ -248,19 +248,26 @@ function touchMemories(ids) {
 }
 
 /**
- * 初始化注入用：选出记忆并格式化为文本块。
- * 当因 token 预算未注入全部记忆时，追加提示，让模型知道应主动 memoryList() 检索。
+ * 初始化注入用：选出记忆并格式化为文本块，并始终附带全部记忆的索引。
+ *
+ * 只注入"被选中的记忆正文"是不够的——模型看不到未选中记忆的存在，就不会主动检索。
+ * 因此这里额外附一份**全部记忆的索引**（仅 id/类型/名称，不含正文，成本极低），
+ * 让模型明确知道"有哪些记忆可用"，从而在需要时主动 memoryList() 取全文。
  */
 function buildMemorySection(options) {
   const memories = getAllMemories();
+  if (memories.length === 0) return formatMemoriesBlock([]);
   const selected = selectMemories(memories, options);
   if (selected.length > 0) touchMemories(selected.map((m) => m.id));
   let block = formatMemoriesBlock(selected);
-  const omitted = memories.length - selected.length;
-  if (omitted > 0) {
-    block += '\n\n> 注：以上仅为 ' + selected.length + ' 条（按相关性/置顶自动选取），另有 ' + omitted +
-      ' 条未显示。如需完整记忆，请主动调用 memoryList()。';
+
+  const selectedIds = new Set(selected.map((m) => m.id));
+  const omitted = memories.filter((m) => !selectedIds.has(m.id));
+  if (omitted.length > 0) {
+    block += '\n\n【全部记忆索引】（仅标题；上文的正文未覆盖下列条目，需要时用 memoryList() 取全文）：\n' +
+      omitted.map((m) => '- #' + m.id + ' [' + m.type + '] ' + m.name).join('\n');
   }
+  block += '\n\n> 判断标准：只要任务可能与上述任一条目相关（如用到凭证/token/路径/配置/历史决策/用户偏好），就应**先调用 memoryList() 取全文**，不要凭猜测行事、也不要等用户提醒。';
   return block;
 }
 
