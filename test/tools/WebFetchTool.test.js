@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const { parseFetchArgs, formatFetchOutput } = require('../../tools/WebFetchTool');
 
 test('parseFetchArgs 正常', () => {
-  assert.deepStrictEqual(parseFetchArgs('https://example.com'), { url: 'https://example.com' });
+  assert.strictEqual(parseFetchArgs('https://example.com').url, 'https://example.com');
 });
 
 test('parseFetchArgs 空/非字符串抛错', () => {
@@ -35,4 +35,26 @@ test('formatFetchOutput 截断 footer', () => {
 test('formatFetchOutput 显式 truncated 参数', () => {
   const out = formatFetchOutput('https://example.com', 200, 'text', 'abc', true);
   assert.match(out, /\(Content truncated/);
+});
+
+test('parseFetchArgs 默认 GET，无 headers/body', () => {
+  assert.deepStrictEqual(parseFetchArgs('https://example.com'), {
+    url: 'https://example.com', method: 'GET', headers: undefined, body: undefined,
+  });
+});
+
+test('parseFetchArgs 解析 method/headers/body', () => {
+  const out = parseFetchArgs('https://api.example.com', {
+    method: 'post',
+    headers: { Authorization: 'Bearer t' },
+    body: '{\"a\":1}',
+  });
+  assert.strictEqual(out.method, 'POST');
+  assert.deepStrictEqual(out.headers, { Authorization: 'Bearer t' });
+  assert.strictEqual(out.body, '{\"a\":1}');
+});
+
+test('parseFetchArgs 非法 headers 忽略', () => {
+  const out = parseFetchArgs('https://example.com', { headers: ['x'] });
+  assert.strictEqual(out.headers, undefined);
 });

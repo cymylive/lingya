@@ -183,9 +183,59 @@ function sendCombinedJsResultsToChat(results) {
     msg += sep + sep;
   }
 
-  console.log('[LingYa] 回传 JS 汇总执行结果, 消息长度=' + msg.length);
+  // 收集所有脚本产出的图片
+  const allImages = [];
+  for (const item of results) {
+    if (item && item.result && Array.isArray(item.result.images) && item.result.images.length > 0) {
+      allImages.push(...item.result.images);
+    }
+  }
+  if (allImages.length > 0) {
+    msg += sep + '（已附上 ' + allImages.length + ' 张图片，请查看图片内容后继续。）';
+  }
+
+  console.log('[LingYa] 回传 JS 汇总执行结果, 消息长度=' + msg.length + ', 图片=' + allImages.length);
+  // 先填文本（sendToChat 内部会 selectAll+delete 清空输入框），再注入图片附件；
+  // 文本发送有 2-4s 延迟，注入的附件会在发送前附着。
   sendMessageToChat(msg, 'JS汇总');
+  if (allImages.length > 0) {
+    injectImagesToInput(allImages);
+  }
 }
+/**
+ * 将图片作为附件注入聊天输入框（通过 paste 事件携带 File 对象）。
+ * 浏览器/站点会把 File 识别为图片附件。返回成功注入的数量。
+ * @param {Array<{name:string, mime:string, base64:string}>} images
+ * @returns {number} 成功注入的图片数
+ */
+function injectImagesToInput(images) {
+  if (!Array.isArray(images) || images.length === 0) return 0;
+  const input = findInputArea();
+  if (!input) {
+    console.log('[LingYa] 找不到输入框，无法注入图片');
+    return 0;
+  }
+  input.focus();
+  let count = 0;
+  for (const img of images) {
+    try {
+      const bin = atob(img.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const file = new File([bytes], img.name || 'image.png', { type: img.mime || 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const evt = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+      input.dispatchEvent(evt);
+      count++;
+      console.log('[LingYa] 已注入图片附件: ' + file.name + ' (' + bytes.length + ' bytes)');
+    } catch (err) {
+      console.error('[LingYa] 注入图片失败: ' + err.message);
+    }
+  }
+  return count;
+}
+
 /**
  * 查找 DeepSeek 的输入框元素
  */
@@ -363,6 +413,7 @@ module.exports = {
   sendMessageToChat,
   sendToolResultToChat,
   sendCombinedJsResultsToChat,
+  injectImagesToInput,
   findInputArea,
   isInputVisible,
   sendInitialPromptToInput,

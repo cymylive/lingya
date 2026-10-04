@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.9] - 2026-10-04
+
+### Added
+- **便携数据目录**：新增 `src/main/data-dir.js`，便携版（electron-builder 便携版 / exe 旁放 `portable.txt`）数据写入 `<exe目录>/LingYa-Data`，记忆、技能、安全配置、Agent、MCP、profile、登录态全部随程序目录走，换电脑整体拷贝即可
+  - 首次便携运行自动从旧 AppData 迁移一次（`LINGYA_NO_MIGRATE` 可禁用）；便携目录已有数据时不覆盖
+  - `LINGYA_USER_DATA_DIR` 环境变量可显式指定数据目录
+- **`viewImage` 多模态看图**：读取本地图片（png/jpg/jpeg/gif/webp/bmp，≤5MB）并作为附件发送给多模态模型查看
+- **后台任务工具** `bashBackground` / `bashOutput` / `bashKill`：长任务（编译、起服务、爬虫、fuzz）后台运行，不阻塞脚本；支持等待完成、查询输出、终止进程树
+- **`webFetch` 支持 POST/自定义请求头/请求体**：`webFetch(url, { method, headers, body })`，覆盖 API 调试、认证请求场景
+- **`webSearch` 接入 Exa AI**：结构化搜索结果（标题/URL/发布时间/正文高亮片段），无需 API key；Exa 不可用时自动降级 Bing 抓取
+
+### Changed
+- **记忆主动检索**：提示词明确"注入的记忆只是子集，不完整"，新增记忆检索规则；`MemoryListTool` 补充 promptSection；`buildMemorySection` 截断时提示"另有 N 条未显示，请主动 memoryList()"
+
+### Fixed
+- 修复换电脑/重装后记忆与配置丢失的问题（数据目录跟随程序）
+
 ## [0.6.8] - 2026-10-01
 
 ### Added

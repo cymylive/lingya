@@ -10,11 +10,12 @@
 
 ## 长期记忆
 
-以下是从历史对话中积累的、与当前任务相关的长期记忆，请在回答时参考：
+以下是从历史对话中自动选出的、可能与当前任务相关的长期记忆子集（**不完整**），请在回答时参考：
 
 {{MEMORY_SECTION}}
 
-> 如需保存新的长期记忆，请调用 memorySave({ type, name, content, tags, pinned }) 工具；更新用 memoryUpdate，删除用 memoryDelete，查看全部用 memoryList。
+> **记忆检索**：以上仅是自动匹配的部分记忆，未必覆盖全部。当任务涉及用户偏好、历史决策、之前的项目或工作，或你不确定是否已有相关记忆时，**应主动调用 memoryList() 查看全部记忆**，不要等用户提醒。
+> **记忆管理**：保存新记忆用 memorySave({ type, name, content, tags, pinned })，更新用 memoryUpdate，删除用 memoryDelete。
 
 ## 技能
 

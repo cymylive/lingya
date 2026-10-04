@@ -13,9 +13,22 @@ const { getProvider } = require('../providers');
 const updater = require('./updater');
 const tray = require('./tray');
 
-// ========== 持久化会话配置 ==========
+// ========== 数据目录解析（便携优先）==========
+// 见 data-dir.js：便携版数据与程序同目录，换电脑/搬目录配置不丢。
+const { resolveDataDir } = require('./data-dir');
 const SESSION_DIR = process.env.LINGYA_SESSION_DIR || 'lingya-ai-pro-session';
-const USER_DATA_DIR = path.join(app.getPath('appData'), SESSION_DIR);
+const dataDirInfo = resolveDataDir({
+  appDataPath: app.getPath('appData'),
+  execPath: process.execPath,
+  env: process.env,
+  fs,
+  sessionDir: SESSION_DIR,
+});
+const USER_DATA_DIR = dataDirInfo.dir;
+if (dataDirInfo.migrated) {
+  console.log('[LingYa] 已将旧数据从 ' + dataDirInfo.legacyDir + ' 迁移到便携目录');
+}
+
 // app.setPath('userData', ...) 要求目标目录必须已存在，否则会抛错导致启动闪退。
 // 用户首次运行或手动删除该目录时，此处负责兜底创建。
 try {
@@ -24,7 +37,7 @@ try {
   console.error('[LingYa] 创建 userData 目录失败:', err.message);
 }
 app.setPath('userData', USER_DATA_DIR);
-console.log('[LingYa] Session 数据目录:', app.getPath('userData'));
+console.log('[LingYa] 数据目录:', app.getPath('userData') + (dataDirInfo.portable ? '（便携模式）' : ''));
 
 // 初始化记忆存储（全局共享）
 try {

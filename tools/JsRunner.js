@@ -113,6 +113,21 @@ const BOOTSTRAP = [
 "      timeoutMs: options.timeoutMs || options.timeout",
 "    });",
 "  };",
+"  globalThis.bashBackground = async function (command, options) {",
+"    options = options || {};",
+"    return await __call('bash_background', {",
+"      command: command,",
+"      description: options.description,",
+"      workdir: options.workdir || options.cwd",
+"    });",
+"  };",
+"  globalThis.bashOutput = async function (taskId, options) {",
+"    options = options || {};",
+"    return await __call('bash_output', { task_id: taskId, wait: options.wait });",
+"  };",
+"  globalThis.bashKill = async function (taskId) {",
+"    return await __call('bash_kill', { task_id: taskId });",
+"  };",
 "  globalThis.pwsh = async function (command, options) {",
 "    options = options || {};",
 "    return await __call('pwsh', {",
@@ -125,8 +140,17 @@ const BOOTSTRAP = [
 "  globalThis.deleteFile = async function (filePath) {",
 "    return await __call('file_delete', { file_path: filePath });",
 "  };",
-"  globalThis.webFetch = async function (url) {",
-"    return await __call('web_fetch', { url: url });",
+"  globalThis.webFetch = async function (url, options) {",
+"    options = options || {};",
+"    return await __call('web_fetch', {",
+"      url: url,",
+"      method: options.method,",
+"      headers: options.headers,",
+"      body: options.body",
+"    });",
+"  };",
+"  globalThis.viewImage = async function (filePath) {",
+"    return await __call('view_image', { file_path: filePath });",
 "  };",
 "  globalThis.mysql = async function (options) {",
 "    options = options || {};",
@@ -292,6 +316,8 @@ class JsRunner {
 
     const deniedTools = new Set((options && options.deniedTools) || []);
     const readonlyShell = !!(options && options.readonlyShell);
+    // 收集本次脚本加载的图片，随结果一起回传（供多模态附件注入）
+    const imageCollector = [];
 
     const startTime = Date.now();
     const deadlineMs = RUN_DEADLINE;
@@ -330,7 +356,7 @@ class JsRunner {
           result = { success: false, error: '未知工具: ' + op };
         } else {
           try {
-            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell }));
+            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector }));
           } catch (err) {
             result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
           }
@@ -408,7 +434,11 @@ class JsRunner {
         output = output.slice(0, OUTPUT_LIMIT) + '\n...[输出过长已截断]...';
       }
 
-      return { success: true, output: output || '(脚本执行完成，无输出)\n如需输出请使用 log() 方法' };
+      return {
+        success: true,
+        output: output || '(脚本执行完成，无输出)\n如需输出请使用 log() 方法',
+        images: imageCollector,
+      };
     } catch (err) {
       console.error('[JsRunner] 脚本执行失败:', err && err.stack ? err.stack : String(err));
       console.error('[JsRunner] [诊断] 失败代码(JSON转义): ' + JSON.stringify(code));

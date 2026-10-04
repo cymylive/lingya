@@ -23,11 +23,19 @@ turndown.remove(['script', 'style', 'noscript']);
 /**
  * 对齐 dsh parseFetchArgs：url trim 非空。
  */
-function parseFetchArgs(url) {
+function parseFetchArgs(url, options) {
   if (typeof url !== 'string' || url.trim().length === 0) {
     throw new Error('url must be a non-empty string');
   }
-  return { url };
+  const opts = options || {};
+  const method = (typeof opts.method === 'string' && opts.method.trim())
+    ? opts.method.trim().toUpperCase()
+    : 'GET';
+  const headers = (opts.headers && typeof opts.headers === 'object' && !Array.isArray(opts.headers))
+    ? opts.headers
+    : undefined;
+  const body = typeof opts.body === 'string' ? opts.body : undefined;
+  return { url, method, headers, body };
 }
 
 /**
@@ -82,12 +90,24 @@ class WebFetchTool extends Tool {
           url: {
             type: 'string',
             description: '要获取的 HTTP(S) URL'
+          },
+          method: {
+            type: 'string',
+            description: 'HTTP 方法（GET/POST/PUT/PATCH/DELETE 等），默认 GET'
+          },
+          headers: {
+            type: 'object',
+            description: '自定义请求头键值对，如 { "Authorization": "Bearer xxx" }'
+          },
+          body: {
+            type: 'string',
+            description: '请求体字符串（用于 POST/PUT 等）'
           }
         },
         required: ['url'],
         additionalProperties: false
       },
-      'webFetch(url)'
+      'webFetch(url, options?)'
     );
   }
 
@@ -95,15 +115,15 @@ class WebFetchTool extends Tool {
     return {
       name: 'tool:web_fetch',
       order: 111,
-      text: '使用 webFetch 工具获取指定 HTTP(S) URL 的内容。返回解码为文本的页面内容（HTML 转 Markdown）。内容超过约 20000 字符会截断并附 footer。使用其内容时，请以 markdown 链接形式引用 URL。'
+      text: '使用 webFetch 工具获取指定 HTTP(S) URL 的内容。返回解码为文本的页面内容（HTML 转 Markdown）。内容超过约 20000 字符会截断并附 footer。使用其内容时，请以 markdown 链接形式引用 URL。默认 GET；需要 POST/PUT、自定义请求头（如认证 token）或请求体时传 options：webFetch(url, { method, headers, body })。'
     };
   }
 
   async execute(params) {
-    const { url } = params;
+    const { url, method, headers, body } = params;
 
     try {
-      const input = parseFetchArgs(url);
+      const input = parseFetchArgs(url, { method, headers, body });
 
       // 安全限制：只允许 http/https
       const parsedUrl = new URL(input.url);
@@ -115,10 +135,10 @@ class WebFetchTool extends Tool {
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
       try {
-        const response = await fetch(input.url, {
-          method: 'GET',
-          signal: controller.signal,
-        });
+        const fetchOptions = { method: input.method, signal: controller.signal };
+        if (input.headers) fetchOptions.headers = input.headers;
+        if (input.body !== undefined) fetchOptions.body = input.body;
+        const response = await fetch(input.url, fetchOptions);
 
         // 流式读取，限制大小
         const reader = response.body ? response.body.getReader() : null;

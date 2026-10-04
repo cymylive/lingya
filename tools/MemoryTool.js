@@ -122,7 +122,7 @@ class MemoryListTool extends Tool {
   constructor() {
     super(
       'memory_list',
-      '列出所有长期记忆（返回 id/类型/标题/内容）。',
+      '检索长期记忆（返回 id/类型/标题/内容）。当任务涉及用户偏好、历史决策、之前的项目或对话，或不确定是否已有相关记忆时，主动调用它查看全部记忆，不要等用户提醒。',
       {
         type: 'object',
         properties: {
@@ -132,6 +132,24 @@ class MemoryListTool extends Tool {
       },
       'memoryList({ type })'
     );
+  }
+
+  getPromptSection() {
+    return {
+      name: 'tool:memory_list',
+      order: 199,
+      text: [
+        '## 记忆检索规则',
+        '',
+        '上方的"长期记忆"区块只是按当前对话自动匹配的**子集，不保证完整**。出现以下情况时，你应当**主动调用 memoryList() 查看全部记忆**，而不是等用户提醒：',
+        '- 任务涉及用户的偏好、习惯、工作方式',
+        '- 涉及之前讨论过的项目、决策或结论',
+        '- 你不确定是否已有相关记忆可参考',
+        '- 用户问"你还记得……吗"之类的问题',
+        '',
+        '必要时可传 { type } 按类型筛选：user/feedback/topic/reference。',
+      ].join('\n'),
+    };
   }
 
   async execute(params) {

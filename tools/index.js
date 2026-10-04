@@ -27,6 +27,8 @@ const { McpCallTool } = require('./McpCallTool');
 const { McpListServersTool, McpGetToolsTool } = require('./McpQueryTools');
 const { MemorySaveTool, MemoryUpdateTool, MemoryDeleteTool, MemoryListTool } = require('./MemoryTool');
 const { WebSearchTool } = require('./WebSearchTool');
+const { ViewImageTool } = require('./ViewImageTool');
+const { BashBackgroundTool, BashOutputTool, BashKillTool } = require('./BackgroundTaskTool');
 
 // 创建全局工具注册表
 const registry = new ToolRegistry();
@@ -59,6 +61,10 @@ registry.register(new MemoryUpdateTool());
 registry.register(new MemoryDeleteTool());
 registry.register(new MemoryListTool());
 registry.register(new WebSearchTool());
+registry.register(new ViewImageTool());
+registry.register(new BashBackgroundTool());
+registry.register(new BashOutputTool());
+registry.register(new BashKillTool());
 
 // 导出
 module.exports = {
@@ -85,6 +91,10 @@ module.exports = {
   MemoryDeleteTool,
   MemoryListTool,
   WebSearchTool,
+  ViewImageTool,
+  BashBackgroundTool,
+  BashOutputTool,
+  BashKillTool,
   // 便捷方法
   getAllTools: () => registry,
   getToolDescriptions: () => registry.getDescriptions(),

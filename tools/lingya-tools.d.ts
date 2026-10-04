@@ -156,6 +156,29 @@ interface BashOptions {
  */
 declare function bash(command: string, options?: BashOptions): Promise<string>;
 
+/**
+ * 在后台启动一个命令（编译、装依赖、起服务、爬虫、fuzz 等长时间任务），立即返回任务 ID，不阻塞。
+ * 用 bashOutput(taskId) 查看输出，bashKill(taskId) 终止。
+ * @param command 要执行的 shell 命令
+ * @param options 可选，{ description?: string, workdir?: string }
+ * @returns 含任务 ID 的说明文本
+ */
+declare function bashBackground(command: string, options?: { description?: string; workdir?: string }): Promise<string>;
+
+/**
+ * 查看后台任务的输出与状态。
+ * @param taskId bashBackground 返回的任务 ID
+ * @param options 可选，{ wait?: number } 最多等待多少毫秒让任务完成（上限 60000）
+ * @returns 任务状态 + 输出
+ */
+declare function bashOutput(taskId: string, options?: { wait?: number }): Promise<string>;
+
+/**
+ * 终止一个后台任务（含其子进程树）。
+ * @param taskId 后台任务 ID
+ */
+declare function bashKill(taskId: string): Promise<string>;
+
 /** pwsh 的选项 */
 interface PwshOptions {
   /** 命令用途说明（清晰、简洁、主动语态，5-10 词） */
@@ -257,7 +280,16 @@ declare function mysql(options: MySQLOptions): Promise<string>;
  * @param url 要获取的 HTTP(S) URL
  * @throws URL 为空、非 http/https、请求超时或失败时抛出异常
  */
-declare function webFetch(url: string): Promise<string>;
+declare function webFetch(url: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<string>;
+
+/**
+ * 读取本地图片文件，作为图片附件发送给多模态模型查看。
+ * 支持 png/jpg/jpeg/gif/webp/bmp，单张上限 5MB。
+ * 调用后图片会附在工具结果消息中，你可以直接看到图片内容。
+ * @param filePath 图片文件路径（相对项目根目录或绝对路径）
+ * @throws 文件不存在、格式不支持或过大时抛出异常
+ */
+declare function viewImage(filePath: string): Promise<string>;
 
 /**
  * 打开一个 Electron 浏览器窗口并返回窗口 ID。 打开浏览器后可以使用 injectJS 工具对窗口内容注入js , 以具备操控网页能力

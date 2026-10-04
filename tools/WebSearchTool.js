@@ -7,6 +7,72 @@ const { Tool, ToolResult } = require('./ToolRegistry');
 const DOMAINS = ['cn.bing.com', 'www.bing.com'];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+// Exa AI 托管 MCP 搜索端点（与 opencode 同源），无需 API key。
+const EXA_URL = 'https://mcp.exa.ai/mcp';
+const EXA_TIMEOUT_MS = 25000;
+
+/**
+ * 解析 Exa MCP 响应：优先直连 JSON，其次 SSE 的 data: 行。
+ * 返回 result.content[].text（Exa 已格式化的 Title/URL/Highlights 文本）。
+ */
+function parseExaResponse(body) {
+  const tryParse = (raw) => {
+    const s = String(raw || '').trim();
+    if (!s.startsWith('{')) return null;
+    try {
+      const obj = JSON.parse(s);
+      const content = obj && obj.result && obj.result.content;
+      if (Array.isArray(content)) {
+        const hit = content.find((c) => c && typeof c.text === 'string' && c.text);
+        if (hit) return hit.text;
+      }
+    } catch (_) {}
+    return null;
+  };
+  const direct = tryParse(body);
+  if (direct) return direct;
+  for (const line of String(body).split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const got = tryParse(line.slice(6));
+    if (got) return got;
+  }
+  return null;
+}
+
+/**
+ * Exa 搜索（无需 key）。返回格式化文本，失败时抛错交由调用方降级。
+ */
+async function exaSearch(query, topK) {
+  const payload = {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: 'web_search_exa',
+      arguments: { query: query, type: 'auto', numResults: topK, livecrawl: 'fallback' },
+    },
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EXA_TIMEOUT_MS);
+  try {
+    const resp = await fetch(EXA_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error('Exa 返回状态 ' + resp.status);
+    const text = parseExaResponse(await resp.text());
+    if (!text) throw new Error('Exa 未返回可解析内容');
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function stripHtml(html) {
   return String(html || '')
     .replace(/<[^>]*>/g, '')
@@ -71,7 +137,7 @@ class WebSearchTool extends Tool {
   constructor() {
     super(
       'web_search',
-      '搜索互联网，返回相关网页的标题、URL 和摘要。用于获取实时信息、事实核验或查找来源。',
+      '搜索互联网，返回相关网页的标题、URL、发布时间与正文高亮片段（经 Exa AI 结构化，模型友好）。用于获取实时信息、事实核验或查找来源。Exa 不可用时自动降级为 Bing 抓取。',
       {
         type: 'object',
         properties: {
@@ -106,6 +172,15 @@ class WebSearchTool extends Tool {
       ? Math.min(Math.max(1, Math.floor(params.topK)), 10)
       : 5;
 
+    // 优先 Exa（结构化、模型友好、无需 key），失败降级 Bing 抓取
+    try {
+      const text = await exaSearch(query, topK);
+      console.log('[WebSearchTool] Exa 搜索完成: ' + query);
+      return ToolResult.success(text);
+    } catch (err) {
+      console.log('[WebSearchTool] Exa 失败，降级 Bing: ' + err.message);
+    }
+
     let lastError = null;
     for (const domain of DOMAINS) {
       try {
@@ -125,4 +200,4 @@ class WebSearchTool extends Tool {
   }
 }
 
-module.exports = { WebSearchTool, parseBingResults };
+module.exports = { WebSearchTool, parseBingResults, exaSearch, parseExaResponse };

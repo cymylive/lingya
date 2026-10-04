@@ -248,13 +248,20 @@ function touchMemories(ids) {
 }
 
 /**
- * 初始化注入用：选出记忆并格式化为文本块
+ * 初始化注入用：选出记忆并格式化为文本块。
+ * 当因 token 预算未注入全部记忆时，追加提示，让模型知道应主动 memoryList() 检索。
  */
 function buildMemorySection(options) {
   const memories = getAllMemories();
   const selected = selectMemories(memories, options);
   if (selected.length > 0) touchMemories(selected.map((m) => m.id));
-  return formatMemoriesBlock(selected);
+  let block = formatMemoriesBlock(selected);
+  const omitted = memories.length - selected.length;
+  if (omitted > 0) {
+    block += '\n\n> 注：以上仅为 ' + selected.length + ' 条（按相关性/置顶自动选取），另有 ' + omitted +
+      ' 条未显示。如需完整记忆，请主动调用 memoryList()。';
+  }
+  return block;
 }
 
 // 去重键：内容小写、压缩空白
