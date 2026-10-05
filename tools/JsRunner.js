@@ -16,6 +16,7 @@ const { DANGEROUS_CMDS } = require('./BashTool');
 const { decodeOutput, normalizeCommand } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
 const { inspectCommand } = require('./readonly-guard');
+const { checkGate } = require('./plan-gate');
 
 // 同步执行超时（vm timeout，覆盖无 await 的死循环）
 const SYNC_TIMEOUT = 30 * 1000;
@@ -343,24 +344,32 @@ class JsRunner {
       }
 
       let result;
-      if (op === '__bash') {
-        result = await runBash(args, projectDir, readonlyShell);
-      } else if (deniedTools.has(op)) {
-        // Agent 权限硬拒绝：plan 模式下写/改/删工具在此被拦截
+      if (deniedTools.has(op)) {
+        // Agent 权限硬拒绝优先（plan 模式本就不该写）
         result = {
           success: false,
           error: '当前 Agent 模式禁止使用工具 "' + op + '"（只读/规划模式）。请勿尝试修改文件；' +
             '改为在回复中输出实现计划，由用户批准后切换到 Build 模式执行。',
         };
       } else {
-        const tool = this.registry.get(op);
-        if (!tool) {
-          result = { success: false, error: '未知工具: ' + op };
+        // 计划门禁：写类操作前必须先建立计划（每会话最多拦一次；只读命令/工具放行）
+        const gateToolName = op === '__bash' ? 'bash' : op;
+        const gate = checkGate(gateToolName, args, sessionId, profileId);
+        if (!gate.allowed) {
+          return JSON.stringify({ success: false, error: gate.error });
+        }
+        if (op === '__bash') {
+          result = await runBash(args, projectDir, readonlyShell);
         } else {
-          try {
-            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector, profileId, sessionId }));
-          } catch (err) {
-            result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
+          const tool = this.registry.get(op);
+          if (!tool) {
+            result = { success: false, error: '未知工具: ' + op };
+          } else {
+            try {
+              result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector, profileId, sessionId }));
+            } catch (err) {
+              result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
+            }
           }
         }
       }

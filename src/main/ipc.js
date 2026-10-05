@@ -20,6 +20,7 @@ const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
 const { todoEvents, getTodos } = require('../../tools/TodoWriteTool');
+const { checkGate } = require('../../tools/plan-gate');
 
 /** 解析当前会话 ID：优先实时从窗口 URL 提取，fallback 到 handleUrlChange 维护的值。
  *  execute 与 read 共用此函数，避免"新建会话时 sessionId 从 null 变为真实值"导致 key 漂移。 */
@@ -152,6 +153,11 @@ function registerIpcHandlers() {
     const profileId = ctx ? ctx.profileId : null;
     const sessionId = resolveSessionId(ctx, event.sender);
     const agent = getAgent(agentStore.getAgentId(profileId));
+    // 计划门禁：写类操作前必须先建立计划（每个会话最多拦一次）
+    const gate = checkGate(toolName, params, sessionId, profileId);
+    if (!gate.allowed) {
+      return { callId, success: false, error: gate.error };
+    }
     if ((agent.deniedTools || []).includes(toolName)) {
       return {
         callId,

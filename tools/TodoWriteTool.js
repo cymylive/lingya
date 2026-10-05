@@ -1,5 +1,6 @@
 const { Tool, ToolResult } = require('./ToolRegistry');
 const { EventEmitter } = require('events');
+const { markEstablished } = require('./plan-gate');
 
 // 对齐 dsh STATUSES
 const STATUSES = ['pending', 'in_progress', 'completed'];
@@ -135,6 +136,9 @@ class TodoWriteTool extends Tool {
         inProgress: count('in_progress'),
         completed: count('completed'),
       };
+
+      // 建立计划 → 解除该会话的计划门禁
+      markEstablished(sessionId, profileId);
 
       // 无持久化，仅在内存中短暂存储（可选）
       const key = keyOf(sessionId, profileId);
