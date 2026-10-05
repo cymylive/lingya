@@ -100,3 +100,15 @@ test('无 profileId 归入 __default', async () => {
   await tool.execute({ todos: [{ content: 'D-1', status: 'pending' }] });
   assert.deepStrictEqual(getTodos().map(t => t.content), ['D-1']);
 });
+
+test('同一窗口不同会话互相隔离（sessionId 优先）', async () => {
+  const tool = new TodoWriteTool();
+  // 同一 profileId、不同 sessionId
+  await tool.execute({ profileId: 'winA', sessionId: 'sess1', todos: [{ content: '会话1-计划', status: 'pending' }] });
+  await tool.execute({ profileId: 'winA', sessionId: 'sess2', todos: [{ content: '会话2-计划', status: 'pending' }] });
+
+  assert.deepStrictEqual(getTodos('sess1', 'winA').map(t => t.content), ['会话1-计划']);
+  assert.deepStrictEqual(getTodos('sess2', 'winA').map(t => t.content), ['会话2-计划']);
+  // 未指定 sessionId 时回退到 profileId 维度
+  assert.deepStrictEqual(getTodos(null, 'winA'), []);
+});

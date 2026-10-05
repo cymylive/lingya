@@ -4,18 +4,26 @@ const { EventEmitter } = require('events');
 // 对齐 dsh STATUSES
 const STATUSES = ['pending', 'in_progress', 'completed'];
 
-// 按 profileId 隔离的待办列表（每个窗口/会话各自独立）。
-// 无 profileId 时归入 '__default'。
+// 按会话隔离的待办列表（每个会话各自独立）。
+// 键优先级：sessionId > profileId > '__default'。
 const todosByProfile = new Map();
 const todoEvents = new EventEmitter();
 
-function keyOf(profileId) {
-  return profileId || '__default';
+function keyOf(sessionId, profileId) {
+  return sessionId || profileId || '__default';
 }
 
-function getTodos(profileId) {
-  const list = todosByProfile.get(keyOf(profileId));
-  return list ? list.slice() : [];
+function getTodos(sessionId, profileId) {
+  // 精确键优先
+  const exact = todosByProfile.get(keyOf(sessionId, profileId));
+  if (exact) return exact.slice();
+  // 回退：新建会话期间 URL 可能还没有 sessionId，数据存在 profileId 键下。
+  // 此处按 profileId 兜底，避免"写时无 sessionId、读时有 sessionId"导致读不到。
+  if (sessionId && profileId) {
+    const fallback = todosByProfile.get(profileId);
+    if (fallback) return fallback.slice();
+  }
+  return [];
 }
 
 /**
@@ -111,7 +119,7 @@ class TodoWriteTool extends Tool {
   }
 
   async execute(params) {
-    const { todos, projectDir, profileId } = params;
+    const { todos, projectDir, profileId, sessionId } = params;
 
     try {
       // 串行模式：allowParallelInProgress = false
@@ -125,10 +133,11 @@ class TodoWriteTool extends Tool {
       };
 
       // 无持久化，仅在内存中短暂存储（可选）
-      todosByProfile.set(keyOf(profileId), list);
-      todoEvents.emit('change', { profileId: keyOf(profileId), todos: list });
+      const key = keyOf(sessionId, profileId);
+      todosByProfile.set(key, list);
+      todoEvents.emit('change', { sessionId: sessionId || null, profileId: profileId || null, key, todos: list });
 
-      console.log('[TodoWriteTool] 更新待办列表:', JSON.stringify(counts));
+      console.log('[TodoWriteTool] 更新待办列表: key=' + key + ', sessionId=' + (sessionId || 'null') + ', profileId=' + (profileId || 'null') + ', ' + JSON.stringify(counts));
       return ToolResult.success(formatTodoOutput(counts));
     } catch (err) {
       return ToolResult.error('更新待办列表失败: ' + err.message);

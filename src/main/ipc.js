@@ -21,26 +21,36 @@ const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
 const { todoEvents, getTodos } = require('../../tools/TodoWriteTool');
 
+/** 解析当前会话 ID：优先实时从窗口 URL 提取，fallback 到 handleUrlChange 维护的值。
+ *  execute 与 read 共用此函数，避免"新建会话时 sessionId 从 null 变为真实值"导致 key 漂移。 */
+function resolveSessionId(ctx, sender) {
+  if (!ctx || !ctx.sessionStore) return null;
+  try {
+    const url = sender && typeof sender.getURL === 'function' ? sender.getURL() : null;
+    const fromUrl = url ? ctx.sessionStore.extractSessionIdFromUrl(url) : null;
+    if (fromUrl) return fromUrl;
+  } catch (_) {}
+  return ctx.sessionStore.state.currentSessionId || null;
+}
+
 function registerIpcHandlers() {
   // 飞书同步 IPC
   registerFeishuIpc();
 
-  // 待办列表变更：只推给拥有该 profileId 的窗口（前端「计划」面板实时刷新）
-  todoEvents.on('change', ({ profileId, todos }) => {
+  // 待办列表变更：广播给所有窗口，前端各自按当前会话重新拉取权威数据
+  // （不做 key 匹配，避免新建会话时 execute/read 的 sessionId 时序不一致导致漏推）
+  todoEvents.on('change', ({ todos }) => {
     for (const win of windowState.getAllWindows()) {
-      if (win.isDestroyed()) continue;
-      const ctx = windowState.getContextByWebContents(win.webContents);
-      if (ctx && (ctx.profileId || '__default') === profileId) {
-        win.webContents.send('lingya-todos-updated', todos);
-      }
+      if (!win.isDestroyed()) win.webContents.send('lingya-todos-updated', todos);
     }
   });
 
-  // 读取当前窗口的待办列表
+  // 读取当前窗口/会话的待办列表（回传 sessionId 供前端显示/排查）
   ipcMain.handle('get-todos', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const profileId = ctx ? ctx.profileId : null;
-    return { success: true, todos: getTodos(profileId) };
+    const sessionId = resolveSessionId(ctx, event.sender);
+    return { success: true, todos: getTodos(sessionId, profileId), sessionId };
   });
 
   // 初始化项目
@@ -140,6 +150,7 @@ function registerIpcHandlers() {
     const selectedDir = store ? store.state.selectedProjectDir : null;
     // Agent 权限：plan 模式下禁用写/改/删工具
     const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
     const agent = getAgent(agentStore.getAgentId(profileId));
     if ((agent.deniedTools || []).includes(toolName)) {
       return {
@@ -152,6 +163,7 @@ function registerIpcHandlers() {
       const result = await toolRegistry.execute(toolName, {
         ...params,
         profileId,
+        sessionId,
         projectDir: selectedDir,
         readonlyShell: !!agent.readonlyShell,
       });
@@ -221,12 +233,14 @@ function registerIpcHandlers() {
     const selectedDir = store ? store.state.selectedProjectDir : null;
     // Agent 权限：plan 模式下写/改/删工具在 JsRunner 执行层被硬拒绝
     const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
     const agent = getAgent(agentStore.getAgentId(profileId));
     try {
       const result = await jsRunner.run(code, selectedDir, {
         deniedTools: agent.deniedTools,
         readonlyShell: !!agent.readonlyShell,
         profileId,
+        sessionId,
       });
       return { callId, ...result };
     } catch (err) {
