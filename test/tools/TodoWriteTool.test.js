@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseTodoList, formatTodoOutput, STATUSES } = require('../../tools/TodoWriteTool');
+const { parseTodoList, formatTodoOutput, STATUSES, TodoWriteTool, getTodos, todoEvents } = require('../../tools/TodoWriteTool');
 
 test('parseTodoList 正常列表', () => {
   const list = [
@@ -72,4 +72,31 @@ test('formatTodoOutput 统计', () => {
 
 test('STATUSES 包含正确状态', () => {
   assert.deepStrictEqual(STATUSES, ['pending', 'in_progress', 'completed']);
+});
+
+test('getTodos 按 profileId 隔离', async () => {
+  const tool = new TodoWriteTool();
+  await tool.execute({ profileId: 'pA', todos: [{ content: 'A-1', status: 'pending' }] });
+  await tool.execute({ profileId: 'pB', todos: [{ content: 'B-1', status: 'pending' }] });
+
+  assert.deepStrictEqual(getTodos('pA').map(t => t.content), ['A-1']);
+  assert.deepStrictEqual(getTodos('pB').map(t => t.content), ['B-1']);
+  assert.deepStrictEqual(getTodos('pC'), []);
+});
+
+test('todoEvents 事件携带 profileId 与 todos', async () => {
+  const tool = new TodoWriteTool();
+  let payload = null;
+  const on = (p) => { payload = p; };
+  todoEvents.once('change', on);
+  await tool.execute({ profileId: 'pE', todos: [{ content: 'E-1', status: 'in_progress' }] });
+  assert.ok(payload);
+  assert.strictEqual(payload.profileId, 'pE');
+  assert.strictEqual(payload.todos[0].content, 'E-1');
+});
+
+test('无 profileId 归入 __default', async () => {
+  const tool = new TodoWriteTool();
+  await tool.execute({ todos: [{ content: 'D-1', status: 'pending' }] });
+  assert.deepStrictEqual(getTodos().map(t => t.content), ['D-1']);
 });

@@ -19,10 +19,29 @@ const refusalRewriter = require('./refusal-rewriter');
 const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
+const { todoEvents, getTodos } = require('../../tools/TodoWriteTool');
 
 function registerIpcHandlers() {
   // 飞书同步 IPC
   registerFeishuIpc();
+
+  // 待办列表变更：只推给拥有该 profileId 的窗口（前端「计划」面板实时刷新）
+  todoEvents.on('change', ({ profileId, todos }) => {
+    for (const win of windowState.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      const ctx = windowState.getContextByWebContents(win.webContents);
+      if (ctx && (ctx.profileId || '__default') === profileId) {
+        win.webContents.send('lingya-todos-updated', todos);
+      }
+    }
+  });
+
+  // 读取当前窗口的待办列表
+  ipcMain.handle('get-todos', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    return { success: true, todos: getTodos(profileId) };
+  });
 
   // 初始化项目
   ipcMain.handle('init-project', async (event, { skipPrompt = false, projectDir = null, isCompaction = false } = {}) => {
@@ -132,6 +151,7 @@ function registerIpcHandlers() {
     try {
       const result = await toolRegistry.execute(toolName, {
         ...params,
+        profileId,
         projectDir: selectedDir,
         readonlyShell: !!agent.readonlyShell,
       });
@@ -206,6 +226,7 @@ function registerIpcHandlers() {
       const result = await jsRunner.run(code, selectedDir, {
         deniedTools: agent.deniedTools,
         readonlyShell: !!agent.readonlyShell,
+        profileId,
       });
       return { callId, ...result };
     } catch (err) {

@@ -1,7 +1,22 @@
 const { Tool, ToolResult } = require('./ToolRegistry');
+const { EventEmitter } = require('events');
 
 // 对齐 dsh STATUSES
 const STATUSES = ['pending', 'in_progress', 'completed'];
+
+// 按 profileId 隔离的待办列表（每个窗口/会话各自独立）。
+// 无 profileId 时归入 '__default'。
+const todosByProfile = new Map();
+const todoEvents = new EventEmitter();
+
+function keyOf(profileId) {
+  return profileId || '__default';
+}
+
+function getTodos(profileId) {
+  const list = todosByProfile.get(keyOf(profileId));
+  return list ? list.slice() : [];
+}
 
 /**
  * 对齐 dsh toTodoList：校验并规范化 todo 列表。
@@ -96,7 +111,7 @@ class TodoWriteTool extends Tool {
   }
 
   async execute(params) {
-    const { todos, projectDir } = params;
+    const { todos, projectDir, profileId } = params;
 
     try {
       // 串行模式：allowParallelInProgress = false
@@ -110,8 +125,8 @@ class TodoWriteTool extends Tool {
       };
 
       // 无持久化，仅在内存中短暂存储（可选）
-      if (!globalThis.__lingyaTodos) globalThis.__lingyaTodos = [];
-      globalThis.__lingyaTodos = list;
+      todosByProfile.set(keyOf(profileId), list);
+      todoEvents.emit('change', { profileId: keyOf(profileId), todos: list });
 
       console.log('[TodoWriteTool] 更新待办列表:', JSON.stringify(counts));
       return ToolResult.success(formatTodoOutput(counts));
@@ -121,4 +136,4 @@ class TodoWriteTool extends Tool {
   }
 }
 
-module.exports = { TodoWriteTool, parseTodoList, formatTodoOutput, STATUSES };
+module.exports = { TodoWriteTool, parseTodoList, formatTodoOutput, STATUSES, todoEvents, getTodos };

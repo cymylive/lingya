@@ -110,6 +110,15 @@ let electronAPI = {
   getCurrentAgent: () => {
     return ipcRenderer.invoke('agent-current');
   },
+  // ========== 计划（todoWrite）API ==========
+  getTodos: () => {
+    return ipcRenderer.invoke('get-todos');
+  },
+  onTodosUpdated: (cb) => {
+    const handler = (_e, todos) => cb(todos);
+    ipcRenderer.on('lingya-todos-updated', handler);
+    return () => ipcRenderer.removeListener('lingya-todos-updated', handler);
+  },
   // ========== 安全增强 API（CTF 注入 + 拒绝拦截）==========
   getSecurityConfig: () => {
     return ipcRenderer.invoke('security-get-config').then(r => (r && r.success ? r.config : null));

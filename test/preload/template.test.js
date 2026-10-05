@@ -9,6 +9,8 @@ test('OVERLAY_HTML 包含核心元素', () => {
   assert.ok(OVERLAY_HTML.includes('lingya-session-list'));
   assert.ok(OVERLAY_HTML.includes('lingya-btn-manual-parse'));
   assert.ok(OVERLAY_HTML.includes('lingya-status-badge'));
+  assert.ok(OVERLAY_HTML.includes('lingya-plan-list'));
+  assert.ok(OVERLAY_HTML.includes('data-tab="plan"'));
 });
 
 test('OVERLAY_CSS 包含核心样式', () => {

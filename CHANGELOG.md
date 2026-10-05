@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.11] - 2026-10-05
+
+### Added
+- **计划（Plan）页签**：新增独立页签，实时渲染 AI 通过 `todoWrite` 维护的任务计划
+  - 每项显示序号 + 状态图标（○ 待办 / ◐ 进行中 / ✔ 已完成），已完成项自动置灰加删除线
+  - 页签标题带进度角标（如 "3/5"），不展开也能看到当前进度
+  - `todoEvents` 变更事件通过 IPC 推送（`lingya-todos-updated`），面板订阅后实时刷新，无需手动刷新
+  - 新增 `src/preload/overlay/plan-panel.js`（渲染 + 订阅）与单测 `test/preload/plan-panel.test.js`
+  - 新增 API：`window.electronAPI.getTodos()` / `onTodosUpdated(cb)`
+
+### Changed
+- `tools/TodoWriteTool.js` 导出 `todoEvents` 与 `getTodos(profileId)`，按 profile 隔离待办列表
+- `src/main/ipc.js` 新增 `get-todos` 处理与 `lingya-todos-updated` 广播
+
 ## [0.6.10] - 2026-10-04
 
 ### Fixed

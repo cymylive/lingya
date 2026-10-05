@@ -316,6 +316,7 @@ class JsRunner {
 
     const deniedTools = new Set((options && options.deniedTools) || []);
     const readonlyShell = !!(options && options.readonlyShell);
+    const profileId = (options && options.profileId) || null;
     // 收集本次脚本加载的图片，随结果一起回传（供多模态附件注入）
     const imageCollector = [];
 
@@ -356,7 +357,7 @@ class JsRunner {
           result = { success: false, error: '未知工具: ' + op };
         } else {
           try {
-            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector }));
+            result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector, profileId }));
           } catch (err) {
             result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
           }

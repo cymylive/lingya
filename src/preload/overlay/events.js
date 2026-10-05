@@ -12,6 +12,7 @@ const { bindSkillPanelEvents, closeSkillManager } = require('./skill-panel');
 const { bindSecurityPanelEvents, closeSecurityManager } = require('./security-panel');
 const { bindFeishuPanelEvents, closeFeishuManager } = require('./feishu-panel');
 const { bindAgentPanelEvents } = require('./agent-panel');
+const { bindPlanPanelEvents } = require('./plan-panel');
 
 /**
  * 绑定页签切换：点击页签显示对应面板，并记住上次选择
@@ -769,6 +770,8 @@ function bindEvents() {
   bindFeishuPanelEvents();
   // Agent 模式（Plan / Build）切换
   bindAgentPanelEvents();
+  // 计划（todoWrite）面板
+  bindPlanPanelEvents();
 
   // 新会话自动注入开关：恢复状态 + 保存
   const autoInjectEl = document.getElementById('lingya-auto-inject');
