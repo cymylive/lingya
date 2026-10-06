@@ -21,6 +21,8 @@ const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
 const { todoEvents, getTodos } = require('../../tools/TodoWriteTool');
 const { checkGate } = require('../../tools/plan-gate');
+const memoryJanitor = require('../../tools/memory-janitor');
+const toolLifecycle = require('../../tools/tool-lifecycle');
 
 /** 解析当前会话 ID：优先实时从窗口 URL 提取，fallback 到 handleUrlChange 维护的值。
  *  execute 与 read 共用此函数，避免"新建会话时 sessionId 从 null 变为真实值"导致 key 漂移。 */
@@ -166,14 +168,32 @@ function registerIpcHandlers() {
       };
     }
     try {
-      const result = await toolRegistry.execute(toolName, {
-        ...params,
-        profileId,
-        sessionId,
-        projectDir: selectedDir,
-        readonlyShell: !!agent.readonlyShell,
-      });
-      return { callId, success: result.success, data: result.data, error: result.error };
+      // 登记本次工具调用（本模块分配 ID + 会话隔离键）
+      const sessionKey = (profileId || 'p') + '::' + (sessionId || 's');
+      const tlId = toolLifecycle.register(sessionKey, toolName);
+      const holder = { data: null, output: null, images: null };
+      try {
+        const result = await toolRegistry.execute(toolName, {
+          ...params,
+          profileId,
+          sessionId,
+          projectDir: selectedDir,
+          readonlyShell: !!agent.readonlyShell,
+        });
+        const payload = { callId, success: result.success, data: result.data, error: result.error };
+        // 把本次结果挂到本模块登记的 ID 上（只记录引用，便于之后释放）
+        toolLifecycle.attach(tlId, holder);
+        holder.data = payload.data;
+        holder.output = payload.error || null;
+        toolLifecycle.markDone(tlId);
+        // 只清理本会话已完成的条目（不碰其它会话，也不做全局 GC）
+        toolLifecycle.sweepSession(sessionKey, 0);
+        return payload;
+      } catch (innerErr) {
+        toolLifecycle.markDone(tlId);
+        toolLifecycle.sweepSession(sessionKey, 0);
+        throw innerErr;
+      }
     } catch (err) {
       return { callId, success: false, error: err.message };
     }
@@ -223,6 +243,37 @@ function registerIpcHandlers() {
     return { success: true, killed };
   });
 
+  // ========== 内存诊断 / 手动回收 ==========
+  ipcMain.handle('memory-status', async () => {
+    try { return { success: true, ...memoryJanitor.status(), lifecycle: toolLifecycle.stats() }; }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  // 工具生命周期统计（本模块登记的 ID 情况）
+  ipcMain.handle('tool-lifecycle-stats', async () => {
+    try { return { success: true, ...toolLifecycle.stats() }; }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  // 手动清理指定会话的已完成工具条目（不传 sessionKey 则用当前窗口会话）
+  ipcMain.handle('tool-lifecycle-sweep', async (event, { sessionKey } = {}) => {
+    try {
+      let key = sessionKey;
+      if (!key) {
+        const ctx = windowState.getContextByWebContents(event.sender);
+        const pid = ctx ? ctx.profileId : null;
+        const sid = resolveSessionId(ctx, event.sender);
+        key = (pid || 'p') + '::' + (sid || 's');
+      }
+      const cleaned = toolLifecycle.sweepSession(key, 0);
+      return { success: true, cleaned, sessionKey: key, ...toolLifecycle.stats() };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('memory-collect', async () => {
+    try {
+      const ok = memoryJanitor.collect(false);
+      return { success: true, collected: ok, ...memoryJanitor.status() };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
   // 用户下次发消息时清除中止标志，恢复正常执行
   ipcMain.handle('clear-abort', async () => {
     activeProcesses.clearAborted();
@@ -242,13 +293,28 @@ function registerIpcHandlers() {
     const sessionId = resolveSessionId(ctx, event.sender);
     const agent = getAgent(agentStore.getAgentId(profileId));
     try {
-      const result = await jsRunner.run(code, selectedDir, {
-        deniedTools: agent.deniedTools,
-        readonlyShell: !!agent.readonlyShell,
-        profileId,
-        sessionId,
-      });
-      return { callId, ...result };
+      const sessionKey = (profileId || 'p') + '::' + (sessionId || 's');
+      const tlId = toolLifecycle.register(sessionKey, '__js_script__');
+      const holder = { data: null, output: null, images: null };
+      try {
+        const result = await jsRunner.run(code, selectedDir, {
+          deniedTools: agent.deniedTools,
+          readonlyShell: !!agent.readonlyShell,
+          profileId,
+          sessionId,
+        });
+        // 挂引用 + 标记完成 + 只清本会话已完成条目
+        toolLifecycle.attach(tlId, holder);
+        holder.output = result.output || null;
+        holder.images = result.images || null;
+        toolLifecycle.markDone(tlId);
+        toolLifecycle.sweepSession(sessionKey, 0);
+        return { callId, ...result };
+      } catch (innerErr) {
+        toolLifecycle.markDone(tlId);
+        toolLifecycle.sweepSession(sessionKey, 0);
+        throw innerErr;
+      }
     } catch (err) {
       return { callId, success: false, error: err.message };
     }

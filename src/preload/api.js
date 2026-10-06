@@ -35,6 +35,11 @@ let electronAPI = {
   stopExecution: () => {
     return ipcRenderer.invoke('abort-execution');
   },
+  // 内存诊断 / 手动回收
+  memoryStatus: () => ipcRenderer.invoke('memory-status'),
+  memoryCollect: () => ipcRenderer.invoke('memory-collect'),
+  toolLifecycleStats: () => ipcRenderer.invoke('tool-lifecycle-stats'),
+  toolLifecycleSweep: (sessionKey) => ipcRenderer.invoke('tool-lifecycle-sweep', { sessionKey }),
   clearAbort: () => {
     return ipcRenderer.invoke('clear-abort');
   },

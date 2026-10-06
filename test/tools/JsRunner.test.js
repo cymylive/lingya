@@ -45,3 +45,28 @@ test('JsRunner 未知工具报错', async () => {
   assert.strictEqual(r.success, false);
   assert.ok(r.error);
 });
+
+
+test('JsRunner 每次工具调用都分配独立 lifecycle ID（会话隔离）', async () => {
+  const tl = require('../../tools/tool-lifecycle');
+  // 打桩记录
+  const calls = [];
+  const origRegister = tl.register;
+  const origMarkDone = tl.markDone;
+  tl.register = function (...a) { calls.push('reg:' + a[1]); return origRegister.apply(this, a); };
+  tl.markDone = function (...a) { calls.push('done'); return origMarkDone.apply(this, a); };
+  try {
+    const runner = new JsRunner(registry);
+    const code = 'await read("package.json"); await read("package-lock.json");';
+    const r = await runner.run(code, process.cwd(), { profileId: 'testP', sessionId: 'testS' });
+    assert.strictEqual(r.success, true);
+    // 2 次工具调用 → 2 次 register + 2 次 markDone
+    const regs = calls.filter(x => x.startsWith('reg:'));
+    const dones = calls.filter(x => x === 'done');
+    assert.strictEqual(regs.length, 2, '应有 2 次 register, 实际: ' + JSON.stringify(calls));
+    assert.strictEqual(dones.length, 2, '应有 2 次 markDone');
+  } finally {
+    tl.register = origRegister;
+    tl.markDone = origMarkDone;
+  }
+});

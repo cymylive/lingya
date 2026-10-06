@@ -9,6 +9,20 @@ const state = require('./state');
 // 是否正在执行命令或工具
 let isExecuting = false;
 
+// 历史记录单条输出上限（防止大输出常驻内存）
+const HISTORY_OUTPUT_LIMIT = 8 * 1024;  // 8KB
+
+/**
+ * 截断历史记录的输出，避免大结果常驻内存
+ * @param {string} text
+ * @returns {string}
+ */
+function clipForHistory(text) {
+  const s = String(text == null ? '' : text);
+  if (s.length <= HISTORY_OUTPUT_LIMIT) return s;
+  return s.slice(0, HISTORY_OUTPUT_LIMIT) + String.fromCharCode(10) + '...（历史记录已截断，完整输出仅当次可见）';
+}
+
 /**
  * 通知用户检测到工具调用（闪烁状态徽章 + 更新预览）
  */
@@ -79,7 +93,7 @@ async function handleJsToolScript(code) {
       id: callId,
       command: '[JS] ' + truncate((code.split(String.fromCharCode(10))[0] || code), 60),
       success: result.success,
-      output: result.success ? (result.output || '') : (result.error || '未知错误'),
+      output: clipForHistory(result.success ? (result.output || '') : (result.error || '未知错误')),
       timestamp: Date.now(),
     });
 
@@ -151,7 +165,7 @@ async function handleToolCall(toolCall) {
       id: callId,
       command: '[工具] ' + toolName,
       success: result.success,
-      output: result.success ? JSON.stringify(result.data, null, 2) : (result.error || '未知错误'),
+      output: clipForHistory(result.success ? JSON.stringify(result.data, null, 2) : (result.error || '未知错误')),
       timestamp: Date.now(),
     });
 
@@ -186,4 +200,5 @@ module.exports = {
   handleJsToolScript,
   notifyToolCallDetected,
   notifyJsScriptDetected,
+  clipForHistory,
 };

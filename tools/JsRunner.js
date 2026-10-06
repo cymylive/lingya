@@ -17,6 +17,8 @@ const { decodeOutput, normalizeCommand } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
 const { inspectCommand } = require('./readonly-guard');
 const { checkGate } = require('./plan-gate');
+const toolLifecycle = require('./tool-lifecycle');
+const memoryJanitor = require('./memory-janitor');
 
 // 同步执行超时（vm timeout，覆盖无 await 的死循环）
 const SYNC_TIMEOUT = 30 * 1000;
@@ -343,6 +345,11 @@ class JsRunner {
         args = {};
       }
 
+      // ★ 为本次工具调用分配独立 ID（本模块分配，按会话隔离）
+      const tlSessionKey = (profileId || 'p') + '::' + (sessionId || 's');
+      const tlId = toolLifecycle.register(tlSessionKey, op);
+      const tlHolder = { data: null, output: null, images: null };
+
       let result;
       if (deniedTools.has(op)) {
         // Agent 权限硬拒绝优先（plan 模式本就不该写）
@@ -373,6 +380,15 @@ class JsRunner {
           }
         }
       }
+      // ★ 标记完成 + 挂引用 + 只清理本会话已完成条目
+      toolLifecycle.attach(tlId, tlHolder);
+      tlHolder.data = (result && result.data) || null;
+      tlHolder.output = (result && (result.error || result.output)) || null;
+      tlHolder.images = (result && result.images) || null;
+      toolLifecycle.markDone(tlId);
+      toolLifecycle.sweepSession(tlSessionKey, 0);
+      // 释放引用后主动触发 GC（节流），让物理内存尽快归还 OS
+      memoryJanitor.collect(true);
       return JSON.stringify(result);
     };
 
@@ -456,6 +472,8 @@ class JsRunner {
       return { success: false, error: err && err.message ? err.message : String(err) };
     } finally {
       if (settleTimer) clearTimeout(settleTimer);
+      // 整个脚本执行结束：释放沙箱与累积结果后触发一次 GC
+      memoryJanitor.collect(true);
     }
   }
 }
