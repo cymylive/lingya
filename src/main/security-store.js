@@ -31,6 +31,10 @@ const DEFAULT_CONFIG = {
   // 无计划兜底续跑：AI 未建 todo 计划、但本会话执行过工具后又停下时，自动催其继续。
   // 仅在"执行过工具的任务型会话"生效，纯问答/闲聊不受影响。
   unplannedContinueEnabled: true,
+  // 停滞监督者：独立心跳，检测到"有计划未完成 + 长时间无活动"时自动催促。
+  stallSupervisorEnabled: true,
+  stallThresholdMs: 120000,   // 停滞判定阈值（毫秒），默认 120s
+  stallContinueMax: 5,        // 停滞催促上限（次）
   refusalEnabled: false,
   aiRewriteEnabled: false,
   aiRewriteViaChat: false,
@@ -107,9 +111,9 @@ function updateConfig(patch) {
     if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
     if (key === 'customKeywords') {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
-    } else if (key === 'autoContinueMax' || key === 'planContinueMax') {
+    } else if (key === 'autoContinueMax' || key === 'planContinueMax' || key === 'stallThresholdMs' || key === 'stallContinueMax') {
       next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）

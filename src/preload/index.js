@@ -79,6 +79,9 @@ function init() {
 
     // 定时任务：接收主进程下发的任务指令并发送给 AI
     require('./dom/schedule-bridge').initScheduleBridge();
+
+    // 停滞监督者：独立心跳，检测到任务卡住时自动催促继续
+    require('./dom/supervisor').startSupervisor();
   } catch (err) {
     console.error('[LingYa] init() 出错:', err);
     // 兜底：即使出错也强制显示面板

@@ -48,6 +48,9 @@ function maybeInject() {
   const dir = getLastDir();
   if (!dir) return;                         // 无记住的目录：退回手动（方案 A）
   lastInjectedSessionId = sid;
+  // 新会话：清空任务型标记 + 停滞计数，避免上一会话的状态串到新会话
+  try { require('./state').resetTaskFlags(); } catch (_) {}
+  try { require('./supervisor').resetStall(); } catch (_) {}
   console.log('[LingYa AutoInject] 新会话 ' + sid + '，自动注入记忆+技能（目录=' + dir + '）');
   try {
     window.electronAPI.initProject(dir, false);

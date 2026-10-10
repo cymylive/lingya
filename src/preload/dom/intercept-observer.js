@@ -20,6 +20,18 @@ const XML_HINT_MAX = 10;
 let lastProcessedText = '';
 // 最近一次拦截到的完整回复文本（供手动解析复用，不依赖 DOM）
 let lastInterceptedText = '';
+
+// 串行化处理队列：processInterceptedResponse 可能因工具/JS 脚本执行耗时数十秒，
+// 期间若又有 lingya-ai-response 事件到达（用户手动发消息、页面重试等），
+// 事件监听器不会等待前一个 async 完成 → 并发重入，导致状态错乱、回复丢失。
+// 用 Promise 链把处理强制串行，后到的事件排队执行。
+let processingChain = Promise.resolve();
+function enqueueProcessing(taskFn) {
+  processingChain = processingChain.then(taskFn).catch((err) => {
+    console.error('[LingYa][拦截] 队列处理出错:', err);
+  });
+  return processingChain;
+}
 // "AI 生成中" 超时兜底定时器（防止 finish 事件丢失导致状态卡死）
 let generateTimeout = null;
 const GENERATE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -52,13 +64,38 @@ const PLAN_CONTINUE_WINDOW_MS = 180000;
 // 无计划兜底续跑：AI 没用 todoWrite 建计划、但本会话执行过工具（说明是任务型会话），
 // 之后发了纯文本停下 —— 视为任务中途停下，自动催其继续。
 // 护栏：仅"本会话执行过工具"才触发，纯问答/闲聊会话不受影响。
-let sessionHadToolExecution = false;
+// 注：工具执行标记统一放 state.sessionHadToolExecution（监督者也要用）
 let unplannedContinueCount = 0;
 let lastUnplannedContinueAt = 0;
 const UNPLANNED_CONTINUE_WINDOW_MS = 180000;
 // AI 明确表示任务已完成时，不再兜底催促（避免催到死）
 const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|所有步骤(已)?完成|没有(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
 
+
+/**
+ * 判断 AI 的纯文本回复是否在"向用户提问 / 等用户决策"。
+ * 命中时不应自动续跑 —— 球在用户那边，AI 需要的是答案而非"继续"。
+ *
+ * 两类信号：
+ *   1) 疑问式：结尾问号、征询句式
+ *   2) 祈使式等待：不含问号但语义是"等你发话"（说一声/告诉我/你决定…）
+ */
+function looksLikeUserQuestion(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return false;
+  // 结尾问号（中英文）
+  if (/[?？]\s*$/.test(text)) return true;
+
+  const tail = text.slice(-400);
+
+  // 疑问式征询
+  if (/(选哪个|选哪一|要不要我|请你选择|请你确认|请你决定|你希望我|需要我继续|是否要我|是否继续|告诉我你|等你回复|等你确认|等你答复|由你决定|方案\s*[A-D]|[A-D][）).、])/i.test(tail)) return true;
+
+  // 祈使式等待（无问号，但明确把决策权交回用户）
+  if (/(说一声|告诉我即可|告诉我一声|你定|你决定|由你拍板|随时说|需要就|需要的话|想要的话|按你说的|等你指示|听你的|你来选|你来定|可以就|确认后|确认一下|回复我|发我)/i.test(tail)) return true;
+
+  return false;
+}
 
 function looksLikeIncompleteCodeError(error) {
   if (!error || typeof error !== 'string') return false;
@@ -249,7 +286,7 @@ async function continueIfPlanUnfinished(raw) {
   //   2) 本会话执行过工具（任务型会话，排除纯问答）
   //   3) AI 本轮未明说"任务已完成"
   if (cfg && cfg.unplannedContinueEnabled === false) return false;
-  if (!sessionHadToolExecution) return false;
+  if (!state.sessionHadToolExecution) return false;
   if (raw && DONE_HINT_RE.test(String(raw))) {
     unplannedContinueCount = 0; // AI 说做完了 → 视为收尾，重置兜底预算
     return false;
@@ -278,6 +315,8 @@ async function continueIfPlanUnfinished(raw) {
  * @param {boolean} [force] 为 true 时跳过去重（手动解析重新执行同一条时使用）
  */
 async function processInterceptedResponse(text, force, interrupted) {
+  state.touch(); // 任何 AI 回复到达 = 有活动
+  state.awaitingUserInput = false; // 新回复到达 → 说明用户已交互，清除等待标志
   const raw = (text || '').trim();
   if (!raw) return;
   // 用户已点停止：丢弃本次回复，不执行任何工具、不回传结果
@@ -294,7 +333,11 @@ async function processInterceptedResponse(text, force, interrupted) {
   if (interrupted) {
     const handled = await handleInterruptedIfNeeded(raw);
     if (handled) return;
-    console.log('[LingYa][拦截] 生成中断但未自动续写（配置关闭或达到上限），丢弃中断内容');
+    // 兜底：即使未开启「自动续写」（或已达其上限），只要本会话有未完成计划、
+    // 或执行过工具（任务型会话），也主动催一次 —— 否则中断内容被直接丢弃 = 循环卡死。
+    console.log('[LingYa][拦截] 生成中断且未自动续写，回退到计划续跑');
+    if (await continueIfPlanUnfinished(raw)) return;
+    console.log('[LingYa][拦截] 生成中断内容无法续跑（无计划且非任务会话），丢弃');
     return; // 中断内容不可信，不执行其中的工具调用
   }
   // 正常完成：清空续写计数
@@ -323,7 +366,7 @@ async function processInterceptedResponse(text, force, interrupted) {
     xmlHintCount = 0;
     planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
     unplannedContinueCount = 0;
-    sessionHadToolExecution = true; // 本会话已执行过工具 → 允许无计划兜底续跑
+    state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
     emitToolCall({ phase: 'start' });
     const results = await executeJsBlocksWithRetry(jsBlocks);
     emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
@@ -343,7 +386,7 @@ async function processInterceptedResponse(text, force, interrupted) {
     xmlHintCount = 0;
     planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
     unplannedContinueCount = 0;
-    sessionHadToolExecution = true; // 本会话已执行过工具 → 允许无计划兜底续跑
+    state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
     if (!hasTool(toolCall.toolName)) {
       console.log('[LingYa][拦截] 工具不存在: ' + toolCall.toolName);
       sendToolResultToChat(
@@ -386,9 +429,15 @@ async function processInterceptedResponse(text, force, interrupted) {
     console.error('[LingYa][拦截] 拒绝检测处理出错:', err);
   }
 
-  // 5. 普通文本回复：先确认任务计划是否真的完成
-  //    关键修复：计划仍有未完成项 → AI 停在了"只说不做"，自动催其继续，
-  //    否则循环会在此静默终止（用户需手动发"继续"才能接上）。
+  // 5. 普通文本回复：先判断 AI 是否在向用户提问（等决策）——
+  //    若是，球在用户那边，本轮不催、不判完成，等用户回答。
+  if (looksLikeUserQuestion(raw)) {
+    state.awaitingUserInput = true;
+    console.log('[LingYa][拦截] 检测到 AI 在向用户提问，暂停自动续跑（等待用户输入）');
+    try { markTaskDone(); } catch (_) { /* 显示为待交互 */ }
+    return;
+  }
+  // 计划仍有未完成项 → AI 停在了"只说不做"，自动催其继续
   if (await continueIfPlanUnfinished(raw)) return;
   // 计划已完成 / 本就无计划 → 收尾
   console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用，且无未完成计划');
@@ -440,6 +489,7 @@ function startInterceptObserver() {
   // AI 开始生成回复：悬浮球切换为「AI 生成中」
   window.addEventListener('lingya-ai-start', () => {
     try {
+      state.touch(); // AI 开始生成 = 有活动
       // 检测到新一轮 AI 生成开始（用户手动发消息 或 程序发送）
       // 若此前处于「已停止」状态，说明用户主动发起了新对话 → 自动恢复自动执行
       if (state.stopped) {
@@ -480,7 +530,7 @@ function startInterceptObserver() {
       for (const cb of responseListeners) {
         try { cb(detail.text || ''); } catch (_) { /* ignore */ }
       }
-      processInterceptedResponse(detail.text, false, !!detail.interrupted);
+      enqueueProcessing(() => processInterceptedResponse(detail.text, false, !!detail.interrupted));
     } catch (err) {
       console.error('[LingYa][拦截] 处理回复事件出错:', err);
     }

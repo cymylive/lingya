@@ -6,7 +6,7 @@
  * - AI 代码无法访问 require / process / global 等 Node 能力，只能使用注入的工具函数
  * - 工具函数（readFile / readFileWithLines / writeFile / editFile / glob / grep / bash / deleteFile / log）
  *   通过唯一的 __hostBridge 桥接函数回到主进程执行，宿主函数从不向沙箱抛出宿主对象
- * - 每个工具调用都带执行截止时间检查，防止死循环；整体运行有 60 秒超时
+ * - 每个工具调用都带执行截止时间检查，防止死循环；整体运行有 180 秒超时（需容纳一次 60s 的 bashOutput 等待）
  */
 
 const vm = require('vm');
@@ -23,7 +23,9 @@ const memoryJanitor = require('./memory-janitor');
 // 同步执行超时（vm timeout，覆盖无 await 的死循环）
 const SYNC_TIMEOUT = 30 * 1000;
 // 整体运行截止时间（配合宿主桥接检查，覆盖 async 死循环）
-const RUN_DEADLINE = 60 * 1000;
+// 必须明显大于 MAX_WAIT_MS(60s)：单次 bashOutput 的 wait 可占满 60s。
+// 原 60s 与 wait 上限相等 → 长轮询脚本与截止时间赛跑，必现竞态被误判超时。
+const RUN_DEADLINE = 180 * 1000;
 // 输出长度上限
 const OUTPUT_LIMIT = 20000;
 

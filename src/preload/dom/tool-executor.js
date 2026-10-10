@@ -51,6 +51,7 @@ function notifyJsScriptDetected(code) {
  * @returns {Promise<{code: string, result: object}>}
  */
 async function handleJsToolScript(code) {
+  state.touch(); // 脚本执行 = 有活动
   // 已停止：不再执行新脚本
   if (state.stopped) {
     console.log('[LingYa] 已停止，跳过 JS 脚本执行');
@@ -122,6 +123,7 @@ async function handleJsToolScript(code) {
  * 执行工具调用
  */
 async function handleToolCall(toolCall) {
+  state.touch(); // 工具执行 = 有活动
   const { toolName, params, callId } = toolCall;
   // 已停止：不再执行新工具
   if (state.stopped) {

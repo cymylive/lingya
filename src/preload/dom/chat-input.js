@@ -93,6 +93,7 @@ function onUserMessageSent(cb) {
 }
 
 async function sendToChat(msg, tag, fixedDelay, afterSent) {
+  state.touch(); // 发消息 = 有活动
   // 用户主动发消息：清除「已停止」状态，恢复正常自动执行
   if (state.stopped) {
     state.stopped = false;
