@@ -11,6 +11,7 @@ const { bindMemoryPanelEvents, closeMemoryManager } = require('./memory-panel');
 const { bindSkillPanelEvents, closeSkillManager } = require('./skill-panel');
 const { bindSecurityPanelEvents, closeSecurityManager } = require('./security-panel');
 const { bindFeishuPanelEvents, closeFeishuManager } = require('./feishu-panel');
+const { bindSchedulePanelEvents, closeScheduleManager } = require('./schedule-panel');
 const { bindAgentPanelEvents } = require('./agent-panel');
 const { bindPlanPanelEvents } = require('./plan-panel');
 
@@ -768,6 +769,8 @@ function bindEvents() {
   bindSecurityPanelEvents();
   // 飞书同步面板事件
   bindFeishuPanelEvents();
+  // 定时任务面板事件
+  bindSchedulePanelEvents();
   // Agent 模式（Plan / Build）切换
   bindAgentPanelEvents();
   // 计划（todoWrite）面板

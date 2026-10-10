@@ -76,6 +76,9 @@ function init() {
 
     // 飞书同步：上报用户消息/AI回复/工具状态，并接收飞书来消息
     require('./dom/feishu-bridge').initFeishuBridge();
+
+    // 定时任务：接收主进程下发的任务指令并发送给 AI
+    require('./dom/schedule-bridge').initScheduleBridge();
   } catch (err) {
     console.error('[LingYa] init() 出错:', err);
     // 兜底：即使出错也强制显示面板

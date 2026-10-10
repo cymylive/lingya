@@ -60,6 +60,9 @@ async function loadFeishuConfig() {
     setCheck('lingya-feishu-push-ai', c.pushAiReply, true);
     setCheck('lingya-feishu-push-tool', c.pushToolStatus, true);
     setCheck('lingya-feishu-push-toolname', c.pushToolName, false);
+    setCheck('lingya-feishu-push-done', c.pushTaskDone, true);
+    const stallEl = el('lingya-feishu-stall');
+    if (stallEl) stallEl.value = (typeof c.stallTimeoutSec === 'number' ? c.stallTimeoutSec : 150);
     renderStatus(r.status, r.statusDetail);
   } catch (err) {
     showToast('加载飞书配置失败：' + err.message, 3000);
@@ -99,7 +102,14 @@ async function saveFeishuConfig() {
     pushAiReply: !!(el('lingya-feishu-push-ai') && el('lingya-feishu-push-ai').checked),
     pushToolStatus: !!(el('lingya-feishu-push-tool') && el('lingya-feishu-push-tool').checked),
     pushToolName: !!(el('lingya-feishu-push-toolname') && el('lingya-feishu-push-toolname').checked),
+    pushTaskDone: !!(el('lingya-feishu-push-done') && el('lingya-feishu-push-done').checked),
   };
+  const stallEl = el('lingya-feishu-stall');
+  if (stallEl) {
+    const v = parseInt(stallEl.value, 10);
+    // 0 表示关闭看门狗；其余最小值 30 秒
+    data.stallTimeoutSec = (!isNaN(v) && v >= 30) ? v : (v === 0 ? 0 : 150);
+  }
   const secretEl = el('lingya-feishu-secret');
   if (secretEl && secretEl.value) data.appSecret = secretEl.value;
   try {

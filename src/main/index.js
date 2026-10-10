@@ -74,6 +74,13 @@ try {
   console.error('[LingYa] 初始化 Agent 存储失败:', err.message);
 }
 
+// 初始化定时任务存储（全局共享）
+try {
+  require('./schedule-store').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化定时任务存储失败:', err.message);
+}
+
 // 渲染进程日志输出目录（仅开发环境持久化；打包版不写日志文件）
 const RENDERER_LOG_DIR = app.isPackaged
   ? null
@@ -400,6 +407,13 @@ function setupAppMenu() {
 
 // ========== IPC 处理器 ==========
 registerIpcHandlers();
+
+// 定时任务：注册 IPC + 启动调度器（在目标窗口新开对话执行）
+try {
+  require('./schedule-ipc').registerScheduleIpc();
+} catch (err) {
+  console.error('[LingYa] 初始化定时任务失败:', err.message);
+}
 
 // 飞书同步：若已配置并启用则自动连接
 try {

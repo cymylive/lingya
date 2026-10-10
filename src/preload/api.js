@@ -222,6 +222,20 @@ let electronAPI = {
     ipcRenderer.on('feishu-stop', handler);
     return () => ipcRenderer.removeListener('feishu-stop', handler);
   },
+  // ========== 定时任务 API ==========
+  scheduleList: () => ipcRenderer.invoke('schedule-list'),
+  scheduleAdd: (data) => ipcRenderer.invoke('schedule-add', data),
+  scheduleUpdate: (id, patch) => ipcRenderer.invoke('schedule-update', { id, patch }),
+  scheduleDelete: (id) => ipcRenderer.invoke('schedule-delete', { id }),
+  scheduleRunNow: (id) => ipcRenderer.invoke('schedule-run-now', { id }),
+  scheduleListWindows: () => ipcRenderer.invoke('schedule-list-windows'),
+  scheduleValidate: (cron) => ipcRenderer.invoke('schedule-validate', { cron }),
+  scheduleReport: (payload) => ipcRenderer.invoke('schedule-report', payload),
+  onScheduleRun: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('schedule-run', handler);
+    return () => ipcRenderer.removeListener('schedule-run', handler);
+  },
 };
 
 try {

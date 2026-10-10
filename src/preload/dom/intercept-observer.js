@@ -7,7 +7,7 @@ const { extractJsToolBlocks, BT } = require('./js-detector');
 const { tryParseToolCall } = require('./tool-parser');
 const { handleToolCall, handleJsToolScript } = require('./tool-executor');
 const { sendToolResultToChat, sendCombinedJsResultsToChat, sendMessageToChat } = require('./chat-input');
-const { setFabState, getFabState, setStopped } = require('../overlay/ui');
+const { setFabState, getFabState, setStopped, markTaskDone } = require('../overlay/ui');
 const { hasTool, toolNamesList } = require('../tool-names');
 const { detectRefusal } = require('./refusal-detector');
 const state = require('./state');
@@ -292,11 +292,13 @@ async function processInterceptedResponse(text, force, interrupted) {
     console.error('[LingYa][拦截] 拒绝检测处理出错:', err);
   }
 
-  // 5. 普通文本回复
+  // 5. 普通文本回复 → 任务收尾（无后续工具）
   console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用');
   try {
     window.electronAPI.showAiNotification().catch(() => {});
   } catch (e) { /* ignore */ }
+  // 任务完成标志：悬浮球转绿 + 提示（飞书由 feishu-bridge 独立上报 task-done）
+  try { markTaskDone(); } catch (e) { /* ignore */ }
 }
 
 // 工具调用监听器（供飞书同步等订阅工具 start/end 状态）

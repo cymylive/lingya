@@ -61,12 +61,23 @@ function initFeishuBridge() {
     report({ type: 'user-message', text: text, tag: tag || '' });
   });
 
+  // 1b. AI 开始生成 → 上报（手机能看到"进行中"，而非只看到最后一条）
+  try {
+    window.addEventListener('lingya-ai-start', () => {
+      if (!enabled) return;
+      report({ type: 'ai-start' });
+    });
+  } catch (_) {}
+
   // 2. AI 回复完成 → 上报（剥离工具代码块，飞书只看对话）
+  // hasTool=true 表示这轮还要继续调工具，主进程据此判断任务是否真的收尾
   onInterceptedResponse((text) => {
     if (!enabled || !text) return;
     const clean = stripToolBlocks(text);
-    if (!clean) return;
-    report({ type: 'ai-reply', text: clean });
+    const hasTool = /\`\`\`(?:lingya|javascript|js)/i.test(text);
+    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool });
+    // 无后续工具 → 任务收尾，单独上报"完成"标志
+    if (!hasTool) report({ type: 'task-done' });
   });
 
   // 3. 工具调用状态 → 上报（仅状态；工具名是否带上由主进程按配置决定）

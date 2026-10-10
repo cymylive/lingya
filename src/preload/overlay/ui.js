@@ -185,10 +185,11 @@ function setFabState(next) {
   const badge = document.getElementById('lingya-status-badge');
   const label = document.getElementById('lingya-fab-label');
   if (!badge) return;
-  badge.classList.remove('lingya-state-idle', 'lingya-state-generating', 'lingya-state-executing', 'lingya-state-stopped');
+  badge.classList.remove('lingya-state-idle', 'lingya-state-generating', 'lingya-state-executing', 'lingya-state-stopped', 'lingya-state-done');
   badge.classList.add('lingya-state-' + fabState);
   const text = fabState === 'generating' ? 'AI 生成中（右键停止）'
     : fabState === 'executing' ? '执行中（右键停止）'
+    : fabState === 'done' ? '✅ 任务完成'
     : fabState === 'stopped' ? '已停止（发消息恢复）' : '';
   if (label) {
     label.textContent = text;
@@ -230,6 +231,24 @@ function setStopped(stopped) {
 /** 是否处于已停止状态 */
 function isStopped() {
   return fabState === 'stopped';
+}
+
+/** 任务完成标志定时器（done 态几秒后自动回 idle） */
+let doneTimer = null;
+
+/**
+ * 标记任务完成：悬浮球变绿色「✅ 任务完成」+ 弹提示，几秒后自动回空闲。
+ * 由 intercept-observer 在"AI 纯文本收尾、无后续工具"时调用。
+ * 已停止状态不覆盖。
+ */
+function markTaskDone() {
+  if (fabState === 'stopped') return;
+  setFabState('done');
+  showToast('✅ 任务完成', 3000);
+  if (doneTimer) clearTimeout(doneTimer);
+  doneTimer = setTimeout(() => {
+    if (fabState === 'done') setFabState('idle');
+  }, 5000);
 }
 
 /**
@@ -452,6 +471,7 @@ module.exports = {
   showToast,
   showConfirmDialog,
   setTaskStatus,
+  markTaskDone,
   setFabState,
   getFabState,
   setStopped,

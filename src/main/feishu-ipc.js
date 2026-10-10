@@ -18,6 +18,62 @@ let feishuInited = false;
 // 每个 profile 最近的飞书消息来源 { chatId, chatType }，用于把 AI 回复发回来源会话
 const lastFeishuSource = new Map();
 
+// 每个 profile 的任务活跃状态（看门狗用）
+// { active: 是否处于"任务进行中", lastActivity: 最后活动时间戳, warned: 是否已告警 }
+const taskState = new Map();
+
+// 看门狗：每隔一段时间检查各 profile 是否"静默卡住"
+const STALL_CHECK_INTERVAL_MS = 15 * 1000;
+// 静默超时可通过飞书面板配置（stallTimeoutSec，秒），缺省 150 秒；0 表示关闭看门狗
+function getStallTimeoutMs() {
+  const sec = readConfig().stallTimeoutSec;
+  if (typeof sec !== 'number') return 150 * 1000;
+  if (sec === 0) return 0;
+  return (sec >= 30 ? sec : 150) * 1000;
+}
+let watchdogTimer = null;
+
+/** 更新某 profile 的活动时间；active 传 undefined 表示保持原值 */
+function touchActivity(profileId, active) {
+  if (!profileId) return;
+  let st = taskState.get(profileId);
+  if (!st) { st = { active: false, lastActivity: 0, warned: false }; taskState.set(profileId, st); }
+  st.lastActivity = Date.now();
+  st.warned = false;
+  if (active !== undefined) st.active = !!active;
+}
+
+/** 静默超时检查：任务进行中但长期无进展 → 推送告警（每次卡住只告警一次） */
+function startStallWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(() => {
+    try {
+      if (!readConfig().enabled) return;
+      const timeout = getStallTimeoutMs();
+      if (!timeout) return; // 0 = 关闭看门狗
+      const now = Date.now();
+      for (const [profileId, st] of taskState) {
+        if (!st.active || st.warned) continue;
+        if (now - st.lastActivity < timeout) continue;
+        st.warned = true;
+        st.active = false;
+        const chatId = resolveTargetByProfileId(profileId);
+        if (!chatId) continue;
+        const mins = Math.max(1, Math.round((now - st.lastActivity) / 60000));
+        feishuClient.sendText(
+          '⚠️ 任务疑似卡住：已 ' + mins + ' 分钟无进展（既无 AI 输出，也无工具执行）。\n' +
+          '可能原因：网络中断 / 页面掉登录 / 生成被中断。\n' +
+          '可发送任意消息唤醒，或 /stop 后重新下指令。',
+          chatId
+        ).catch(() => {});
+        console.warn('[Feishu] 看门狗告警: profile=' + profileId + ', 静默 ' + mins + ' 分钟');
+      }
+    } catch (err) {
+      console.error('[Feishu] 看门狗异常:', err.message);
+    }
+  }, STALL_CHECK_INTERVAL_MS);
+}
+
 /**
  * 飞书来消息 → 按 chatId 找到"绑定了该群的窗口" → 转发给它的 AI 页面。
  * - 群消息（chatId 非空）：只发给绑了该群的窗口
@@ -244,11 +300,15 @@ function broadcastFeishuMode(enabled) {
  * 优先回"最近一条飞书消息的来源"（私聊→私聊，群→群）；无来源时回退到窗口绑定的群。
  * @returns {string} chat_id，空串表示无处可推
  */
-function resolveReportTarget(ctx) {
-  const src = ctx && ctx.profileId ? lastFeishuSource.get(ctx.profileId) : null;
+function resolveTargetByProfileId(profileId) {
+  const src = profileId ? lastFeishuSource.get(profileId) : null;
   if (src && src.chatId) return src.chatId;
-  const profile = ctx ? profileManager.getProfileById(ctx.profileId) : null;
+  const profile = profileId ? profileManager.getProfileById(profileId) : null;
   return (profile && profile.feishuChatId) || '';
+}
+
+function resolveReportTarget(ctx) {
+  return resolveTargetByProfileId(ctx && ctx.profileId);
 }
 
 /** 初始化飞书（启动时调用：若配置为启用则自动连接） */
@@ -289,6 +349,8 @@ function registerFeishuIpc() {
         pushAiReply: cfg.pushAiReply,
         pushToolStatus: cfg.pushToolStatus,
         pushToolName: cfg.pushToolName,
+        pushTaskDone: cfg.pushTaskDone,
+        stallTimeoutSec: cfg.stallTimeoutSec,
       },
       status: st.status,
       statusDetail: st.detail,
@@ -380,21 +442,40 @@ function registerFeishuIpc() {
       if (!r.success) console.warn('[Feishu] 推送失败（' + label + '）:', r.error);
       return r;
     };
+    // —— 1. 看门狗状态更新（独立于推送开关，必须每次都执行）——
+    // active=true 表示"任务仍在进行中"，看门狗据此判断是否静默卡住
+    const pid = ctx && ctx.profileId;
+    if (type === 'user-message') touchActivity(pid, true);
+    else if (type === 'ai-start') touchActivity(pid, true);
+    else if (type === 'ai-reply') touchActivity(pid, !!(payload && payload.hasTool)); // hasTool=true：还要继续调工具，未收尾
+    else if (type === 'tool-start') touchActivity(pid, true);
+    else if (type === 'tool-end') touchActivity(pid) // 保持 active，等 ai-start/ai-reply 决定收尾
+    else if (type === 'task-done') touchActivity(pid, false); // 任务收尾
+
+    // —— 2. 按配置推送 ——
     try {
       if (type === 'user-message') {
         if (!cfg.pushUserMessage) return { success: true };
         const t = String((payload && payload.text) || '').trim();
         if (t) return await push('👤 我：' + t, 'user-message');
+        return { success: true };
+      } else if (type === 'ai-start') {
+        if (!cfg.pushToolStatus) return { success: true };
+        return await push('🧠 AI 正在生成…', 'ai-start');
       } else if (type === 'ai-reply') {
         if (!cfg.pushAiReply) return { success: true };
         const t = String((payload && payload.text) || '').trim();
         if (t) return await push('🤖 AI：' + t, 'ai-reply');
+        return { success: true };
       } else if (type === 'tool-start') {
         if (!cfg.pushToolStatus) return { success: true };
         return await push(cfg.pushToolName && payload.toolName ? '🔧 正在调用工具：' + payload.toolName : '🔧 AI 正在调用工具…', 'tool-start');
       } else if (type === 'tool-end') {
         if (!cfg.pushToolStatus) return { success: true };
         return await push('✅ 工具调用完成', 'tool-end');
+      } else if (type === 'task-done') {
+        if (!cfg.pushTaskDone) return { success: true };
+        return await push('🏁 任务完成', 'task-done');
       }
     } catch (err) {
       console.error('[Feishu] 推送异常:', err.message);
@@ -402,6 +483,9 @@ function registerFeishuIpc() {
     }
     return { success: true };
   });
+
+  // 启动静默看门狗（任务卡住时主动告警）
+  startStallWatchdog();
 }
 
-module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode, forwardUserMessage, handleFeishuCommand, resolveReportTarget, lastFeishuSource };
+module.exports = { registerFeishuIpc, initFeishu, broadcastFeishuMode, forwardUserMessage, handleFeishuCommand, resolveReportTarget, resolveTargetByProfileId, lastFeishuSource, taskState, touchActivity, getStallTimeoutMs };

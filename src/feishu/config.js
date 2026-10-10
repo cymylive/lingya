@@ -45,6 +45,10 @@ function defaultConfig() {
     pushAiReply: true,
     pushToolStatus: true,
     pushToolName: false,
+    // 任务完成标志（AI 纯文本收尾、无后续工具时推送「✅ 任务完成」）
+    pushTaskDone: true,
+    // 看门狗静默超时（秒）：任务进行中超过该时长无任何进展 → 推送卡住告警
+    stallTimeoutSec: 150,
   };
 }
 
@@ -68,6 +72,11 @@ function readConfig() {
       pushAiReply: raw.pushAiReply !== false,
       pushToolStatus: raw.pushToolStatus !== false,
       pushToolName: raw.pushToolName === true,
+      pushTaskDone: raw.pushTaskDone !== false,
+      // 0 = 关闭看门狗；其余有效值最小 30 秒
+      stallTimeoutSec: (typeof raw.stallTimeoutSec === 'number' &&
+        (raw.stallTimeoutSec === 0 || raw.stallTimeoutSec >= 30))
+        ? Math.floor(raw.stallTimeoutSec) : 150,
     };
     return cache;
   } catch (err) {
@@ -91,6 +100,10 @@ function writeConfig(data) {
       pushAiReply: typeof d.pushAiReply === 'boolean' ? d.pushAiReply : base.pushAiReply,
       pushToolStatus: typeof d.pushToolStatus === 'boolean' ? d.pushToolStatus : base.pushToolStatus,
       pushToolName: typeof d.pushToolName === 'boolean' ? d.pushToolName : base.pushToolName,
+      pushTaskDone: typeof d.pushTaskDone === 'boolean' ? d.pushTaskDone : base.pushTaskDone,
+      stallTimeoutSec: (typeof d.stallTimeoutSec === 'number' &&
+        (d.stallTimeoutSec === 0 || d.stallTimeoutSec >= 30))
+        ? Math.floor(d.stallTimeoutSec) : base.stallTimeoutSec,
     };
     const file = getConfigFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
