@@ -102,9 +102,18 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
       if (setStopped) setStopped(false);
     } catch (_) {}
   }
-  const input = findInputArea();
+  // 输入框可能因页面重渲染短暂消失：重试几次，避免回传静默丢失导致 Agent 循环永久停住
+  let input = findInputArea();
+  for (let i = 0; !input && i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    input = findInputArea();
+  }
   if (!input) {
-    console.log('[LingYa] 找不到输入框，无法发送消息');
+    console.log('[LingYa] 找不到输入框，无法发送消息（重试 5 次后放弃）');
+    try {
+      const { showToast } = require('../overlay/ui');
+      if (showToast) showToast('⚠️ 无法回传结果：找不到输入框，请手动发一条消息恢复', 5000);
+    } catch (_) { /* ignore */ }
     return false;
   }
   if (!(await setInputContent(input, msg))) {

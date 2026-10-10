@@ -38,8 +38,26 @@ const REFUSAL_WINDOW_MS = 60000;
 // 时间窗口判定连续性：距上次中断超过 AUTO_CONTINUE_WINDOW_MS 视为新一轮，计数清零
 let autoContinueCount = 0;
 let lastAutoContinueAt = 0;
-const AUTO_CONTINUE_MAX = 5;
+const AUTO_CONTINUE_MAX_DEFAULT = 5;
 const AUTO_CONTINUE_WINDOW_MS = 120000;
+
+// 计划未完成自动续跑：本轮回复无任何工具调用，但 todo 列表仍有未完成项时，
+// 说明 AI 停在了"只说不做"，应催其继续而不是判定任务完成。
+// 与"生成中断续写"分开计数：工具/JS 真正执行过 = 有进展，重置预算。
+let planContinueCount = 0;
+let lastPlanContinueAt = 0;
+const PLAN_CONTINUE_MAX_DEFAULT = 5;
+const PLAN_CONTINUE_WINDOW_MS = 180000;
+
+// 无计划兜底续跑：AI 没用 todoWrite 建计划、但本会话执行过工具（说明是任务型会话），
+// 之后发了纯文本停下 —— 视为任务中途停下，自动催其继续。
+// 护栏：仅"本会话执行过工具"才触发，纯问答/闲聊会话不受影响。
+let sessionHadToolExecution = false;
+let unplannedContinueCount = 0;
+let lastUnplannedContinueAt = 0;
+const UNPLANNED_CONTINUE_WINDOW_MS = 180000;
+// AI 明确表示任务已完成时，不再兜底催促（避免催到死）
+const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|所有步骤(已)?完成|没有(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
 
 
 function looksLikeIncompleteCodeError(error) {
@@ -97,8 +115,9 @@ async function handleInterruptedIfNeeded(raw) {
   if (now - lastAutoContinueAt > AUTO_CONTINUE_WINDOW_MS) autoContinueCount = 0;
   lastAutoContinueAt = now;
 
-  if (autoContinueCount >= AUTO_CONTINUE_MAX) {
-    console.log('[LingYa][拦截] 已连续自动续写 ' + autoContinueCount + ' 次，停止（防止无限循环）');
+  const autoContinueMax = Number(cfg.autoContinueMax) > 0 ? Math.floor(Number(cfg.autoContinueMax)) : AUTO_CONTINUE_MAX_DEFAULT;
+  if (autoContinueCount >= autoContinueMax) {
+    console.log('[LingYa][拦截] 已连续自动续写 ' + autoContinueCount + ' 次（上限 ' + autoContinueMax + '），停止（防止无限循环）');
     return false;
   }
   autoContinueCount++;
@@ -185,6 +204,75 @@ async function handleRefusalIfNeeded(raw) {
 }
 
 /**
+ * 计划未完成时的自动续跑。
+ * 本轮回复不含任何工具调用，但该会话 todo 列表仍有 pending/in_progress 项
+ * —— 说明 AI 中途停下且没有推进计划，此时不应判定任务完成。
+ * 自动发一条催促消息让 AI 继续下一步。返回 true 表示已发出催促。
+ */
+async function continueIfPlanUnfinished(raw) {
+  if (state.stopped) return false;
+  let cfg = null;
+  try { cfg = await window.electronAPI.getSecurityConfig(); } catch (_) { /* 用默认值 */ }
+  const planContinueMax = (cfg && Number(cfg.planContinueMax) > 0) ? Math.floor(Number(cfg.planContinueMax)) : PLAN_CONTINUE_MAX_DEFAULT;
+
+  let res;
+  try { res = await window.electronAPI.getTodos(); } catch (_) { return false; }
+  const todos = (res && res.success && Array.isArray(res.todos)) ? res.todos : [];
+  const unfinished = todos.filter((t) => t && t.status !== 'completed');
+
+  // ===== 分支 A：有未完成计划 → 催促继续 =====
+  if (unfinished.length > 0) {
+    const now = Date.now();
+    if (now - lastPlanContinueAt > PLAN_CONTINUE_WINDOW_MS) planContinueCount = 0;
+    lastPlanContinueAt = now;
+    if (planContinueCount >= planContinueMax) {
+      console.log('[LingYa][拦截] 计划仍有 ' + unfinished.length + ' 项未完成，但已达续跑上限 ' + planContinueMax + '，停止');
+      return false;
+    }
+    planContinueCount++;
+    const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];
+    console.log('[LingYa][拦截] 计划未完成（剩 ' + unfinished.length + ' 项），自动续跑第 ' + planContinueCount + ' 次，下一项: ' + next.content);
+    sendMessageToChat(
+      '【自动续跑】任务计划尚未完成，还剩 ' + unfinished.length + ' 项未做完。当前应继续：' + next.content +
+      '。请立刻调用工具推进（不要只描述计划、不要停下来等用户确认），完成后用 todoWrite 更新状态，再继续下一项。',
+      '计划续跑'
+    );
+    return true;
+  }
+
+  // 计划已完成或本就没有计划 → 重置计划预算
+  planContinueCount = 0;
+
+  // ===== 分支 B：无计划兜底续跑 =====
+  // 触发条件（缺一不可）：
+  //   1) 开关开启（默认开）
+  //   2) 本会话执行过工具（任务型会话，排除纯问答）
+  //   3) AI 本轮未明说"任务已完成"
+  if (cfg && cfg.unplannedContinueEnabled === false) return false;
+  if (!sessionHadToolExecution) return false;
+  if (raw && DONE_HINT_RE.test(String(raw))) {
+    unplannedContinueCount = 0; // AI 说做完了 → 视为收尾，重置兜底预算
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - lastUnplannedContinueAt > UNPLANNED_CONTINUE_WINDOW_MS) unplannedContinueCount = 0;
+  lastUnplannedContinueAt = now;
+  if (unplannedContinueCount >= planContinueMax) {
+    console.log('[LingYa][拦截] 无计划兜底续跑已达上限 ' + planContinueMax + '，停止');
+    return false;
+  }
+  unplannedContinueCount++;
+  console.log('[LingYa][拦截] 任务会话中断（执行过工具、无 todo 计划），兜底续跑第 ' + unplannedContinueCount + ' 次');
+  sendMessageToChat(
+    '【自动续跑】上一步操作后你停下了。若任务尚未完成，请立即调用工具继续执行下一步（不要只描述计划、不要停下来等用户确认）；' +
+    '若任务确已完成，请用一句话明确说明"任务已完成"，不要调用工具。',
+    '兜底续跑'
+  );
+  return true;
+}
+
+/**
  * 处理一条已完成的 AI 回复文本
  * @param {string} text 完整回复文本（Markdown 原文）
  * @param {boolean} [force] 为 true 时跳过去重（手动解析重新执行同一条时使用）
@@ -233,6 +321,9 @@ async function processInterceptedResponse(text, force, interrupted) {
   if (jsBlocks.length > 0) {
     console.log('[LingYa][拦截] 检测到 JS 工具代码块（' + jsBlocks.length + ' 个），开始执行');
     xmlHintCount = 0;
+    planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
+    unplannedContinueCount = 0;
+    sessionHadToolExecution = true; // 本会话已执行过工具 → 允许无计划兜底续跑
     emitToolCall({ phase: 'start' });
     const results = await executeJsBlocksWithRetry(jsBlocks);
     emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
@@ -250,6 +341,9 @@ async function processInterceptedResponse(text, force, interrupted) {
   const toolCall = tryParseToolCall(raw);
   if (toolCall) {
     xmlHintCount = 0;
+    planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
+    unplannedContinueCount = 0;
+    sessionHadToolExecution = true; // 本会话已执行过工具 → 允许无计划兜底续跑
     if (!hasTool(toolCall.toolName)) {
       console.log('[LingYa][拦截] 工具不存在: ' + toolCall.toolName);
       sendToolResultToChat(
@@ -292,8 +386,12 @@ async function processInterceptedResponse(text, force, interrupted) {
     console.error('[LingYa][拦截] 拒绝检测处理出错:', err);
   }
 
-  // 5. 普通文本回复 → 任务收尾（无后续工具）
-  console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用');
+  // 5. 普通文本回复：先确认任务计划是否真的完成
+  //    关键修复：计划仍有未完成项 → AI 停在了"只说不做"，自动催其继续，
+  //    否则循环会在此静默终止（用户需手动发"继续"才能接上）。
+  if (await continueIfPlanUnfinished(raw)) return;
+  // 计划已完成 / 本就无计划 → 收尾
+  console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用，且无未完成计划');
   try {
     window.electronAPI.showAiNotification().catch(() => {});
   } catch (e) { /* ignore */ }

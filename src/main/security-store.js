@@ -23,6 +23,14 @@ const DEFAULT_CONFIG = {
   ctfPrompt: '',
   autoContinueEnabled: false,
   autoContinueText: '上一条回复在生成中被中断（未正常结束）。请从中断处继续完成，不要重复已输出的内容；若上次内容已完成，请继续下一步。',
+  // 自动续跑上限（次）：
+  //   autoContinueMax —— 生成被中断时的自动"继续"次数上限
+  //   planContinueMax —— 计划未完成时自动催促续跑的次数上限
+  autoContinueMax: 5,
+  planContinueMax: 5,
+  // 无计划兜底续跑：AI 未建 todo 计划、但本会话执行过工具后又停下时，自动催其继续。
+  // 仅在"执行过工具的任务型会话"生效，纯问答/闲聊不受影响。
+  unplannedContinueEnabled: true,
   refusalEnabled: false,
   aiRewriteEnabled: false,
   aiRewriteViaChat: false,
@@ -99,7 +107,9 @@ function updateConfig(patch) {
     if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
     if (key === 'customKeywords') {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled') {
+    } else if (key === 'autoContinueMax' || key === 'planContinueMax') {
+      next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）
@@ -113,6 +123,17 @@ function updateConfig(patch) {
   writeRaw(next);
   console.log('[SecurityStore] 配置已更新');
   return getPublicConfig();
+}
+
+/**
+ * 归一化"正整数"配置：非法/缺省回退默认值，最小 1，上限 10000（防误填天文数字刷屏）。
+ * 传空字符串视为"用默认值"。
+ */
+function normalizePositiveInt(value, fallback) {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(n, 10000);
 }
 
 function normalizeKeywords(input) {

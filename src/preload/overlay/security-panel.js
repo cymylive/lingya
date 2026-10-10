@@ -49,11 +49,17 @@ async function loadConfig() {
     const mock = el('lingya-security-mock');
     const autoContinueEnabled = el('lingya-security-auto-continue-enabled');
     const autoContinueText = el('lingya-security-auto-continue-text');
+    const autoContinueMax = el('lingya-security-auto-continue-max');
+    const planContinueMax = el('lingya-security-plan-continue-max');
+    const unplannedContinueEnabled = el('lingya-security-unplanned-continue-enabled');
 
     if (ctfEnabled) ctfEnabled.checked = !!cfg.ctfInjectionEnabled;
     if (ctfPrompt) ctfPrompt.value = cfg.ctfPrompt || '';
     if (autoContinueEnabled) autoContinueEnabled.checked = !!cfg.autoContinueEnabled;
     if (autoContinueText) autoContinueText.value = cfg.autoContinueText || '';
+    if (autoContinueMax) autoContinueMax.value = cfg.autoContinueMax != null ? cfg.autoContinueMax : 5;
+    if (planContinueMax) planContinueMax.value = cfg.planContinueMax != null ? cfg.planContinueMax : 5;
+    if (unplannedContinueEnabled) unplannedContinueEnabled.checked = cfg.unplannedContinueEnabled !== false;
     if (refusalEnabled) refusalEnabled.checked = !!cfg.refusalEnabled;
     if (aiRewrite) aiRewrite.checked = !!cfg.aiRewriteEnabled;
     const aiRewriteViaChat = el('lingya-security-ai-rewrite-via-chat');
@@ -79,6 +85,9 @@ async function saveConfig() {
     ctfPrompt: el('lingya-security-ctf-prompt') ? el('lingya-security-ctf-prompt').value : '',
     autoContinueEnabled: !!(el('lingya-security-auto-continue-enabled') && el('lingya-security-auto-continue-enabled').checked),
     autoContinueText: el('lingya-security-auto-continue-text') ? el('lingya-security-auto-continue-text').value : '',
+    autoContinueMax: el('lingya-security-auto-continue-max') ? el('lingya-security-auto-continue-max').value : '',
+    planContinueMax: el('lingya-security-plan-continue-max') ? el('lingya-security-plan-continue-max').value : '',
+    unplannedContinueEnabled: !!(el('lingya-security-unplanned-continue-enabled') && el('lingya-security-unplanned-continue-enabled').checked),
     refusalEnabled: !!(el('lingya-security-refusal-enabled') && el('lingya-security-refusal-enabled').checked),
     aiRewriteEnabled: !!(el('lingya-security-ai-rewrite') && el('lingya-security-ai-rewrite').checked),
     aiRewriteViaChat: !!(el('lingya-security-ai-rewrite-via-chat') && el('lingya-security-ai-rewrite-via-chat').checked),
