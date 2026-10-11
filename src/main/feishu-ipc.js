@@ -24,12 +24,12 @@ const taskState = new Map();
 
 // 看门狗：每隔一段时间检查各 profile 是否"静默卡住"
 const STALL_CHECK_INTERVAL_MS = 15 * 1000;
-// 静默超时可通过飞书面板配置（stallTimeoutSec，秒），缺省 240 秒；0 表示关闭看门狗
+// 静默超时可通过飞书面板配置（stallTimeoutSec，秒），缺省 660 秒（须 > bashOutput 600s 等待上限）；0 表示关闭看门狗
 function getStallTimeoutMs() {
   const sec = readConfig().stallTimeoutSec;
-  if (typeof sec !== 'number') return 240 * 1000;
+  if (typeof sec !== 'number') return 660 * 1000;
   if (sec === 0) return 0;
-  return (sec >= 30 ? sec : 240) * 1000;
+  return (sec >= 30 ? sec : 660) * 1000;
 }
 let watchdogTimer = null;
 

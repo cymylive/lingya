@@ -48,8 +48,8 @@ function defaultConfig() {
     // 任务完成标志（AI 纯文本收尾、无后续工具时推送「✅ 任务完成」）
     pushTaskDone: true,
     // 看门狗静默超时（秒）：任务进行中超过该时长无任何进展 → 推送卡住告警
-    // 必须 > bashOutput 单次 wait 上限（150s），否则等一次长任务就会被误报卡住
-    stallTimeoutSec: 240,
+    // 必须 > bashOutput 单次 wait 上限（600s），否则等一次长任务就会被误报卡住
+    stallTimeoutSec: 660,
   };
 }
 
@@ -77,7 +77,7 @@ function readConfig() {
       // 0 = 关闭看门狗；其余有效值最小 30 秒
       stallTimeoutSec: (typeof raw.stallTimeoutSec === 'number' &&
         (raw.stallTimeoutSec === 0 || raw.stallTimeoutSec >= 30))
-        ? Math.floor(raw.stallTimeoutSec) : 240,
+        ? Math.floor(raw.stallTimeoutSec) : 660,
     };
     return cache;
   } catch (err) {

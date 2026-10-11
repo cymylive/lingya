@@ -15,7 +15,7 @@ const { inspectCommand } = require('./readonly-guard');
 const MAX_TASKS = 50;              // 任务表上限，超出时丢弃最旧的已完成任务
 const MAX_STORED_OUTPUT = 100000;  // 单任务累计输出上限（保留尾部）
 const MAX_RETURNED_OUTPUT = 30000; // 单次返回给模型的输出上限
-const MAX_WAIT_MS = 150000;         // bashOutput 的 wait 上限
+const MAX_WAIT_MS = 600000;         // bashOutput 单次 wait 上限（10 分钟，尽量一次等到完成）
 
 const tasks = new Map();
 
@@ -75,11 +75,15 @@ function startBackground(command, options) {
 
 async function waitForDone(task, ms) {
   if (task.done) return true;
-  let timer;
-  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(false), ms); });
-  const result = await Promise.race([task.donePromise.then(() => true), timeout]);
-  clearTimeout(timer);
-  return result;
+  // 可中断轮询：每 500ms 检查一次，任务完成或用户点「停止」都立即返回，
+  // 不必等满整个 ms（否则用户点停止后最长要等 10 分钟才响应）。
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (task.done) return true;
+    if (activeProcesses.isAborted()) return task.done;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return task.done;
 }
 
 function killTask(task) {
@@ -144,7 +148,7 @@ class BashBackgroundTool extends Tool {
         '',
         '长时间运行的命令（编译、装依赖、起服务、爬虫、fuzz 等）用 bashBackground(command, options?) 在后台启动，立即返回任务 ID，不阻塞当前脚本。',
         '',
-        '- 查看输出/状态：bashOutput(taskId)（可传 { wait: 毫秒 } 等待完成，上限 150000）',
+        '- 查看输出/状态：bashOutput(taskId)（可传 { wait: 毫秒 } 等待完成，上限 600000）',
         '- 终止任务：bashKill(taskId)',
         '',
         '典型用法：先 bashBackground("npm run dev") 起服务，再 bashOutput(id, { wait: 3000 }) 确认已监听端口，跑测试，最后 bashKill(id) 收尾。',
@@ -186,12 +190,12 @@ class BashOutputTool extends Tool {
   constructor() {
     super(
       'bash_output',
-      '查看后台任务的输出与状态。可传 wait（毫秒）等待任务完成，上限 150000。',
+      '查看后台任务的输出与状态。可传 wait（毫秒）等待任务完成，上限 600000。',
       {
         type: 'object',
         properties: {
           task_id: { type: 'string', description: '后台任务 ID（bashBackground 返回）' },
-          wait: { type: 'number', description: '最多等待多少毫秒让任务完成（可选，上限 150000）' },
+          wait: { type: 'number', description: '最多等待多少毫秒让任务完成（可选，上限 600000）' },
         },
         required: ['task_id'],
         additionalProperties: false,
@@ -211,8 +215,9 @@ class BashOutputTool extends Tool {
     // 等待结束但任务仍在运行：明确提示模型继续轮询，避免其误以为无法再等而停下
     if (!task.done) {
       text += String.fromCharCode(10) + String.fromCharCode(10) +
-        '[任务仍在运行，未在 ' + Math.round(waitMs / 1000) + 's 内结束。若要继续等待，请再次调用 bashOutput("' +
-        task_id + '", { wait: ' + MAX_WAIT_MS + ' })；或先处理其它事项稍后再查。]';
+        '[任务仍在运行，未在 ' + Math.round(waitMs / 1000) + 's 内结束。请再次调用 bashOutput("' +
+        task_id + '", { wait: ' + MAX_WAIT_MS + ' }) 继续等待（单次最长 10 分钟），直到任务完成；' +
+        '不要只查询一次就停下。若任务本身耗时很长，可多次调用本工具持续监测。]';
     }
     return ToolResult.success(text);
   }

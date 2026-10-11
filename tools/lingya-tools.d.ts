@@ -168,7 +168,7 @@ declare function bashBackground(command: string, options?: { description?: strin
 /**
  * 查看后台任务的输出与状态。
  * @param taskId bashBackground 返回的任务 ID
- * @param options 可选，{ wait?: number } 最多等待多少毫秒让任务完成（上限 150000）
+ * @param options 可选，{ wait?: number } 最多等待多少毫秒让任务完成（上限 600000）
  * @returns 任务状态 + 输出
  */
 declare function bashOutput(taskId: string, options?: { wait?: number }): Promise<string>;
