@@ -71,10 +71,10 @@ test('飞书看门狗：getStallTimeoutMs 从配置读取，0 表示关闭', (t)
   delete require.cache[ipcPath];
   delete require.cache[cfgPath];
 
-  // 默认（无 stallTimeoutSec）→ 150 秒
+  // 默认（无 stallTimeoutSec）→ 240 秒（须 > bashOutput 的 150s wait 上限）
   writeFeishuConfig({});
   let mod = require('../../src/main/feishu-ipc.js');
-  assert.strictEqual(mod.getStallTimeoutMs(), 150 * 1000, '缺省应为 150 秒');
+  assert.strictEqual(mod.getStallTimeoutMs(), 240 * 1000, '缺省应为 240 秒');
 
   // 自定义 300 秒
   delete require.cache[ipcPath];

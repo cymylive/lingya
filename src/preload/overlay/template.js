@@ -363,7 +363,7 @@ const OVERLAY_HTML = [
 '    <div class="lingya-divider"></div>',
 '    <div class="lingya-section">',
 '      <label class="lingya-label">卡住告警阈值（秒，≥30，0 关闭）</label>',
-'      <input id="lingya-feishu-stall" class="lingya-memory-input" type="number" min="0" step="10" placeholder="150" />',
+'      <input id="lingya-feishu-stall" class="lingya-memory-input" type="number" min="0" step="10" placeholder="240" />',
 '      <div class="lingya-feishu-hint">任务进行中超过该时长无任何进展（无 AI 输出也无工具执行）→ 推送「任务疑似卡住」告警。设 0 关闭。</div>',
 '    </div>',
 '    <div class="lingya-actions">',
