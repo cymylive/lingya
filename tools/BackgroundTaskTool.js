@@ -15,7 +15,7 @@ const { inspectCommand } = require('./readonly-guard');
 const MAX_TASKS = 50;              // 任务表上限，超出时丢弃最旧的已完成任务
 const MAX_STORED_OUTPUT = 100000;  // 单任务累计输出上限（保留尾部）
 const MAX_RETURNED_OUTPUT = 30000; // 单次返回给模型的输出上限
-const MAX_WAIT_MS = 60000;         // bashOutput 的 wait 上限
+const MAX_WAIT_MS = 150000;         // bashOutput 的 wait 上限
 
 const tasks = new Map();
 
@@ -144,7 +144,7 @@ class BashBackgroundTool extends Tool {
         '',
         '长时间运行的命令（编译、装依赖、起服务、爬虫、fuzz 等）用 bashBackground(command, options?) 在后台启动，立即返回任务 ID，不阻塞当前脚本。',
         '',
-        '- 查看输出/状态：bashOutput(taskId)（可传 { wait: 毫秒 } 等待完成，上限 60000）',
+        '- 查看输出/状态：bashOutput(taskId)（可传 { wait: 毫秒 } 等待完成，上限 150000）',
         '- 终止任务：bashKill(taskId)',
         '',
         '典型用法：先 bashBackground("npm run dev") 起服务，再 bashOutput(id, { wait: 3000 }) 确认已监听端口，跑测试，最后 bashKill(id) 收尾。',
@@ -186,12 +186,12 @@ class BashOutputTool extends Tool {
   constructor() {
     super(
       'bash_output',
-      '查看后台任务的输出与状态。可传 wait（毫秒）等待任务完成，上限 60000。',
+      '查看后台任务的输出与状态。可传 wait（毫秒）等待任务完成，上限 150000。',
       {
         type: 'object',
         properties: {
           task_id: { type: 'string', description: '后台任务 ID（bashBackground 返回）' },
-          wait: { type: 'number', description: '最多等待多少毫秒让任务完成（可选，上限 60000）' },
+          wait: { type: 'number', description: '最多等待多少毫秒让任务完成（可选，上限 150000）' },
         },
         required: ['task_id'],
         additionalProperties: false,
@@ -207,7 +207,14 @@ class BashOutputTool extends Tool {
     if (!task) return ToolResult.error('后台任务不存在: ' + task_id);
     const waitMs = typeof wait === 'number' && wait > 0 ? Math.min(wait, MAX_WAIT_MS) : 0;
     if (waitMs > 0 && !task.done) await waitForDone(task, waitMs);
-    return ToolResult.success(formatTask(task));
+    let text = formatTask(task);
+    // 等待结束但任务仍在运行：明确提示模型继续轮询，避免其误以为无法再等而停下
+    if (!task.done) {
+      text += String.fromCharCode(10) + String.fromCharCode(10) +
+        '[任务仍在运行，未在 ' + Math.round(waitMs / 1000) + 's 内结束。若要继续等待，请再次调用 bashOutput("' +
+        task_id + '", { wait: ' + MAX_WAIT_MS + ' })；或先处理其它事项稍后再查。]';
+    }
+    return ToolResult.success(text);
   }
 }
 

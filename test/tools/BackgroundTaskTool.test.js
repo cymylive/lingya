@@ -43,3 +43,15 @@ test('后台任务：空命令报错', async () => {
   const bg = new BashBackgroundTool();
   assert.strictEqual((await bg.execute({ command: '' })).success, false);
 });
+
+test('后台任务：wait 超时后返回"仍在运行"提示（不静默卡住）', async () => {
+  const bg = new BashBackgroundTool();
+  const out = new BashOutputTool();
+  const r1 = await bg.execute({ command: 'node -e "setInterval(()=>{},1000)"' });
+  const id = (r1.data.match(/任务 ID: (\S+)/) || [])[1];
+  const r2 = await out.execute({ task_id: id, wait: 300 });
+  assert.strictEqual(r2.success, true);
+  assert.match(r2.data, /运行中/);
+  assert.match(r2.data, /仍在运行/);
+  await new BashKillTool().execute({ task_id: id });
+});
