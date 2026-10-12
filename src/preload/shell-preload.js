@@ -24,6 +24,11 @@ const api = {
   deleteFile: (filePath, useTrash = true) => ipcRenderer.invoke('shell-delete-file', { filePath, useTrash }),
   // 复制文本到剪贴板
   copyText: (text) => ipcRenderer.invoke('shell-copy-text', { text }),
+  // 文件操作
+  createFile: (parentDir, name) => ipcRenderer.invoke('shell-create-file', { parentDir, name }),
+  createDir: (parentDir, name) => ipcRenderer.invoke('shell-create-dir', { parentDir, name }),
+  rename: (targetPath, newName) => ipcRenderer.invoke('shell-rename', { targetPath, newName }),
+  writeFile: (filePath, content) => ipcRenderer.invoke('shell-write-file', { filePath, content }),
 };
 
 try {

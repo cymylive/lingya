@@ -182,31 +182,39 @@ function registerIpcHandlers() {
         return { success: false, error: '文件不在项目目录内' };
       }
       const stat = fs.statSync(realFile);
-      if (!stat.isFile()) return { success: false, error: '只能删除文件（不支持目录）' };
+      const isDir = stat.isDirectory();
 
       // 二次确认（主进程弹原生框，避免 renderer 伪造）
       const { dialog } = require('electron');
       const win = windowState.getMainWindow();
       const name = path.basename(realFile);
+      const kind = isDir ? '文件夹' : '文件';
       const confirmRes = dialog.showMessageBoxSync(win, {
         type: 'warning',
         buttons: ['取消', useTrash ? '移到回收站' : '永久删除'],
         defaultId: 1,
         cancelId: 0,
         title: '确认删除',
-        message: '确定要删除「' + name + '」吗？',
-        detail: useTrash ? '文件将移入系统回收站（可恢复）' : '此操作不可恢复！',
+        message: '确定要删除' + kind + '「' + name + '」吗？',
+        detail: isDir
+          ? (useTrash ? '该文件夹及其全部内容将移入系统回收站（可恢复）' : '该文件夹及其全部内容将被永久删除，不可恢复！')
+          : (useTrash ? '文件将移入系统回收站（可恢复）' : '此操作不可恢复！'),
       });
       if (confirmRes !== 1) return { success: false, canceled: true };
 
       if (useTrash) {
+        // shell.trashItem 同时支持文件与目录
         await require('electron').shell.trashItem(realFile);
-        console.log('[LingYa] 已移到回收站:', realFile);
-        return { success: true, path: realFile, trashed: true };
+        console.log('[LingYa] 已移到回收站:', realFile, isDir ? '(目录)' : '');
+        return { success: true, path: realFile, trashed: true, isDir: isDir };
       } else {
-        fs.unlinkSync(realFile);
-        console.log('[LingYa] 已永久删除:', realFile);
-        return { success: true, path: realFile, trashed: false };
+        if (isDir) {
+          fs.rmSync(realFile, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(realFile);
+        }
+        console.log('[LingYa] 已永久删除:', realFile, isDir ? '(目录)' : '');
+        return { success: true, path: realFile, trashed: false, isDir: isDir };
       }
     } catch (err) { return { success: false, error: err.message }; }
   });
@@ -217,6 +225,107 @@ function registerIpcHandlers() {
       if (typeof text !== 'string' || !text) return { success: false, error: '无内容' };
       require('electron').clipboard.writeText(text);
       return { success: true, length: text.length };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // ========== 壳页面文件操作（新建/重命名/保存）==========
+  // 共用：解析项目根 + 校验目标在根内
+  function _resolveInProject(event, targetPath) {
+    const path = require('path');
+    const fs = require('fs');
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    const root = store && store.state ? store.state.selectedProjectDir : null;
+    if (!root) throw new Error('尚未选择项目目录');
+    const realRoot = fs.realpathSync(root);
+    if (!targetPath) throw new Error('缺少路径');
+    // 目标可能尚不存在 → 用其父目录 realpath 校验
+    let realTarget;
+    if (fs.existsSync(targetPath)) {
+      realTarget = fs.realpathSync(targetPath);
+    } else {
+      const parent = path.dirname(targetPath);
+      if (!fs.existsSync(parent)) throw new Error('父目录不存在');
+      const realParent = fs.realpathSync(parent);
+      if (realParent !== realRoot && !realParent.startsWith(realRoot + path.sep)) {
+        throw new Error('目标不在项目目录内');
+      }
+      return { realRoot, absPath: path.join(realParent, path.basename(targetPath)) };
+    }
+    if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) {
+      throw new Error('目标不在项目目录内');
+    }
+    return { realRoot, absPath: realTarget };
+  }
+
+  // 校验名称合法性（防路径穿越）
+  function _checkName(name) {
+    const s = String(name || '').trim();
+    if (!s) throw new Error('名称不能为空');
+    if (s === '.' || s === '..') throw new Error('名称非法');
+    if (/[\\/:*?"<>|]/.test(s)) throw new Error('名称不能包含 \\ / : * ? " < > |');
+    if (s.length > 200) throw new Error('名称过长');
+    return s;
+  }
+
+  // 新建文件
+  ipcMain.handle('shell-create-file', async (event, { parentDir, name } = {}) => {
+    try {
+      const path = require('path');
+      const fs = require('fs');
+      const nm = _checkName(name);
+      const r = _resolveInProject(event, path.join(parentDir || '', nm));
+      if (fs.existsSync(r.absPath)) return { success: false, error: '已存在同名文件' };
+      fs.writeFileSync(r.absPath, '', 'utf-8');
+      console.log('[LingYa] 新建文件:', r.absPath);
+      return { success: true, path: r.absPath };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 新建文件夹
+  ipcMain.handle('shell-create-dir', async (event, { parentDir, name } = {}) => {
+    try {
+      const path = require('path');
+      const fs = require('fs');
+      const nm = _checkName(name);
+      const r = _resolveInProject(event, path.join(parentDir || '', nm));
+      if (fs.existsSync(r.absPath)) return { success: false, error: '已存在同名文件夹' };
+      fs.mkdirSync(r.absPath, { recursive: false });
+      console.log('[LingYa] 新建文件夹:', r.absPath);
+      return { success: true, path: r.absPath };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 重命名（文件或目录）
+  ipcMain.handle('shell-rename', async (event, { targetPath, newName } = {}) => {
+    try {
+      const path = require('path');
+      const fs = require('fs');
+      const nm = _checkName(newName);
+      const r = _resolveInProject(event, targetPath);
+      const parent = path.dirname(r.absPath);
+      const newPath = path.join(parent, nm);
+      if (fs.existsSync(newPath)) return { success: false, error: '已存在同名项' };
+      fs.renameSync(r.absPath, newPath);
+      console.log('[LingYa] 重命名:', r.absPath, '->', newPath);
+      return { success: true, oldPath: r.absPath, newPath: newPath };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 保存文件内容
+  ipcMain.handle('shell-write-file', async (event, { filePath, content } = {}) => {
+    try {
+      const fs = require('fs');
+      if (typeof content !== 'string') return { success: false, error: '内容必须是字符串' };
+      const r = _resolveInProject(event, filePath);
+      const stat = fs.statSync(r.absPath);
+      if (!stat.isFile()) return { success: false, error: '不是文件' };
+      // 备份一份 .bak（首次保存时）
+      const bak = r.absPath + '.lingya-bak';
+      try { if (!fs.existsSync(bak)) fs.copyFileSync(r.absPath, bak); } catch (_) {}
+      fs.writeFileSync(r.absPath, content, 'utf-8');
+      console.log('[LingYa] 已保存:', r.absPath, '(' + content.length + ' 字符)');
+      return { success: true, path: r.absPath, bytes: Buffer.byteLength(content, 'utf-8') };
     } catch (err) { return { success: false, error: err.message }; }
   });
 

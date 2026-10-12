@@ -24,6 +24,8 @@
   var cachedTruncated = false;
   var open = false;
   var previewOpen = false;
+  var currentFile = null;   // 当前预览/编辑的文件路径
+  var editing = false;      // 是否处于编辑模式
 
   var width = (function () { try { var v=Number(localStorage.getItem(WIDTH_KEY)); if(isFinite(v)&&v>=MIN_W&&v<=MAX_W) return Math.round(v);}catch(_){} return DEFAULT_W; })();
 
@@ -165,19 +167,25 @@
     closeContextMenu();
     var m = document.createElement('div');
     m.className = 'ck-ctx-menu';
-    var items = [
-      { label: '复制绝对路径', act: 'copy', icon: '\u2398' },
-    ];
-    if (type === 'file') {
-      items.push({ label: '移到回收站', act: 'trash', icon: '\u267B' });
-      items.push({ label: '永久删除', act: 'delete', icon: '\u2716', danger: true });
+    var items = [];
+    // 目录：新建文件 / 新建文件夹（作为父目录）
+    if (type === 'dir') {
+      items.push({ label: '新建文件', act: 'newfile', icon: '\u002B' });
+      items.push({ label: '新建文件夹', act: 'newdir', icon: '\u{1F4C1}' });
+      items.push({ sep: true });
     }
+    items.push({ label: '重命名', act: 'rename', icon: '\u270E' });
+    items.push({ label: '复制绝对路径', act: 'copy', icon: '\u2398' });
+    items.push({ sep: true });
+    items.push({ label: '移到回收站', act: 'trash', icon: '\u267B' });
+    items.push({ label: type === 'dir' ? '永久删除文件夹' : '永久删除', act: 'delete', icon: '\u2716', danger: true });
     for (var i = 0; i < items.length; i++) {
       (function (it) {
+        if (it.sep) { var s = document.createElement('div'); s.className = 'ck-ctx-sep'; m.appendChild(s); return; }
         var d = document.createElement('div');
         d.className = 'ck-ctx-item' + (it.danger ? ' danger' : '');
         d.innerHTML = '<span class="ck-ctx-ico">' + it.icon + '</span>' + it.label;
-        d.addEventListener('click', function () { closeContextMenu(); doAction(it.act, path); });
+        d.addEventListener('click', function () { closeContextMenu(); doAction(it.act, path, type); });
         m.appendChild(d);
       })(items[i]);
     }
@@ -190,7 +198,28 @@
     m.style.top = py + 'px';
     ctxMenu = m;
   }
-  function doAction(act, path){
+  function doAction(act, path, type){
+    if (act === 'newfile' || act === 'newdir') {
+      var isDir = (act === 'newdir');
+      promptInput(isDir ? '新建文件夹' : '新建文件', isDir ? '文件夹名' : '文件名（含扩展名）', '', function (name) {
+        var fn = isDir ? window.shellAPI.createDir : window.shellAPI.createFile;
+        fn(path, name).then(function (r) {
+          if (r && r.success) { toast('已创建'); expanded[path] = true; loadFiles(); }
+          else toast('创建失败: ' + ((r && r.error) || '?'));
+        })['catch'](function (e) { toast('创建失败: ' + e.message); });
+      });
+      return;
+    }
+    if (act === 'rename') {
+      var cur = String(path).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+      promptInput('重命名', '新名称', cur, function (name) {
+        window.shellAPI.rename(path, name).then(function (r) {
+          if (r && r.success) { toast('已重命名'); loadFiles(); if (currentFile === path) { currentFile = r.newPath; openPreview(r.newPath); } }
+          else toast('重命名失败: ' + ((r && r.error) || '?'));
+        })['catch'](function (e) { toast('重命名失败: ' + e.message); });
+      });
+      return;
+    }
     if (act === 'copy') {
       window.shellAPI.copyText(path).then(function (r) {
         if (r && r.success) toast('已复制路径');
@@ -205,6 +234,39 @@
       })['catch'](function (e) { toast('删除失败: ' + e.message); });
     }
   }
+  // ===== 输入弹窗（新建/重命名）=====
+  var promptCb = null;
+  function promptInput(title, placeholder, defVal, cb) {
+    promptCb = cb;
+    var mask = document.getElementById('ck-prompt-mask');
+    var t = document.getElementById('ck-prompt-title');
+    var inp = document.getElementById('ck-prompt-input');
+    var err = document.getElementById('ck-prompt-err');
+    if (!mask || !inp) return;
+    if (t) t.textContent = title;
+    inp.placeholder = placeholder || '';
+    inp.value = defVal || '';
+    if (err) err.textContent = '';
+    mask.classList.add('show');
+    setTimeout(function () { inp.focus(); inp.select(); }, 30);
+  }
+  function closePrompt() {
+    var mask = document.getElementById('ck-prompt-mask');
+    if (mask) mask.classList.remove('show');
+    promptCb = null;
+  }
+  function submitPrompt() {
+    var inp = document.getElementById('ck-prompt-input');
+    var err = document.getElementById('ck-prompt-err');
+    if (!inp || !promptCb) return;
+    var v = String(inp.value || '').trim();
+    if (!v) { if (err) err.textContent = '名称不能为空'; return; }
+    if (/[\\/:*?"<>|]/.test(v)) { if (err) err.textContent = '不能包含 \\ / : * ? " < > |'; return; }
+    var cb = promptCb;
+    closePrompt();
+    try { cb(v); } catch (_) {}
+  }
+
   function toast(msg){
     var t = document.getElementById('ck-toast');
     if (!t) { t = document.createElement('div'); t.id = 'ck-toast'; t.className = 'ck-toast'; document.body.appendChild(t); }
@@ -238,6 +300,8 @@
     var emptyEl=document.getElementById('ck-preview-empty');
     var pre=document.getElementById('ck-preview-pre');
     if(!pane) return;
+    currentFile = path;
+    exitEditMode(false);   // 切换文件时退出编辑（不保存）
     if(nameEl){ nameEl.textContent=path; nameEl.title=path; }
     if(sizeEl) sizeEl.textContent='';
     if(emptyEl){ emptyEl.style.display='block'; emptyEl.textContent='加载中…'; }
@@ -252,7 +316,119 @@
   }
   function closePreview(){ var p=document.getElementById('ck-preview-pane'); if(p) p.classList.remove('open'); previewOpen=false; }
 
+  // ===== 预览区拖拽调宽（左边缘）=====
+  (function () {
+    var pane = document.getElementById('ck-preview-pane');
+    if (!pane) return;
+    var rz = document.createElement('div');
+    rz.className = 'ck-preview-resizer';
+    rz.title = '拖动调整预览宽度';
+    pane.appendChild(rz);
+    var PW_KEY = 'lingya-preview-width';
+    // 恢复上次宽度
+    try { var v = Number(localStorage.getItem(PW_KEY)); if (isFinite(v) && v >= 240 && v <= 1200) pane.style.width = v + 'px'; } catch (_) {}
+    var dragging = false;
+    rz.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dragging = true;
+      document.body.style.cursor = 'col-resize';
+      if (window.shellAPI && window.shellAPI.startSidebarDrag) window.shellAPI.startSidebarDrag();
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      // 预览区右边缘固定（侧栏右侧），拖左边缘 → 宽度 = 侧栏右边 - 鼠标 x
+      var sidebarRight = pane.getBoundingClientRect().right;
+      var w = Math.round(sidebarRight - e.clientX);
+      w = Math.max(240, Math.min(1200, w));
+      pane.style.width = w + 'px';
+      try { localStorage.setItem(PW_KEY, String(w)); } catch (_) {}
+      if (window.shellAPI && window.shellAPI.resizeSidebar) window.shellAPI.resizeSidebar(width)['catch'](function(){});
+    });
+    document.addEventListener('mouseup', function () {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      if (window.shellAPI && window.shellAPI.endSidebarDrag) window.shellAPI.endSidebarDrag();
+    });
+  })();
+
+  // ===== 编辑模式 =====
+  function enterEditMode() {
+    if (!currentFile) return;
+    var area = document.getElementById('ck-preview-edit-area');
+    var pre = document.getElementById('ck-preview-pre');
+    var empty = document.getElementById('ck-preview-empty');
+    var editBtn = document.getElementById('ck-preview-edit');
+    var saveBtn = document.getElementById('ck-preview-save');
+    var cancelBtn = document.getElementById('ck-preview-cancel');
+    if (!area || !pre) return;
+    area.value = pre.textContent || '';
+    area.style.display = 'block';
+    pre.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (editBtn) editBtn.style.display = 'none';
+    if (saveBtn) saveBtn.style.display = '';
+    if (cancelBtn) cancelBtn.style.display = '';
+    editing = true;
+    area.focus();
+  }
+
+  function exitEditMode(revert) {
+    if (!editing) return;
+    var area = document.getElementById('ck-preview-edit-area');
+    var pre = document.getElementById('ck-preview-pre');
+    var editBtn = document.getElementById('ck-preview-edit');
+    var saveBtn = document.getElementById('ck-preview-save');
+    var cancelBtn = document.getElementById('ck-preview-cancel');
+    if (area) area.style.display = 'none';
+    if (pre) pre.style.display = 'block';
+    if (editBtn) editBtn.style.display = '';
+    if (saveBtn) saveBtn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    editing = false;
+    // revert=true：丢弃改动（重新读盘）
+    if (revert && currentFile) openPreview(currentFile);
+  }
+
+  function saveCurrentFile() {
+    if (!currentFile) return;
+    var area = document.getElementById('ck-preview-edit-area');
+    if (!area) return;
+    var content = area.value;
+    window.shellAPI.writeFile(currentFile, content).then(function (r) {
+      if (r && r.success) {
+        toast('已保存 (' + r.bytes + ' 字节)');
+        var pre = document.getElementById('ck-preview-pre');
+        if (pre) pre.textContent = content;
+        exitEditMode(false);
+      } else {
+        toast('保存失败: ' + ((r && r.error) || '?'));
+      }
+    })['catch'](function (e) { toast('保存失败: ' + e.message); });
+  }
+
   document.getElementById('ft-refresh')&&document.getElementById('ft-refresh').addEventListener('click', loadFiles);
+
+  // 编辑 / 保存 / 取消 按钮
+  var _eb = document.getElementById('ck-preview-edit'); if (_eb) _eb.addEventListener('click', enterEditMode);
+  var _sb = document.getElementById('ck-preview-save'); if (_sb) _sb.addEventListener('click', saveCurrentFile);
+  var _cb = document.getElementById('ck-preview-cancel'); if (_cb) _cb.addEventListener('click', function(){ exitEditMode(true); });
+  // 编辑区 Ctrl+S 保存 / Esc 取消
+  var _ea = document.getElementById('ck-preview-edit-area');
+  if (_ea) _ea.addEventListener('keydown', function(e){
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveCurrentFile(); }
+    else if (e.key === 'Escape') { e.preventDefault(); exitEditMode(true); }
+  });
+  // 输入弹窗按钮
+  var _pok = document.getElementById('ck-prompt-ok'); if (_pok) _pok.addEventListener('click', submitPrompt);
+  var _pcancel = document.getElementById('ck-prompt-cancel'); if (_pcancel) _pcancel.addEventListener('click', closePrompt);
+  var _pin = document.getElementById('ck-prompt-input');
+  if (_pin) _pin.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); submitPrompt(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePrompt(); }
+  });
+  var _pm = document.getElementById('ck-prompt-mask');
+  if (_pm) _pm.addEventListener('click', function(e){ if (e.target === _pm) closePrompt(); });
   document.getElementById('ck-preview-close')&&document.getElementById('ck-preview-close').addEventListener('click', closePreview);
   var se=document.getElementById('ft-search');
   if(se){ var t=null; se.addEventListener('input', function(){ if(t)clearTimeout(t); t=setTimeout(renderList,150); });

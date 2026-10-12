@@ -11,16 +11,12 @@ const fs = require('fs');
 const path = require('path');
 
 // 默认忽略的目录名（精确匹配）
+// 仅忽略「必然导致卡死或纯垃圾」的目录（放开 dist/build/out 等，让文件树显示完整项目）
 const IGNORE_DIRS = new Set([
-  'node_modules', '.git', '.svn', '.hg',
-  'dist', 'build', 'out', 'release',
-  '.next', '.nuxt', '.cache', '.parcel-cache',
-  '__pycache__', '.pytest_cache', '.mypy_cache',
-  'venv', '.venv', 'env', '.env',
-  '.idea', '.vscode', '.vs',
-  'coverage', '.nyc_output',
-  'target', 'bin', 'obj',
-  '.lingyaCode', '.cuckoo', '.claude',
+  'node_modules', '.git', '.svn', '.hg',      // 版本库/依赖：动辄数万节点，必须忽略
+  '__pycache__', '.pytest_cache', '.mypy_cache', '.cache',   // Python 缓存
+  'venv', '.venv',                             // 虚拟环境（数千文件）
+  '.DS_Store',                                 // 系统文件
 ]);
 
 const MAX_NODES = 5000;
