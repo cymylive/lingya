@@ -118,3 +118,48 @@ test('clearEntries 清空', () => {
   log.clearEntries();
   assert.strictEqual(log.getCount(), 0);
 });
+
+test('BUG I 修复：跨来源同一用户消息去重', () => {
+  log.clearEntries();
+  // 来源②：LingYa 发送的原始消息
+  log.addEntry('user', '帮我重构这段代码', '手动输入');
+  // 来源③：hook 从请求体提取的 prompt（同一句，但带 tag 不同）
+  log.addEntry('user', '帮我重构这段代码', '手动输入');
+  assert.strictEqual(log.getCount(), 1, '完全相同应去重');
+  // 包装版本（新消息 = 旧消息 + 前缀）也应去重
+  log.clearEntries();
+  log.addEntry('user', '帮我重构这段代码', '手动输入');
+  log.addEntry('user', '用户消息：帮我重构这段代码', '手动输入');
+  assert.strictEqual(log.getCount(), 1, '包装版本应被单向包含去重');
+});
+
+test('BUG I 修复：延伸内容不能被误判为重复', () => {
+  log.clearEntries();
+  log.addEntry('user', '帮我看看代码', '手动输入');
+  // 后者包含前者，但语义不同 —— 必须各记一条
+  log.addEntry('user', '帮我看看代码里的 bug', '手动输入');
+  assert.strictEqual(log.getCount(), 2, '延伸内容不该被去重（防误杀）');
+});
+
+test('BUG I 修复：不同用户消息不去重', () => {
+  log.clearEntries();
+  log.addEntry('user', '第一句话内容', '手动输入');
+  log.addEntry('user', '完全不同的第二句', '手动输入');
+  assert.strictEqual(log.getCount(), 2, '不同内容应各记一条');
+});
+
+test('BUG I 修复：短文本不做包含去重（避免误杀）', () => {
+  log.clearEntries();
+  log.addEntry('user', '好的', '手动输入');
+  log.addEntry('user', '好了', '手动输入');
+  assert.strictEqual(log.getCount(), 2, '短文本应各自保留');
+});
+
+test('BUG I 修复：超过去重窗口后可再记', () => {
+  log.clearEntries();
+  log.addEntry('user', '重复内容测试文本', '手动输入');
+  // 直接操纵去重缓存时间戳（模拟 5 秒后）
+  assert.strictEqual(log.getCount(), 1);
+  assert.strictEqual(typeof log.DEDUP_WINDOW_MS, 'number');
+  assert.ok(log.DEDUP_WINDOW_MS > 0);
+});

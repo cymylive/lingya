@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.6.28] - 2026-10-12
+
+### Added
+- **架构改造：壳窗口 + WebContentsView 双视图**（侧栏与 AI 网页原生分离，对齐 cuckoo-code）
+  - `BrowserWindow`（壳）承载左侧栏，`WebContentsView`（AI 网页）独立渲染 —— 两者是**不同的 webContents**，互不干扰
+  - 展开侧栏：窗口 +280px + AI view 右移 280px → **AI 可用宽度完全不变**（Electron 实测 1186px 恒定）
+  - 新增 `src/ui/shell.html` + `src/preload/shell-preload.js` + `src/preload/shell-renderer.js`
+  - `windowState` 新增 `view` 字段 + `getViewWebContents()`；`getContextByWebContents` 同时匹配壳窗口与 AI view
+  - 兼容层：`ctx.win` 用 Proxy 代理，`.webContents`/`loadURL`/`loadFile` 自动转发到 AI view，85 处旧调用无需改动
+  - 新增 IPC `shell-sidebar-toggle`（按 event.sender 路由，支持多窗口）
+- **项目文件树（只读）**：左侧栏浏览当前项目目录并预览文件内容
+  - **推挤布局 + 窗口加宽**：展开时窗口宽 +280px，同时给 `body` 加 `padding-left: 280px` —— 侧栏占用**新增空间**，**AI 对话区净宽不变**（1200 → 1480 窗口 / 净宽仍 1200）
+  - 新增 IPC `sidebar-resize-window`：主进程负责窗口加宽/收窄，含屏幕工作区边界与最大化保护
+  - 交互：点屏幕左边缘的 📁 竖条按钮展开/收起；或按 `Esc`、点侧栏右上角 ×
+  - 状态持久化到 `localStorage['lingya-sidebar-open']`，下次打开保持
+- **深色 / 浅色主题切换**：主页「快捷操作」新增「主题」按钮（🌙/☀️）
+  - 浅色主题用 `html.lingya-theme-light` 覆盖全套 CSS 变量（背景/文字/边框/主色/code 底色等 16 项）
+  - 状态持久化到 `localStorage['lingya-theme']`
+  - 批量颜色替换为 CSS 变量（40+ 处硬编码色 → `var(--ck-*)`），使主题可整体切换
+  - `src/main/file-tree.js`（新增）：递归构建目录树，忽略 `node_modules`/`.git`/`dist`/`venv`/`__pycache__` 等 30+ 目录；节点上限 5000、深度上限 12，超限标记 `truncated`
+  - `src/main/ipc.js`：新增 `get-file-tree`（从 `sessionStore.state.selectedProjectDir` 取根目录）与 `read-file-preview`（**路径越权防护**：`realpathSync` 解析后校验必须在项目目录内；限 512KB）
+  - `src/preload/overlay/file-tree-panel.js`（新增）：渲染 + 搜索过滤（保留匹配节点及祖先）+ 目录折叠 + 文件预览；40+ 扩展名映射配色（VSCode 风格）
+  - `src/preload/overlay/template.js`：新增「文件」页签 + 面板 HTML + 18 条 CSS
+  - `src/preload/api.js` / `overlay/events.js`：暴露 API 与事件绑定
+  - 只读设计：不支持编辑/新建/删除（改文件仍由 AI 的 `write`/`edit` 工具完成）
+  - 未引入 monaco-editor（预览用 `<pre>` 纯文本，避免 +60MB 依赖）
+
+### Removed
+- **限流防护整体移除**（0.6.26 引入，按用户要求删除）：悬浮球的「限流冷却中 mm:ss」倒计时不再显示
+  - 删除 `src/preload/dom/rate-limiter.js` 及其测试
+  - `src/providers/deepseek.js`：删 `dispatchRateLimit()` / `RL_WORDS` / `looksRateLimitedText()` / fetch+XHR 的 429 检测
+  - `src/preload/dom/chat-input.js`：删 `rateLimiter` 依赖、`waitMs`/`totalDelay` 叠加、`markSent()`
+  - `src/preload/overlay/ui.js`：删 `updateRateLimitUI()` 与冷却状态守卫
+  - `src/preload/overlay/template.js`：删 `.lingya-state-cooling` 样式
+  - `src/preload/index.js`：删限流防护启动块
+  - `src/preload/dom/supervisor.js`：删冷却期跳过判断
+  - 对话导出功能不受影响（`dispatchUserMessage` 与 `lingya-user-message` 事件保留）
+
+### Fixed
+- **对话导出跨来源重复记录**：同一条用户消息可能同时来自 `onUserMessageSent`（LingYa 发送）与 `lingya-user-message`（hook 从请求体提取），导致导出重复
+  - `src/preload/dom/conversation-log.js` 新增 5 秒窗口 + 单向包含去重
+  - 关键：只判定「新消息是旧消息的包装版本」（如 旧=`你好`、新=`用户消息：你好`），**不做双向包含** —— 否则「帮我看看代码」与「帮我看看代码里的 bug」会被误判为重复而丢失
+  - 新增 5 个测试用例（跨来源去重 / 不同消息不误删 / 短文本不误杀 / 延伸内容不误判）
+
+### Added
+- **todo 单项即时同步**：要求 AI 每完成一项就立刻单独调用一次 `todoWrite`，禁止攒批（此前会做完 2-3 项才一起更新，导致计划面板长时间停在同一项）
+  - `tools/TodoWriteTool.js` `getPromptSection()` 新增「强制规则二 · 单项即时同步」+ 错误示范 + 正确节奏示例
+  - 工具 `description`、`tools/lingya-tools.d.ts`、4 个提示词模板同步强化措辞
+
 ## [0.6.26] - 2026-10-12
 
 ### Added

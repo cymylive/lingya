@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>LingYa Shell</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0c0e10; }
+  :root {
+    --ck-bg: rgba(12,14,16,0.97);
+    --ck-bg-sub: rgba(0,0,0,0.25);
+    --ck-surface: rgba(255,255,255,0.04);
+    --ck-surface-hover: rgba(255,255,255,0.08);
+    --ck-border: rgba(255,255,255,0.08);
+    --ck-text: #e2e8f0;
+    --ck-text-2: #cbd5e1;
+    --ck-text-dim: #7c8798;
+    --ck-primary: #2dd4bf;
+    --ck-primary-soft: rgba(45,212,191,0.16);
+    --ck-title: #ccfbf1;
+    --sh-ab-w: 46px;
+  }
+  html.lingya-theme-light {
+    --ck-bg: rgba(252,252,253,0.98);
+    --ck-bg-sub: rgba(0,0,0,0.03);
+    --ck-surface: rgba(0,0,0,0.03);
+    --ck-surface-hover: rgba(0,0,0,0.07);
+    --ck-border: rgba(0,0,0,0.12);
+    --ck-text: #1e293b;
+    --ck-text-2: #334155;
+    --ck-text-dim: #64748b;
+    --ck-primary: #0d9488;
+    --ck-primary-soft: rgba(13,148,136,0.14);
+    --ck-title: #0f766e;
+  }
+
+  /* ===== 侧栏容器 ===== */
+  #lingya-sidebar-slot {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 0;
+    overflow: hidden; display: flex;
+    background: var(--ck-bg); border-right: 1px solid var(--ck-border);
+    transition: width 0.18s ease;
+  }
+  #lingya-sidebar-slot.collapsed { width: var(--sh-ab-w); box-shadow: 2px 0 12px rgba(0,0,0,0.4); }
+  #lingya-sidebar-slot.open { width: 320px; }
+  #lingya-sidebar-slot.dragging { transition: none; }
+
+  /* ===== 活动栏 ===== */
+  #lingya-activitybar {
+    width: var(--sh-ab-w); flex-shrink: 0; display: flex; flex-direction: column;
+    align-items: center; padding: 12px 0; gap: 2px; background: var(--ck-bg-sub);
+    border-right: 1px solid var(--ck-border);
+  }
+  .sh-ab-item {
+    width: 36px; height: 36px; border: none; border-radius: 8px;
+    background: transparent; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; font-size: 17px; position: relative; transition: background 0.18s;
+  }
+  .sh-ab-item:hover { background: var(--ck-surface-hover); }
+  .sh-ab-item.active { background: var(--ck-primary-soft); }
+  .sh-ab-item.active::before {
+    content: ''; position: absolute; left: -6px; top: 8px; bottom: 8px;
+    width: 2px; border-radius: 2px; background: var(--ck-primary);
+  }
+  .sh-ab-spacer { flex: 1; }
+
+  #lingya-sidebar-panel { flex: 1; min-width: 0; display: none; flex-direction: column; position: relative; }
+  #lingya-sidebar-slot.open #lingya-sidebar-panel { display: flex; }
+
+  #lingya-sidebar-resizer {
+    position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 30;
+  }
+  #lingya-sidebar-resizer:hover, #lingya-sidebar-slot.dragging #lingya-sidebar-resizer { background: var(--ck-primary-soft); }
+  #lingya-sidebar-slot.collapsed #lingya-sidebar-resizer { display: none; }
+
+  /* ===== 面板头 ===== */
+  .ck-actions { display: flex; align-items: center; gap: 6px; padding: 10px 12px 6px; flex-shrink: 0; }
+  .ck-set-group-title { font-size: 12px; font-weight: 700; color: var(--ck-title); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ck-icon-btn { width: 24px; height: 24px; border: 1px solid var(--ck-border); background: var(--ck-surface); color: var(--ck-text-dim); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .ck-icon-btn svg { width: 13px; height: 13px; }
+  .ck-icon-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+
+  /* ===== 搜索 ===== */
+  .ck-ft-search { display: flex; align-items: center; gap: 6px; padding: 5px 10px; margin: 0 8px 6px; background: var(--ck-surface); border-radius: 8px; flex-shrink: 0; }
+  .ck-ft-search svg { width: 13px; height: 13px; color: var(--ck-text-dim); flex-shrink: 0; }
+  .ck-ft-search-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-family: inherit; font-size: 12px; color: var(--ck-text); }
+  .ck-ft-search-input::placeholder { color: var(--ck-text-dim); }
+
+  /* ===== 文件树列表 ===== */
+  .ck-files-cols { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
+  .ck-list { display: flex; flex-direction: column; }
+  .ck-list-empty { color: var(--ck-text-dim); font-size: 12px; text-align: center; padding: 16px 0; }
+  .ck-ft { padding: 2px 0; overflow: auto; flex: 1; min-height: 0; }
+  .ck-ft-row { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; color: var(--ck-text-2); white-space: nowrap; width: max-content; min-width: 100%; box-sizing: border-box; transition: background .12s; }
+  .ck-ft-row:hover { background: var(--ck-surface-hover); }
+  .ck-ft-caret { width: 14px; height: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--ck-text-dim); transition: transform .12s; }
+  .ck-ft-caret svg { width: 11px; height: 11px; }
+  .ck-ft-dir.open .ck-ft-caret { transform: rotate(90deg); }
+  .ck-ft-icon { min-width: 15px; height: 15px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .ck-ft-icon svg { width: 15px; height: 15px; }
+  .ck-ft-i-dir { color: var(--ck-primary); }
+  .ck-ft-i-file { color: var(--ck-text-dim); opacity: .8; }
+  .ck-ft-i-media { color: #a855f7; }
+  .ck-ft-badge { min-width: 16px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 3px; background: currentColor; -webkit-text-fill-color: #fff; color: var(--ck-text-dim); font-size: 8.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+  .ck-ft-c-file { color: var(--ck-text-dim); }
+  .ck-ft-c-ts { color: #2b7cc4; } .ck-ft-c-js { color: #c9a227; } .ck-ft-c-json { color: #b8a400; }
+  .ck-ft-c-md { color: #4a9eca; } .ck-ft-c-css { color: #8a5cf6; } .ck-ft-c-html { color: #d9534f; }
+  .ck-ft-c-py { color: #3572A5; } .ck-ft-c-java { color: #b07219; } .ck-ft-c-go { color: #1aa5c4; }
+  .ck-ft-c-rs { color: #c9784a; } .ck-ft-c-rb { color: #b03060; } .ck-ft-c-php { color: #6b7bb8; }
+  .ck-ft-c-c { color: #6b7280; } .ck-ft-c-cs { color: #178600; } .ck-ft-c-sh { color: #5bad6f; }
+  .ck-ft-c-yml { color: #c0392b; } .ck-ft-c-xml { color: #d97706; } .ck-ft-c-sql { color: #d97706; }
+  .ck-ft-c-img { color: #a855f7; } .ck-ft-c-txt { color: #8a8f9b; } .ck-ft-c-lock { color: #9ca3af; }
+  .ck-ft-name { white-space: nowrap; flex: 1; }
+  .ck-ft-path { font-size: 10.5px; color: var(--ck-text-dim); margin-left: 6px; flex-shrink: 0; }
+  .ck-ft-hl { background: var(--ck-primary-soft); color: var(--ck-primary); border-radius: 2px; }
+  .ck-ft-at { flex-shrink: 0; width: 18px; height: 18px; margin-left: 6px; display: flex; align-items: center; justify-content: center; border-radius: 5px; font-size: 12px; font-weight: 700; color: var(--ck-text-dim); cursor: pointer; visibility: hidden; opacity: 0; transition: opacity .12s; }
+  .ck-ft-row:hover .ck-ft-at { visibility: visible; opacity: 1; }
+  .ck-ft-at:hover { background: var(--ck-primary-soft); color: var(--ck-primary); }
+  .ck-ft-dir .ck-ft-name { color: var(--ck-text); font-weight: 500; }
+  .ck-ft-truncated { padding: 8px; font-size: 11px; color: var(--ck-text-dim); text-align: center; }
+
+  /* ===== 预览区 ===== */
+  .ck-preview-pane { display: none; flex-direction: column; width: 420px; flex-shrink: 0; border-left: 1px solid var(--ck-border); overflow: hidden; position: relative; }
+  .ck-preview-pane.open { display: flex; }
+  .ck-preview-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--ck-border); flex-shrink: 0; }
+  .ck-preview-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ck-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ck-preview-size { font-size: 10.5px; color: var(--ck-text-dim); flex-shrink: 0; }
+  .ck-preview-acts { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .ck-preview-btn { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; color: var(--ck-text-dim); cursor: pointer; transition: background .15s, color .15s; }
+  .ck-preview-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  .ck-preview-body { flex: 1; overflow: auto; position: relative; }
+  .ck-preview-body pre { margin: 0; padding: 12px 14px; font-family: "Consolas", "Courier New", monospace; font-size: 12px; line-height: 1.6; white-space: pre; tab-size: 2; color: var(--ck-text-2); }
+  .ck-preview-empty { padding: 30px 16px; text-align: center; color: var(--ck-text-dim); font-size: 12px; }
+  .ck-preview-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 5; }
+  .ck-preview-resizer:hover { background: var(--ck-primary-soft); }
+
+  /* 滚动条 */
+  .ck-ft::-webkit-scrollbar, .ck-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
+  .ck-ft::-webkit-scrollbar-track, .ck-preview-body::-webkit-scrollbar-track { background: transparent; }
+  .ck-ft::-webkit-scrollbar-thumb, .ck-preview-body::-webkit-scrollbar-thumb { background: var(--ck-border); border-radius: 4px; }
+  .ck-ft::-webkit-scrollbar-thumb:hover, .ck-preview-body::-webkit-scrollbar-thumb:hover { background: var(--ck-primary-soft); }
+
+  /* ===== 背景色面板 ===== */
+  .ck-bg-panel { display: none; flex-direction: column; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--ck-border); flex-shrink: 0; }
+  .ck-bg-panel.open { display: flex; }
+  .ck-bg-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ck-text-2); }
+  .ck-bg-row input[type=color] { width: 40px; height: 26px; padding: 0; border: 1px solid var(--ck-border); border-radius: 6px; background: none; cursor: pointer; }
+  .ck-bg-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ck-bg-swatch { width: 26px; height: 26px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; }
+  .ck-bg-swatch:hover { border-color: var(--ck-primary); }
+  .ck-bg-swatch.active { border-color: var(--ck-primary); box-shadow: 0 0 0 2px var(--ck-primary-soft); }
+  .ck-bg-actions { display: flex; gap: 6px; }
+  .ck-bg-btn { flex: 1; padding: 5px 10px; border: 1px solid var(--ck-border); background: var(--ck-surface); color: var(--ck-text-2); border-radius: 6px; font-size: 11.5px; cursor: pointer; }
+  .ck-bg-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+</style>
+</head>
+<body>
+  <div id="lingya-sidebar-slot" class="collapsed">
+    <div id="lingya-activitybar">
+      <button class="sh-ab-item active" data-tab="files" title="项目文件">&#128193;</button>
+      <div class="sh-ab-spacer"></div>
+      <button class="sh-ab-item" id="sh-ab-collapse" title="收起/展开">&#171;</button>
+    </div>
+    <div id="lingya-sidebar-panel">
+      <div id="lingya-sidebar-content" style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;">
+        <div class="ck-actions">
+          <span class="ck-set-group-title" style="flex:1;" id="ft-root">项目文件</span>
+          <button class="ck-icon-btn" id="ft-choose-dir" title="选择项目目录">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6M9 14h6"/></svg>
+          </button>
+          <button class="ck-icon-btn" id="ft-refresh" title="刷新">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          </button>
+          <button class="ck-icon-btn" id="ft-bg" title="侧栏背景色">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h2.5a4 4 0 0 0 4-4c0-5.5-4.5-9.5-9.5-9.5z"/></svg>
+          </button>
+        </div>
+        <div class="ck-ft-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input class="ck-ft-search-input" id="ft-search" placeholder="搜索文件名…" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="ck-bg-panel" id="bg-panel">
+          <div class="ck-bg-row"><span>侧栏背景</span><input type="color" id="bg-color" value="#0c0e10" /></div>
+          <div class="ck-bg-presets" id="bg-presets"></div>
+          <div class="ck-bg-actions">
+            <button class="ck-bg-btn" id="bg-reset">恢复默认</button>
+          </div>
+        </div>
+        <div class="ck-files-cols">
+          <div class="ck-list ck-ft" id="ft-list">
+            <div class="ck-list-empty">加载中…</div>
+          </div>
+          <div class="ck-preview-pane" id="ck-preview-pane">
+            <div class="ck-preview-head">
+              <span class="ck-preview-name" id="ck-preview-name">文件预览</span>
+              <span class="ck-preview-size" id="ck-preview-size"></span>
+              <span class="ck-preview-acts">
+                <span class="ck-preview-btn" id="ck-preview-close" title="关闭预览">&#10005;</span>
+              </span>
+            </div>
+            <div class="ck-preview-body" id="ck-preview-body">
+              <div class="ck-preview-empty" id="ck-preview-empty">点击左侧文件查看内容</div>
+              <pre id="ck-preview-pre" style="display:none;"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="lingya-sidebar-resizer" title="拖动调整宽度"></div>
+  </div>
+  <script src="../preload/shell-renderer.js"></script>
+</body>
+</html>

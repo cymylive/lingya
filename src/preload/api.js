@@ -120,6 +120,17 @@ let electronAPI = {
     return ipcRenderer.invoke('agent-current');
   },
   // ========== 计划（todoWrite）API ==========
+  // 侧栏开合联动窗口宽度
+  sidebarResizeWindow: (open, width) => {
+    return ipcRenderer.invoke('sidebar-resize-window', { open, width });
+  },
+  // 文件树浏览（只读）
+  getFileTree: (options) => {
+    return ipcRenderer.invoke('get-file-tree', options || {});
+  },
+  readFilePreview: (filePath) => {
+    return ipcRenderer.invoke('read-file-preview', { filePath });
+  },
   getTodos: () => {
     return ipcRenderer.invoke('get-todos');
   },

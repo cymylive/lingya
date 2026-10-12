@@ -6,7 +6,6 @@ const { ipcRenderer } = require('electron');
 const state = require('./state');
 const { BT } = require('./js-detector');
 const { getProviderByUrl } = require('../../../src/providers');
-const rateLimiter = require('./rate-limiter');
 
 /**
  * 根据当前 URL 获取 provider
@@ -122,13 +121,7 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     return false;
   }
   const sendDelay = fixedDelay !== undefined ? fixedDelay : randomDelay();
-  // 限流防护：叠加冷却期 / 自适应最小间隔的等待，避免 Agent 循环高频打 API 触发账号级限流
-  const waitMs = rateLimiter.getWaitMs();
-  const totalDelay = sendDelay + waitMs;
-  if (waitMs > 0) {
-    console.log('[LingYa][限流] 本次发送额外等待 ' + waitMs + 'ms（冷却或最小间隔）');
-  }
-  console.log('[LingYa] 消息已填入输入框，等待 ' + totalDelay + 'ms 后发送...');
+  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送...');
   setTimeout(function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
@@ -137,7 +130,6 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     }
     console.log('[LingYa] 等待结束，开始触发发送');
     triggerSend(input);
-    rateLimiter.markSent();   // 记录发送时刻，供最小间隔计算
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();

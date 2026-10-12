@@ -56,10 +56,109 @@ function registerIpcHandlers() {
     return { success: true, todos: getTodos(sessionId, profileId), sessionId };
   });
 
+  // 侧栏开合联动窗口宽度：展开时窗口加宽 280px（侧栏占新增空间，AI 对话区净宽不变）
+  // 传入 { open: true/false, width: 280 }，主进程负责边界与最大化保护。
+  ipcMain.handle('sidebar-resize-window', async (event, { open, width = 280 } = {}) => {
+    try {
+      const win = windowState.getMainWindow();
+      if (!win || win.isDestroyed()) return { success: false, error: '窗口不存在' };
+      if (win.isMaximized() || win.isFullScreen()) {
+        // 最大化/全屏下不改尺寸（改也无意义），仅返回状态
+        return { success: true, skipped: 'maximized' };
+      }
+      const { screen } = require('electron');
+      const cur = win.getBounds();
+      const wa = screen.getDisplayMatching(cur).workAreaSize;
+
+      // 用 __lingyaBaseWidth 记录"未展开侧栏时的原始宽度"，避免累积误差
+      if (open) {
+        if (typeof win.__lingyaBaseWidth !== 'number') win.__lingyaBaseWidth = cur.width;
+        const target = win.__lingyaBaseWidth + width;
+        // 不超出屏幕工作区
+        const finalW = Math.min(target, wa.width);
+        win.setBounds({ x: cur.x, y: cur.y, width: finalW, height: cur.height });
+        console.log('[LingYa] 侧栏展开：窗口 ' + cur.width + ' -> ' + finalW);
+        return { success: true, width: finalW };
+      } else {
+        const base = (typeof win.__lingyaBaseWidth === 'number') ? win.__lingyaBaseWidth : (cur.width - width);
+        win.setBounds({ x: cur.x, y: cur.y, width: base, height: cur.height });
+        win.__lingyaBaseWidth = undefined;
+        console.log('[LingYa] 侧栏收起：窗口 ' + cur.width + ' -> ' + base);
+        return { success: true, width: base };
+      }
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 读取项目文件树（只读，供 UI 文件页签浏览）
+  ipcMain.handle('get-file-tree', async (event, { maxNodes = 5000 } = {}) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const store = ctx ? ctx.sessionStore : null;
+      const root = store && store.state ? store.state.selectedProjectDir : null;
+      if (!root) return { success: false, error: '尚未选择项目目录（先点「初始化项目」）' };
+      const { buildFileTree } = require('./file-tree');
+      const r = buildFileTree(root, { maxNodes });
+      if (r.error) return { success: false, error: r.error };
+      return { success: true, root: root, tree: r.tree, truncated: r.truncated, nodeCount: r.nodeCount };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 读取单个文件内容（供预览；限 512KB 防超长文件卡死）
+  ipcMain.handle('read-file-preview', async (event, { filePath } = {}) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const store = ctx ? ctx.sessionStore : null;
+      const root = store && store.state ? store.state.selectedProjectDir : null;
+      if (!root) return { success: false, error: '尚未选择项目目录' };
+      if (!filePath) return { success: false, error: '缺少文件路径' };
+      const path = require('path');
+      const fs = require('fs');
+      // 路径必须在项目目录内（防越权读取）
+      const realRoot = fs.realpathSync(root);
+      const realFile = fs.realpathSync(filePath);
+      if (realFile !== realRoot && !realFile.startsWith(realRoot + path.sep)) {
+        return { success: false, error: '文件不在项目目录内' };
+      }
+      const stat = fs.statSync(realFile);
+      if (!stat.isFile()) return { success: false, error: '不是文件' };
+      const MAX = 512 * 1024;
+      if (stat.size > MAX) {
+        return { success: true, content: '(文件过大，超过 512KB，暂不支持预览)', truncated: true, size: stat.size };
+      }
+      const content = fs.readFileSync(realFile, 'utf-8');
+      return { success: true, content: content, truncated: false, size: stat.size };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 初始化项目
   ipcMain.handle('init-project', async (event, { skipPrompt = false, projectDir = null, isCompaction = false } = {}) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     return initProject(skipPrompt, ctx, projectDir, isCompaction);
+  });
+
+  // 壳页面：选择项目目录（只更新目录，不发送初始提示词）
+  ipcMain.handle('shell-choose-dir', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const r = await initProject(true, ctx, null, false);   // skipPrompt=true
+      return r;
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 壳页面：读取当前项目目录
+  ipcMain.handle('shell-get-dir', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const store = ctx ? ctx.sessionStore : null;
+      const dir = store && store.state ? store.state.selectedProjectDir : null;
+      return { success: true, dir: dir || null };
+    } catch (err) { return { success: false, error: err.message }; }
   });
 
   // 列出会话

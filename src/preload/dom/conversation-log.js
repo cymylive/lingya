@@ -100,19 +100,55 @@ let entries = [];
 let started = false;
 const MAX_ENTRIES = 2000;   // 上限保护，避免超长会话撑爆内存
 
-/** 追加一条记录（幂等去重：连续相同的 AI 回复不重复记） */
+// 跨来源去重窗口：同一条用户消息可能同时来自
+//   ② onUserMessageSent（LingYa 发送，含原始 msg）
+//   ③ lingya-user-message（hook 从请求体提取的 prompt，可能被包装过）
+// 两者内容可能不同（如加前缀），故不能只靠"完全相等"去重。
+// 用「角色 + 时间窗 + 前缀/包含」三重判定。
+const DEDUP_WINDOW_MS = 5000;
+const recentUserMsgs = [];   // [{ text, at }]
+
+function isDuplicateUserMessage(t) {
+  const now = Date.now();
+  // 清理过期
+  for (let i = recentUserMsgs.length - 1; i >= 0; i--) {
+    if (now - recentUserMsgs[i].at > DEDUP_WINDOW_MS) recentUserMsgs.splice(i, 1);
+  }
+  for (const r of recentUserMsgs) {
+    if (r.text === t) return true;
+    // 单向包含：仅当「新消息是旧消息的包装版本」才算重复。
+    // 例：旧="你好"、新="用户消息：你好" → 去重。
+    // 反之（旧="帮我看看代码"、新="帮我看看代码里的 bug"）是新内容，绝不能去重。
+    // 要求旧消息足够长，避免短文本（"好的"/"好了"）误判。
+    if (r.text.length >= 8 && t.length > r.text.length && t.indexOf(r.text) !== -1) return true;
+  }
+  return false;
+}
+
+function rememberUserMessage(t) {
+  recentUserMsgs.push({ text: t, at: Date.now() });
+  if (recentUserMsgs.length > 20) recentUserMsgs.shift();
+}
+
+/** 追加一条记录（幂等去重：连续相同 + 跨来源用户消息去重） */
 function addEntry(role, text, tag) {
   if (!text) return;
   const t = String(text).trim();
   if (!t) return;
+  // 连续相同内容去重
   const last = entries[entries.length - 1];
   if (last && last.role === role && last.text === t) return;
+  // 用户消息：跨来源去重（② 与 ③ 可能同时上报同一条）
+  if (role === 'user') {
+    if (isDuplicateUserMessage(t)) return;
+    rememberUserMessage(t);
+  }
   entries.push({ role: role, text: t, ts: Date.now(), tag: tag || '' });
   if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
 }
 
 function getEntries() { return entries.slice(); }
-function clearEntries() { entries = []; }
+function clearEntries() { entries = []; recentUserMsgs.length = 0; }
 function getCount() { return entries.length; }
 
 /** 导出 Markdown（含当前会话元信息） */
@@ -172,7 +208,8 @@ function initConversationLog() {
 module.exports = {
   // 纯函数（测试用）
   buildMarkdown, stripToolBlocks, shouldSkipTag, formatTime,
-  SYSTEM_TAGS, SYSTEM_TAG_PREFIXES, MAX_ENTRIES,
+  SYSTEM_TAGS, SYSTEM_TAG_PREFIXES, MAX_ENTRIES, DEDUP_WINDOW_MS,
+  isDuplicateUserMessage,
   // 运行时
   initConversationLog, addEntry, getEntries, clearEntries, getCount, exportMarkdown,
 };

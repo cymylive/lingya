@@ -80,28 +80,6 @@ function deepseekHookInstaller() {
     } catch (e) { /* ignore */ }
   }
 
-  // 命中平台限流时通知 preload（rate-limiter 监听此事件进入冷却）
-  function dispatchRateLimit(reason) {
-    try {
-      window.dispatchEvent(new CustomEvent('lingya-ai-ratelimited', {
-        detail: { reason: reason || 'unknown', at: Date.now() }
-      }));
-    } catch (e) { /* ignore */ }
-  }
-
-  // 限流文案关键词（服务端有时用 200 + 错误码 + 中文提示）
-  var RL_WORDS = ['发送过于频繁', '请求过于频繁', '操作过于频繁', '访问过于频繁',
-    '频率过高', '稍后重试', '稍后再试', 'too many requests', 'rate limit'];
-
-  function looksRateLimitedText(s) {
-    if (!s || typeof s !== 'string' || s.length > 500) return false;
-    var low = s.toLowerCase();
-    for (var i = 0; i < RL_WORDS.length; i++) {
-      if (low.indexOf(RL_WORDS[i].toLowerCase()) !== -1) return true;
-    }
-    return false;
-  }
-
   // ---------- 回复文本提取（区分 THINK / RESPONSE 片段）----------
   function createExtractor() {
     var fragmentTypes = [];
@@ -383,16 +361,6 @@ function deepseekHookInstaller() {
       dispatchStart();
       return p.then(function (response) {
         try {
-          // HTTP 429 → 明确限流；其他状态码读响应体关键词兜底
-          if (response && response.status === 429) {
-            dispatchRateLimit('http-429');
-          } else if (response && response.status >= 400) {
-            try {
-              response.clone().text().then(function (t) {
-                if (looksRateLimitedText(t)) dispatchRateLimit('http-' + response.status + '-body');
-              }).catch(function () {});
-            } catch (e) { /* ignore */ }
-          }
           if (response && response.body) observeBody(response.clone().body);
         } catch (e) { /* ignore */ }
         return response;
@@ -455,14 +423,6 @@ function deepseekHookInstaller() {
     }
 
     xhr.addEventListener('readystatechange', function () {
-      // HTTP 429 / 响应体含限流文案 → 通知限流防护
-      try {
-        if (xhr.readyState === 4 && xhr.status === 429) {
-          dispatchRateLimit('xhr-429');
-        } else if (xhr.readyState >= 2 && xhr.status >= 400) {
-          if (looksRateLimitedText(xhr.responseText || '')) dispatchRateLimit('xhr-' + xhr.status);
-        }
-      } catch (e) { /* ignore */ }
       if (xhr.readyState === 3 || xhr.readyState === 4) consumeChunk();
       if (xhr.readyState === 4 && !dispatched) {
         var rest = frameDecoder.finish();

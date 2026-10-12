@@ -88,16 +88,6 @@ function init() {
     ui.forceShowOverlay();
   }
 
-  // 限流防护：独立于其他初始化，即使 init() 中途出错也要启用
-  // （否则别处一抛异常，限流防护就静默失效，Agent 循环会直接撞上限流）
-  try {
-    const rateLimiter = require('./dom/rate-limiter');
-    rateLimiter.startRateLimitWatcher();
-    rateLimiter.onCooldownChange(ui.updateRateLimitUI);
-  } catch (err) {
-    console.error('[LingYa] 限流防护启动失败:', err);
-  }
-
   // 对话记录：累积用户/AI 消息，供导出 Markdown
   try {
     require('./dom/conversation-log').initConversationLog();

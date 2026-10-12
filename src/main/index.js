@@ -2,7 +2,7 @@
  * LingYa 主进程入口（多窗口多 profile 版）
  * 由项目根目录 main.js 薄壳加载。
  */
-const { app, BrowserWindow, Menu, dialog } = require('electron');
+const { app, BrowserWindow, Menu, dialog, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -122,33 +122,26 @@ function createWindow(profile) {
   const provider = getProvider(profileData.providerId || 'deepseek') || getProvider('deepseek');
   const storeDir = app.getPath('userData');
   const sessionStore = createSessionStore(profileData.id, storeDir, windowState);
-  const hasExplicitProfile = !!profile;
-  // providerId 已确定 → 直接打开；未确定 → 显示平台选择页
   const providerChosen = !!profileData.providerId;
 
-  // 恢复上次保存的窗口位置/大小（每个 profile 独立记忆）
   const savedBounds = profileData.windowBounds;
   const winOptions = {
     width: (savedBounds && savedBounds.width) || 1280,
     height: (savedBounds && savedBounds.height) || 900,
     title: 'LingYa Pro - ' + provider.name + ' - ' + profileData.name,
     webPreferences: {
-      preload: path.join(__dirname, '..', '..', 'preload.js'),
+      // 壳页面 preload（只服务左侧栏）
+      preload: path.join(__dirname, '..', 'preload', 'shell-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      partition: profileData.partition, // 每个 profile 独立持久化 session
-      backgroundThrottling: false,
       additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
     },
   };
-  // 仅当保存了合法坐标时才恢复位置（避免窗口跑到屏幕外）
   if (savedBounds && Number.isFinite(savedBounds.x) && Number.isFinite(savedBounds.y)) {
     winOptions.x = savedBounds.x;
     winOptions.y = savedBounds.y;
   }
-
-  // 窗口图标（开发/打包双回退）
   const iconCandidates = [
     path.join(process.resourcesPath || '', 'assets', 'icon.png'),
     path.join(__dirname, '..', '..', 'assets', 'icon.png'),
@@ -159,60 +152,114 @@ function createWindow(profile) {
 
   const mainWindow = new BrowserWindow(winOptions);
 
-  // 保存 session 引用（窗口销毁后 webContents 不可访问）
-  const winSession = mainWindow.webContents.session;
+  // ===== AI 网页视图（独立 WebContentsView，与壳分离）=====
+  const aiView = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, '..', '..', 'preload.js'),  // 原 AI 页面 preload（覆盖层 + 工具）
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      partition: profileData.partition,
+      backgroundThrottling: false,
+      additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
+    },
+  });
+  mainWindow.contentView.addChildView(aiView);
+  mainWindow.__aiView = aiView;
+  mainWindow.__sidebarOpen = false;
 
-  // 注册窗口上下文（记录 providerId，未确定时为空字符串）
-  windowState.addWindow(mainWindow, profileData.id, profileData.providerId || '', sessionStore);
+  // 布局：AI view 占右侧（侧栏展开时右移 280）
+  const layout = () => {
+    try {
+      const b = mainWindow.getContentBounds();
+      const sw = currentSidebarWidth(mainWindow);
+      aiView.setBounds({ x: sw, y: 0, width: Math.max(0, b.width - sw), height: b.height });
+    } catch (err) { /* ignore */ }
+  };
+  mainWindow.on('resize', layout);
+  layout();
+
+  // ===== 兼容代理：让 ctx.win.webContents / loadURL 指向 AI view =====
+  // 目的：85 处旧调用（ctx.win.webContents.send/loadURL/getURL）无需改动即可作用于 AI 页面。
+  // 窗口自身操作（isDestroyed/setTitle/getBounds/on/destroy）仍落到真实 BrowserWindow。
+  const REDIRECT_TO_VIEW = new Set(['webContents', 'loadURL', 'loadFile']);
+  const winProxy = new Proxy(mainWindow, {
+    get(target, prop) {
+      if (prop === '__rawWindow') return target;
+      if (prop === '__aiView') return aiView;
+      if (prop === 'webContents') return aiView.webContents;
+      if (prop === 'loadURL') return (url, opts) => aiView.webContents.loadURL(url, opts);
+      if (prop === 'loadFile') return (f, opts) => aiView.webContents.loadFile(f, opts);
+      const v = target[prop];
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+    set(target, prop, value) { target[prop] = value; return true; },
+  });
+
+  const winSession = aiView.webContents.session;
+  windowState.addWindow(winProxy, profileData.id, profileData.providerId || '', sessionStore, aiView);
   sessionsToFlush.add(winSession);
+  windowState.setMainWindow(winProxy);
 
-  // 更新主窗口引用
-  windowState.setMainWindow(mainWindow);
-
-  // 初始化自动更新（仅第一个窗口时初始化）
   if (windowState.getAllWindows().length === 1) {
     updater.initAutoUpdater(mainWindow);
   }
 
-  // 转发渲染进程的 console.log 到主进程，并按平台写入独立日志文件
-  mainWindow.webContents.on('console-message', (_event, level, message, _line, _sourceId) => {
-    console.log('[Renderer Console][' + profileData.name + ']', message);
+  // 壳页面：加载左侧栏 UI
+  mainWindow.loadFile(path.join(__dirname, '..', 'ui', 'shell.html'));
 
-    // 打包版不进行日志持久化
-    if (!RENDERER_LOG_DIR) return;
-
-    // 根据当前窗口上下文确定 providerId，未确定用 default
-    let providerId = profileData.providerId || 'default';
-    const ctx = windowState.getContextByWebContents(mainWindow.webContents);
-    if (ctx && ctx.providerId) providerId = ctx.providerId;
-
-    const logFile = path.join(RENDERER_LOG_DIR, providerId + '.log');
-    const timeIso = new Date().toISOString();
-    fs.appendFileSync(logFile, '[' + timeIso + '][' + profileData.name + '] ' + message + '\n', 'utf-8');
+  // 壳页面 console 转发（便于诊断侧栏问题）
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    if (/\[LingYa Shell\]/.test(message)) console.log('[Shell Console][' + profileData.name + ']', message);
   });
 
-  // 恢复最大化状态：仅当"首次打开"或"上次是最大化"时才最大化，
-  // 否则保持用户上次调整的窗口大小（不再每次强制最大化）
+  // AI view 的 console 转发 + 日志
+  aiView.webContents.on('console-message', (_event, level, message) => {
+    console.log('[Renderer Console][' + profileData.name + ']', message);
+    if (!RENDERER_LOG_DIR) return;
+    let providerId = profileData.providerId || 'default';
+    const ctx = windowState.getContextByWebContents(aiView.webContents);
+    if (ctx && ctx.providerId) providerId = ctx.providerId;
+    const logFile = path.join(RENDERER_LOG_DIR, providerId + '.log');
+    fs.appendFileSync(logFile, '[' + new Date().toISOString() + '][' + profileData.name + '] ' + message + '\n', 'utf-8');
+  });
+
   if (!savedBounds) {
     mainWindow.maximize();
   } else if (savedBounds.maximized) {
     mainWindow.maximize();
   }
+  mainWindow.on('resize', layout);
 
-  // 记住窗口位置/大小：拖动、缩放时防抖保存，关闭时立即保存
+  // 关键：每次窗口尺寸变化都同步 AI 基准宽（否则用户手动调整后，保存时会用陈旧值）
+  // 公式：aiWidth = 当前窗口宽 - 当前侧栏宽
+  // 侧栏开合触发的 setBounds 也走这里 → aiWidth = (aiW+sw) - sw = aiW（稳定，不会漂移）
+  mainWindow.on('resize', () => {
+    try {
+      const b = mainWindow.getBounds();
+      const sw = currentSidebarWidth(mainWindow);
+      mainWindow.__lingyaAiWidth = Math.max(200, b.width - sw);
+    } catch (_) {}
+  });
+
+  // 窗口位置/大小保存
   let boundsSaveTimer = null;
   const saveWindowBounds = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     try {
       const maximized = mainWindow.isMaximized();
-      // 最大化时用 getNormalBounds 取还原尺寸，避免存成屏幕全尺寸
       const b = maximized ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+      // 归一化宽度：优先用 __lingyaAiWidth（真实 AI 宽，不受屏幕 clamp 污染）；
+      // 回退到「当前宽 - 侧栏宽 + 收起宽」
+      const curSw = currentSidebarWidth(mainWindow);
+      const aiW = (typeof mainWindow.__lingyaAiWidth === 'number')
+        ? mainWindow.__lingyaAiWidth
+        : (b.width - curSw);
+      const normWidth = aiW + SIDEBAR_COLLAPSED;
       profileManager.updateProfileBounds(profileData.id, {
-        x: b.x, y: b.y, width: b.width, height: b.height, maximized,
+        x: b.x, y: b.y, width: normWidth, height: b.height, maximized,
       });
-    } catch (err) {
-      console.error('[LingYa] 保存窗口大小失败:', err.message);
-    }
+    } catch (err) { console.error('[LingYa] 保存窗口大小失败:', err.message); }
   };
   const scheduleSaveBounds = () => {
     if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
@@ -221,49 +268,34 @@ function createWindow(profile) {
   mainWindow.on('resize', scheduleSaveBounds);
   mainWindow.on('move', scheduleSaveBounds);
 
-  // 设置与 Electron 33（Chromium 130）匹配的普通 Chrome UA：
-  // 1. 不带 Electron 标识，避免 DeepSeek 识别为第三方客户端
-  // 2. 与内核版本一致，避免 Google OAuth 因 UA/sec-ch-ua 不一致报“浏览器不安全”
-  const userAgent =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
-  mainWindow.webContents.setUserAgent(userAgent);
+  // UA（作用于 AI view，避免被识别为第三方客户端）
+  const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+  aiView.webContents.setUserAgent(userAgent);
 
   if (providerChosen) {
-    // 平台已确定，直接进入平台首页
-    mainWindow.loadURL(provider.homeUrl);
+    aiView.webContents.loadURL(provider.homeUrl);
   } else {
-    // 平台未确定，显示平台选择页
     const selectPage = path.join(__dirname, '..', 'ui', 'platform-select.html');
-    mainWindow.loadFile(selectPage);
+    aiView.webContents.loadFile(selectPage);
   }
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('page-loaded');
-      sessionStore.tryRestoreSessionFromUrl(mainWindow);
+  aiView.webContents.on('did-finish-load', () => {
+    if (!mainWindow.isDestroyed()) {
+      try { aiView.webContents.send('page-loaded'); } catch (_) {}
+      sessionStore.tryRestoreSessionFromUrl(winProxy);
     }
   });
-
-  mainWindow.webContents.on('did-navigate', (_event, url) => {
-    sessionStore.handleUrlChange(url, mainWindow);
+  aiView.webContents.on('did-navigate', (_e, url) => { sessionStore.handleUrlChange(url, winProxy); });
+  aiView.webContents.on('did-navigate-in-page', (_e, url) => { sessionStore.handleUrlChange(url, winProxy); });
+  aiView.webContents.on('before-input-event', (_event, input) => {
+    if (input.key === 'F12') aiView.webContents.toggleDevTools();
   });
 
-  mainWindow.webContents.on('did-navigate-in-page', (_event, url) => {
-    sessionStore.handleUrlChange(url, mainWindow);
-  });
-
-  mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.key === 'F12') {
-      mainWindow.webContents.toggleDevTools();
-    }
-  });
-
-  // 用户点 X 关闭：隐藏到托盘而非退出（托盘常驻）
   mainWindow.on('close', (event) => {
-    saveWindowBounds(); // 关闭前保存窗口状态
-    if (global.__lingyaQuitting) return; // 真正退出时放行
-    if (!tray.hasTray()) return; // 无托盘时按原行为关闭
-    if (mainWindow.__forceClose) return; // 程序内部主动销毁放行
+    saveWindowBounds();
+    if (global.__lingyaQuitting) return;
+    if (!tray.hasTray()) return;
+    if (mainWindow.__forceClose) return;
     event.preventDefault();
     mainWindow.hide();
   });
@@ -271,6 +303,7 @@ function createWindow(profile) {
   mainWindow.on('closed', () => {
     sessionsToFlush.delete(winSession);
     windowState.removeWindow(mainWindow.id);
+    try { aiView.webContents.close(); } catch (_) {}
   });
 }
 
@@ -422,8 +455,94 @@ try {
   console.error('[LingYa] 初始化飞书失败:', err.message);
 }
 
-// 覆盖层"新建窗口"按钮触发
+// 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口
+// 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
 const { ipcMain: ipcMainForProfile } = require('electron');
+const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
+const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
+
+/** 当前侧栏实际占宽：展开=自定义宽，收起=46 */
+function currentSidebarWidth(w) {
+  return w.__sidebarOpen ? (w.__sidebarWidth || SIDEBAR_DEFAULT) : SIDEBAR_COLLAPSED;
+}
+
+/** 重排 AI view：侧栏展开时右移 sw，收起时归 0 */
+function layoutAIView(mainWindow) {
+  try {
+    const aiView = mainWindow.__aiView;
+    if (!aiView) return;
+    const b = mainWindow.getContentBounds();
+    const sw = currentSidebarWidth(mainWindow);
+    aiView.setBounds({ x: sw, y: 0, width: Math.max(0, b.width - sw), height: b.height });
+  } catch (_) {}
+}
+
+ipcMainForProfile.handle('shell-sidebar-toggle', async (event, { open, width } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const mainWindow = ctx.win.__rawWindow || ctx.win;
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    const w = (typeof width === 'number' && width >= SIDEBAR_MIN && width <= SIDEBAR_MAX) ? Math.round(width) : SIDEBAR_DEFAULT;
+    const cur = mainWindow.getBounds();
+    // __lingyaAiWidth = AI 网页应有宽度（不含侧栏）。
+    // 窗口宽 = AI 宽 + 当前侧栏宽（收起 46 / 展开 w）。
+    if (typeof mainWindow.__lingyaAiWidth !== 'number') {
+      // 首次记录：当前窗口宽 - 当前侧栏宽（默认收起 46）
+      // 最大化/全屏时 cur.width 是屏幕宽，会污染基准 → 用 getNormalBounds 还原
+      const baseW = (mainWindow.isMaximized() || mainWindow.isFullScreen())
+        ? mainWindow.getNormalBounds().width : cur.width;
+      mainWindow.__lingyaAiWidth = Math.max(200, baseW - SIDEBAR_COLLAPSED);
+    }
+    mainWindow.__sidebarOpen = !!open;
+    if (open) mainWindow.__sidebarWidth = w;
+    const sw = open ? w : SIDEBAR_COLLAPSED;
+    const wa = require('electron').screen.getDisplayMatching(cur).workAreaSize;
+    const targetW = Math.min(mainWindow.__lingyaAiWidth + sw, wa.width);
+    // 最大化/全屏时不改窗口尺寸（只移 AI view）
+    if (!mainWindow.isMaximized() && !mainWindow.isFullScreen()) {
+      mainWindow.setBounds({ x: cur.x, y: cur.y, width: targetW, height: cur.height });
+    }
+    setTimeout(() => layoutAIView(mainWindow), 30);
+    return { success: true, windowWidth: targetW, aiWidth: mainWindow.__lingyaAiWidth, sidebarWidth: sw };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 拖拽中实时调宽：只重排 AI view，不改窗口宽（拖拽结束后由 toggle 统一改窗口宽）
+ipcMainForProfile.handle('shell-sidebar-resize', async (event, { width } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false };
+    const mainWindow = ctx.win.__rawWindow || ctx.win;
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    const w = (typeof width === 'number' && width >= SIDEBAR_MIN && width <= SIDEBAR_MAX) ? Math.round(width) : SIDEBAR_DEFAULT;
+    mainWindow.__sidebarWidth = w;
+    layoutAIView(mainWindow);
+    return { success: true, width: w };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 拖拽开始/结束：结束时可同步调整窗口宽度（保持 AI 可用宽度不变）
+ipcMainForProfile.handle('shell-sidebar-drag', async (event, { phase } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false };
+    const mainWindow = ctx.win.__rawWindow || ctx.win;
+    if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
+    if (phase === 'end' && mainWindow.__sidebarOpen && typeof mainWindow.__lingyaAiWidth === 'number') {
+      // 结束拖拽：窗口宽 = AI 宽 + 新侧栏宽（AI 净宽始终不变）
+      const cur = mainWindow.getBounds();
+      const w = mainWindow.__sidebarWidth || SIDEBAR_DEFAULT;
+      const wa = require('electron').screen.getDisplayMatching(cur).workAreaSize;
+      const target = Math.min(mainWindow.__lingyaAiWidth + w, wa.width);
+      mainWindow.setBounds({ x: cur.x, y: cur.y, width: target, height: cur.height });
+      setTimeout(() => layoutAIView(mainWindow), 30);
+    }
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 覆盖层"新建窗口"按钮触发
 ipcMainForProfile.handle('create-profile-window', async (_event, { providerId } = {}) => {
   const profiles = profileManager.readProfiles();
   // 不指定平台时创建"未确定平台"的 profile，窗口会显示平台选择页

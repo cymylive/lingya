@@ -792,6 +792,15 @@ function bindEvents() {
 
   // 页签切换
   bindTabEvents();
+  // 文件树侧栏已迁移到壳页面（src/ui/shell.html），覆盖层不再绑定
+  // 注：src/preload/overlay/file-tree-panel.js 保留（含主题逻辑 initTheme），
+  //     但其中侧栏 DOM 操作因元素不存在会自动跳过。
+  try {
+    const ftPanel = require('./file-tree-panel');
+    if (typeof ftPanel.initThemeOnly === 'function') ftPanel.initThemeOnly();
+  } catch (err) {
+    console.error('[LingYa] 主题初始化失败:', err);
+  }
 
   // 记忆面板事件
   bindMemoryPanelEvents();
