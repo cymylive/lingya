@@ -161,6 +161,65 @@ function registerIpcHandlers() {
     } catch (err) { return { success: false, error: err.message }; }
   });
 
+  // 壳页面：删除文件（右键菜单用）—— 含项目目录越权防护 + 确认
+  ipcMain.handle('shell-delete-file', async (event, { filePath, useTrash = true } = {}) => {
+    try {
+      if (!filePath) return { success: false, error: '缺少文件路径' };
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const store = ctx ? ctx.sessionStore : null;
+      const root = store && store.state ? store.state.selectedProjectDir : null;
+      if (!root) return { success: false, error: '尚未选择项目目录' };
+
+      const path = require('path');
+      const fs = require('fs');
+      const realRoot = fs.realpathSync(root);
+      let realFile;
+      try { realFile = fs.realpathSync(filePath); }
+      catch (e) { return { success: false, error: '文件不存在或无法访问' }; }
+
+      // 越权防护：必须位于项目目录内，且不能是项目根本身
+      if (realFile === realRoot || !realFile.startsWith(realRoot + path.sep)) {
+        return { success: false, error: '文件不在项目目录内' };
+      }
+      const stat = fs.statSync(realFile);
+      if (!stat.isFile()) return { success: false, error: '只能删除文件（不支持目录）' };
+
+      // 二次确认（主进程弹原生框，避免 renderer 伪造）
+      const { dialog } = require('electron');
+      const win = windowState.getMainWindow();
+      const name = path.basename(realFile);
+      const confirmRes = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['取消', useTrash ? '移到回收站' : '永久删除'],
+        defaultId: 1,
+        cancelId: 0,
+        title: '确认删除',
+        message: '确定要删除「' + name + '」吗？',
+        detail: useTrash ? '文件将移入系统回收站（可恢复）' : '此操作不可恢复！',
+      });
+      if (confirmRes !== 1) return { success: false, canceled: true };
+
+      if (useTrash) {
+        await require('electron').shell.trashItem(realFile);
+        console.log('[LingYa] 已移到回收站:', realFile);
+        return { success: true, path: realFile, trashed: true };
+      } else {
+        fs.unlinkSync(realFile);
+        console.log('[LingYa] 已永久删除:', realFile);
+        return { success: true, path: realFile, trashed: false };
+      }
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 壳页面：复制文本到剪贴板（复制绝对路径用）
+  ipcMain.handle('shell-copy-text', async (_event, { text } = {}) => {
+    try {
+      if (typeof text !== 'string' || !text) return { success: false, error: '无内容' };
+      require('electron').clipboard.writeText(text);
+      return { success: true, length: text.length };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
   // 列出会话
   ipcMain.handle('list-sessions', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);

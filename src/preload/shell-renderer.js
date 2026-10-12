@@ -150,7 +150,73 @@
     for(var j=0;j<files.length;j++){ (function(el){ el.addEventListener('click', function(){
       var p=el.dataset.path; if(p) openPreview(p);
     }); })(files[j]); }
+    // 右键菜单（所有行：文件可删/可复制，目录只可复制）
+    var rows=list.querySelectorAll('.ck-ft-row');
+    for(var k=0;k<rows.length;k++){ (function(el){ el.addEventListener('contextmenu', function(e){
+      e.preventDefault(); e.stopPropagation();
+      showContextMenu(e.clientX, e.clientY, el.dataset.path, el.dataset.type);
+    }); })(rows[k]); }
   }
+
+  // ===== 右键菜单 =====
+  var ctxMenu = null;
+  function closeContextMenu(){ if(ctxMenu){ ctxMenu.remove(); ctxMenu=null; } }
+  function showContextMenu(x, y, path, type){
+    closeContextMenu();
+    var m = document.createElement('div');
+    m.className = 'ck-ctx-menu';
+    var items = [
+      { label: '复制绝对路径', act: 'copy', icon: '\u2398' },
+    ];
+    if (type === 'file') {
+      items.push({ label: '移到回收站', act: 'trash', icon: '\u267B' });
+      items.push({ label: '永久删除', act: 'delete', icon: '\u2716', danger: true });
+    }
+    for (var i = 0; i < items.length; i++) {
+      (function (it) {
+        var d = document.createElement('div');
+        d.className = 'ck-ctx-item' + (it.danger ? ' danger' : '');
+        d.innerHTML = '<span class="ck-ctx-ico">' + it.icon + '</span>' + it.label;
+        d.addEventListener('click', function () { closeContextMenu(); doAction(it.act, path); });
+        m.appendChild(d);
+      })(items[i]);
+    }
+    document.body.appendChild(m);
+    // 位置（防溢出）
+    var rect = m.getBoundingClientRect();
+    var px = Math.min(x, window.innerWidth - rect.width - 6);
+    var py = Math.min(y, window.innerHeight - rect.height - 6);
+    m.style.left = px + 'px';
+    m.style.top = py + 'px';
+    ctxMenu = m;
+  }
+  function doAction(act, path){
+    if (act === 'copy') {
+      window.shellAPI.copyText(path).then(function (r) {
+        if (r && r.success) toast('已复制路径');
+        else toast('复制失败: ' + ((r && r.error) || '?'));
+      })['catch'](function (e) { toast('复制失败: ' + e.message); });
+    } else if (act === 'trash' || act === 'delete') {
+      var useTrash = (act === 'trash');
+      window.shellAPI.deleteFile(path, useTrash).then(function (r) {
+        if (r && r.success) { toast(useTrash ? '已移到回收站' : '已永久删除'); loadFiles(); }
+        else if (r && r.canceled) { /* 用户取消，不提示 */ }
+        else toast('删除失败: ' + ((r && r.error) || '?'));
+      })['catch'](function (e) { toast('删除失败: ' + e.message); });
+    }
+  }
+  function toast(msg){
+    var t = document.getElementById('ck-toast');
+    if (!t) { t = document.createElement('div'); t.id = 'ck-toast'; t.className = 'ck-toast'; document.body.appendChild(t); }
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { t.classList.remove('show'); }, 2000);
+  }
+  // 点击别处 / Esc 关闭菜单
+  document.addEventListener('click', closeContextMenu);
+  document.addEventListener('contextmenu', function(e){ if(!e.target.closest('.ck-ft-row')) closeContextMenu(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeContextMenu(); });
 
   function loadFiles(){
     var list=document.getElementById('ft-list');

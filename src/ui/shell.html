@@ -152,6 +152,17 @@
   .ck-bg-actions { display: flex; gap: 6px; }
   .ck-bg-btn { flex: 1; padding: 5px 10px; border: 1px solid var(--ck-border); background: var(--ck-surface); color: var(--ck-text-2); border-radius: 6px; font-size: 11.5px; cursor: pointer; }
   .ck-bg-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+
+  /* ===== 右键菜单 ===== */
+  .ck-ctx-menu { position: fixed; z-index: 99999; min-width: 160px; background: var(--ck-bg); border: 1px solid var(--ck-border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); font-size: 12.5px; }
+  .ck-ctx-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; cursor: pointer; color: var(--ck-text); }
+  .ck-ctx-item:hover { background: var(--ck-primary-soft); }
+  .ck-ctx-item.danger { color: #f87171; }
+  .ck-ctx-item.danger:hover { background: rgba(248,113,113,0.14); }
+  .ck-ctx-ico { width: 14px; text-align: center; opacity: 0.75; }
+  /* ===== Toast ===== */
+  .ck-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(10px); z-index: 99999; padding: 9px 18px; background: rgba(20,24,32,0.95); color: #e2e8f0; border: 1px solid var(--ck-border); border-radius: 8px; font-size: 12.5px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
+  .ck-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>

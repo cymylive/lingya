@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.29] - 2026-10-12
+
+### Added
+- **文件树右键菜单**：右键文件/目录可
+  - **复制绝对路径** —— 一键复制完整路径到剪贴板（配合 AI 的 read/edit 工具使用）
+  - **移到回收站** —— 删除文件（可恢复，默认）
+  - **永久删除** —— 不可恢复（红色警示）
+  - 目录只提供「复制绝对路径」（不支持删目录）
+  - 主进程侧安全：`realpathSync` 校验必须在项目目录内、禁止删目录根、弹原生确认框（防 renderer 伪造）
+  - 新增 IPC `shell-delete-file`（用 Electron `shell.trashItem` 移回收站）/ `shell-copy-text`（`clipboard.writeText`）
+
 ## [0.6.28] - 2026-10-12
 
 ### Added

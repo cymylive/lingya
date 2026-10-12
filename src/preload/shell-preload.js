@@ -20,6 +20,10 @@ const api = {
   chooseDir: () => ipcRenderer.invoke('shell-choose-dir'),
   // 读当前项目目录
   getDir: () => ipcRenderer.invoke('shell-get-dir'),
+  // 删除文件（主进程弹确认框 + 越权防护；默认移到回收站）
+  deleteFile: (filePath, useTrash = true) => ipcRenderer.invoke('shell-delete-file', { filePath, useTrash }),
+  // 复制文本到剪贴板
+  copyText: (text) => ipcRenderer.invoke('shell-copy-text', { text }),
 };
 
 try {
