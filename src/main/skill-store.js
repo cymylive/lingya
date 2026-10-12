@@ -75,20 +75,62 @@ function estimateTokens(text) {
  * @param {{maxTokens?: number}} [options]
  * @returns {string}
  */
+/** 取描述首句并截断到 maxLen（渐进式披露用，避免描述过长撑爆索引） */
+function firstSentence(text, maxLen) {
+  let s = String(text || '').trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  // 中文按 。！？ 断句；英文只在 ". " / "! " / "? " 或行尾断句（避免 "e.g." "v1.0" 被误截）
+  const m = s.match(/^[^。！？\n]*?[。！？]|^[\s\S]*?[.!?](?=\s|$)/);
+  if (m) s = m[0];
+  if (s.length > maxLen) s = s.slice(0, maxLen - 1) + '…';
+  return s;
+}
+
+/**
+ * 构建技能注入块：渐进式披露（对齐 Claude Code / Cuckoo Code）
+ *
+ * 旧实现按数组顺序拼「### name + description + instructions 全文」，超 4000 token 就 break，
+ * 结果装了几十个技能时只有排最前的 2 个进得去，其余全部静默丢弃。
+ *
+ * 新实现分两类：
+ *  - 有本地 SKILL.md 的技能（source=local 且 localPath）：只注入 name + 首句描述 + 路径，
+ *    AI 在任务相关时用 read 读取全文 —— 索引体积远小于全文，可全部列出。
+ *  - 无本地文件的技能：内联全文（AI 无法 read，只能直接给）。
+ *
+ * @param {{maxTokens?: number}} [options] maxTokens 仅用于兜底截断索引行数（默认 20000）
+ * @returns {string}
+ */
 function buildSkillSection(options = {}) {
   const skills = readRaw().skills.filter((s) => s.enabled !== false);
   if (skills.length === 0) return '';
-  const maxTokens = options.maxTokens || 4000;
-  const blocks = [];
-  let used = 0;
+
+  const indexLines = [];
+  const inlineBlocks = [];
+
   for (const s of skills) {
-    const block = '### ' + s.name + (s.description ? '（' + s.description + '）' : '') + '\n' + s.instructions;
-    const t = estimateTokens(block);
-    if (used + t > maxTokens && blocks.length > 0) break;
-    blocks.push(block);
-    used += t;
+    const hasPath = s.source === 'local' && s.localPath;
+    if (hasPath) {
+      const desc = firstSentence(s.description, 60);
+      indexLines.push('- ' + s.name + (desc ? ': ' + desc : '') + ' | 路径: ' + s.localPath);
+    } else {
+      inlineBlocks.push('### ' + s.name + (s.description ? '（' + s.description + '）' : '') + '\n' + s.instructions);
+    }
   }
-  return blocks.join('\n\n');
+
+  const parts = [];
+  if (indexLines.length) {
+    const body = indexLines.join('\n');
+    const t = estimateTokens(body);
+    parts.push(
+      '### 技能索引（共 ' + indexLines.length + ' 个，按需读取全文）\n' +
+      '以下技能只提供名称、简介和 SKILL.md 路径。当任务与某技能相关时，**必须先用 read 读取其 SKILL.md 全文**，再按其中指令执行。索引总占用约 ' + t + ' tokens：\n\n' +
+      body
+    );
+  }
+  if (inlineBlocks.length) {
+    parts.push('### 完整技能指令（无本地文件，直接注入）\n' + inlineBlocks.join('\n\n'));
+  }
+  return parts.join('\n\n');
 }
 
 function normalizeSkill(input) {

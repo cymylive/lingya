@@ -80,6 +80,28 @@ function deepseekHookInstaller() {
     } catch (e) { /* ignore */ }
   }
 
+  // 命中平台限流时通知 preload（rate-limiter 监听此事件进入冷却）
+  function dispatchRateLimit(reason) {
+    try {
+      window.dispatchEvent(new CustomEvent('lingya-ai-ratelimited', {
+        detail: { reason: reason || 'unknown', at: Date.now() }
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  // 限流文案关键词（服务端有时用 200 + 错误码 + 中文提示）
+  var RL_WORDS = ['发送过于频繁', '请求过于频繁', '操作过于频繁', '访问过于频繁',
+    '频率过高', '稍后重试', '稍后再试', 'too many requests', 'rate limit'];
+
+  function looksRateLimitedText(s) {
+    if (!s || typeof s !== 'string' || s.length > 500) return false;
+    var low = s.toLowerCase();
+    for (var i = 0; i < RL_WORDS.length; i++) {
+      if (low.indexOf(RL_WORDS[i].toLowerCase()) !== -1) return true;
+    }
+    return false;
+  }
+
   // ---------- 回复文本提取（区分 THINK / RESPONSE 片段）----------
   function createExtractor() {
     var fragmentTypes = [];
@@ -292,6 +314,27 @@ function deepseekHookInstaller() {
     pump();
   }
 
+  // ---------- 用户消息派发（供 preload 侧记录对话）----------
+  // 从请求体提取用户输入。DeepSeek 的 completion 请求体里 prompt 就是用户消息。
+  function dispatchUserMessage(bodyText) {
+    try {
+      if (!bodyText || typeof bodyText !== 'string') return;
+      var obj;
+      try { obj = JSON.parse(bodyText); } catch (e) { return; }
+      if (!obj || typeof obj !== 'object') return;
+      var text = obj.prompt;
+      // 兼容可能的其他字段命名
+      if (typeof text !== 'string' || !text.trim()) {
+        if (typeof obj.message === 'string') text = obj.message;
+        else if (typeof obj.content === 'string') text = obj.content;
+      }
+      if (typeof text !== 'string' || !text.trim()) return;
+      window.dispatchEvent(new CustomEvent('lingya-user-message', {
+        detail: { text: text.trim(), at: Date.now() }
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
   // ---------- 缓存真实请求头（供压缩时直接 fetch 使用）----------
   // DeepSeek 的 share/create 需要 authorization + x-client-* 头，
   // 拦截任意请求时缓存最新一组，供后续直接调用 API。
@@ -328,11 +371,28 @@ function deepseekHookInstaller() {
           cacheHeaders(obj);
         }
       } catch (e) { /* ignore */ }
+      // 拦截用户消息（用于对话导出）：请求体含本次用户输入
+      try {
+        if (isCompletion(url, method) && init && typeof init.body === 'string') {
+          dispatchUserMessage(init.body);
+        }
+      } catch (e) { /* ignore */ }
+
       var p = origFetch.apply(this, arguments);
       if (!isCompletion(url, method)) return p;
       dispatchStart();
       return p.then(function (response) {
         try {
+          // HTTP 429 → 明确限流；其他状态码读响应体关键词兜底
+          if (response && response.status === 429) {
+            dispatchRateLimit('http-429');
+          } else if (response && response.status >= 400) {
+            try {
+              response.clone().text().then(function (t) {
+                if (looksRateLimitedText(t)) dispatchRateLimit('http-' + response.status + '-body');
+              }).catch(function () {});
+            } catch (e) { /* ignore */ }
+          }
           if (response && response.body) observeBody(response.clone().body);
         } catch (e) { /* ignore */ }
         return response;
@@ -362,6 +422,8 @@ function deepseekHookInstaller() {
   XMLHttpRequest.prototype.send = function (body) {
     var info = xhrInfo.get(this);
     if (info && isCompletion(info.url, info.method)) {
+      // 拦截用户消息（用于对话导出）
+      try { if (typeof body === 'string') dispatchUserMessage(body); } catch (e) { /* ignore */ }
       dispatchStart();
       try { observeXhr(this); } catch (e) { /* ignore */ }
     }
@@ -393,6 +455,14 @@ function deepseekHookInstaller() {
     }
 
     xhr.addEventListener('readystatechange', function () {
+      // HTTP 429 / 响应体含限流文案 → 通知限流防护
+      try {
+        if (xhr.readyState === 4 && xhr.status === 429) {
+          dispatchRateLimit('xhr-429');
+        } else if (xhr.readyState >= 2 && xhr.status >= 400) {
+          if (looksRateLimitedText(xhr.responseText || '')) dispatchRateLimit('xhr-' + xhr.status);
+        }
+      } catch (e) { /* ignore */ }
       if (xhr.readyState === 3 || xhr.readyState === 4) consumeChunk();
       if (xhr.readyState === 4 && !dispatched) {
         var rest = frameDecoder.finish();

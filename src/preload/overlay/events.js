@@ -705,6 +705,38 @@ function bindEvents() {
   const genDocBtn = document.getElementById('lingya-btn-gen-doc');
   genDocBtn?.addEventListener('click', handleGenerateDoc);
 
+  // 导出对话为 Markdown 按钮
+  const exportMdBtn = document.getElementById('lingya-btn-export-md');
+  exportMdBtn?.addEventListener('click', async () => {
+    const log = require('../dom/conversation-log');
+    const count = log.getCount();
+    if (count === 0) {
+      showToast('本窗口尚无对话记录（导出记录从窗口打开后开始累积）', 3500);
+      return;
+    }
+    try {
+      const markdown = log.exportMarkdown();
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const name = 'lingya-conversation-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+        '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.md';
+      if (!window.electronAPI || typeof window.electronAPI.conversationExportMd !== 'function') {
+        showToast('导出 API 不可用，请重启应用', 3000);
+        return;
+      }
+      const res = await window.electronAPI.conversationExportMd(markdown, name);
+      if (res && res.success) {
+        showToast('已导出 ' + count + ' 条对话 → ' + res.path, 4000);
+      } else if (res && res.canceled) {
+        // 用户取消，不提示
+      } else {
+        showToast('导出失败：' + ((res && res.error) || '未知错误'), 3500);
+      }
+    } catch (err) {
+      showToast('导出失败：' + err.message, 3500);
+    }
+  });
+
   // 沉浸式交流按钮
   const immersiveBtn = document.getElementById('lingya-btn-immersive');
   immersiveBtn?.addEventListener('click', () => {

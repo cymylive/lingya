@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.26] - 2026-10-12
+
+### Added
+- **技能渐进式披露**：修复技能注入的顺序截断问题 —— 原实现按数组顺序拼「name + description + instructions 全文」，超 4000 token 预算即 break，导致装了 119 个技能时 AI 实际只看得见排最前的 2 个（117 个被静默丢弃）
+  - `src/main/skill-store.js` `buildSkillSection()` 改为渐进式披露：有本地 SKILL.md 的技能只注入「name + 首句描述 + 路径」，AI 任务相关时用 read 读取全文；无本地文件的内联全文
+  - 新增 `firstSentence()`：中文按 。！？ 断句，英文只在 ". " 或行尾断句（避免 e.g./v1.0 被误截）
+  - 4 个提示词模板（deepseek/default/chatgpt/claude）「## 技能」章节后加规则：任务相关时**必须先用 read 读 SKILL.md 全文**再执行
+  - 实测效果：可见技能 **2 → 119**（全覆盖），注入体积 2716 → 5024 tokens（对比全文注入 248425 tokens 省约 50 倍）
+  - 对照测试 10/10 通过
+- **导出对话为 Markdown**：会话面板新增「导出对话 (.md)」按钮，把本窗口累积的对话写成 Markdown 文件
+  - 背景：LingYa 不持久化对话内容（session-store 只存「会话ID→项目目录」），网页 IndexedDB 也只有 message_id/role 元数据（实测无正文），故只能在运行时累积
+  - 新增 `src/preload/dom/conversation-log.js`：三来源累积 —— ① AI 回复（onInterceptedResponse）② LingYa 发送的用户消息（onUserMessageSent，过滤系统消息）③ 用户手动发送（主世界 hook 从请求体提取后派发 `lingya-user-message`）
+  - 导出内容含元信息（导出时间/平台/会话链接/会话 ID/项目目录/消息数），AI 回复默认剥离 lingya/js 工具代码块
+  - 自动过滤系统消息（自动续写、监督续跑、压缩摘要、工具回传等 20+ 种 tag）
+  - 新增 IPC `conversation-export-md`（弹保存框写盘）+ `window.electronAPI.conversationExportMd`
+  - 新增 `test/preload/conversation-log.test.js`（12 用例，纯 Node）
+- **限流防护（三层）**：恢复丢失的 DeepSeek 限流防护，避免 Agent 循环高频回传触发账号级限流（页面提示「消息发送过于频繁」，冷却约 10 分钟，任务直接卡死）
+  - **A 预防**：新增 `src/preload/dom/rate-limiter.js` —— `getWaitMs()` 统一计算需等待时长（冷却剩余 与 自适应最小间隔 取最大值），`sendToChat` 发送前叠加该等待
+  - **B 检测**：`src/providers/deepseek.js` 主世界 hook 新增 `dispatchRateLimit()` —— 识别 HTTP 429（fetch/XHR）、4xx 响应体限流关键词，派发 `lingya-ai-ratelimited` 事件；rate-limiter 另用 MutationObserver 监听页面短提示文本兜底（仅发送后 15s 窗口内、文本 ≤120 字符，避免误判 AI 回复正文）
+  - **C 恢复**：命中后进入冷却（默认 10 分钟），冷却期内发送自动排队等待，结束自动续跑；最小间隔每次命中 +3s，上限 30s
+  - 悬浮球新增 `cooling` 状态 + 每秒倒计时「限流冷却中 mm:ss」
+  - 新增 `test/preload/rate-limiter.test.js`（7 用例，纯 Node 不依赖 electron）
+  - 限流初始化独立于 `init()` 主 try 块 —— 避免别处抛异常导致限流静默失效
+  - 测试：全量 330 通过；Electron 环境实测（事件→冷却→UI 倒计时）通过
+
 ## [0.6.25] - 2026-10-12
 
 ### Fixed

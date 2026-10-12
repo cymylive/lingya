@@ -89,6 +89,10 @@ let electronAPI = {
   exportMemories: () => {
     return ipcRenderer.invoke('memory-export');
   },
+  // 导出对话为 Markdown（渲染进程生成内容，主进程弹保存框写盘）
+  conversationExportMd: (markdown, suggestedName) => {
+    return ipcRenderer.invoke('conversation-export-md', { markdown, suggestedName });
+  },
   // ========== Skill 系统 API ==========
   listSkills: () => {
     return ipcRenderer.invoke('skill-list');

@@ -40,3 +40,7 @@ temp/
 coverage.lcov
 test/coverage.lcov
 /wyp/
+  
+# 源码修改前的备份  
+*.bak-*  
+*.bak  

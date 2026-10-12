@@ -185,12 +185,13 @@ function setFabState(next) {
   const badge = document.getElementById('lingya-status-badge');
   const label = document.getElementById('lingya-fab-label');
   if (!badge) return;
-  badge.classList.remove('lingya-state-idle', 'lingya-state-generating', 'lingya-state-executing', 'lingya-state-stopped', 'lingya-state-done');
+  badge.classList.remove('lingya-state-idle', 'lingya-state-generating', 'lingya-state-executing', 'lingya-state-stopped', 'lingya-state-done', 'lingya-state-cooling');
   badge.classList.add('lingya-state-' + fabState);
   const text = fabState === 'generating' ? 'AI 生成中（右键停止）'
     : fabState === 'executing' ? '执行中（右键停止）'
     : fabState === 'done' ? '✅ 任务完成'
-    : fabState === 'stopped' ? '已停止（发消息恢复）' : '';
+    : fabState === 'stopped' ? '已停止（发消息恢复）'
+    : fabState === 'cooling' ? '限流冷却中' : '';
   if (label) {
     label.textContent = text;
     label.classList.toggle('lingya-hidden', !text);
@@ -206,6 +207,40 @@ function setFabState(next) {
 /** 获取当前悬浮球状态 */
 function getFabState() {
   return fabState;
+}
+
+/**
+ * 限流冷却状态更新（由 rate-limiter.onCooldownChange 回调驱动）
+ * @param {number} remainingMs 剩余冷却毫秒数，0 = 冷却结束
+ */
+function updateRateLimitUI(remainingMs) {
+  const badge = document.getElementById('lingya-status-badge');
+  const label = document.getElementById('lingya-fab-label');
+  if (!badge) return;
+  if (remainingMs > 0) {
+    const total = Math.ceil(remainingMs / 1000);
+    const mm = String(Math.floor(total / 60)).padStart(2, '0');
+    const ss = String(total % 60).padStart(2, '0');
+    badge.classList.add('lingya-state-cooling');
+    if (label) {
+      label.textContent = '限流冷却中 ' + mm + ':' + ss;
+      label.classList.remove('lingya-hidden');
+    }
+    badge.title = 'LingYa - 限流冷却中，剩余 ' + mm + ':' + ss;
+  } else {
+    badge.classList.remove('lingya-state-cooling');
+    // 冷却结束：若当前停在 cooling 态则回 idle，标签清空
+    if (fabState === 'cooling') {
+      fabState = 'idle';
+      badge.classList.remove('lingya-state-cooling');
+      badge.classList.add('lingya-state-idle');
+    }
+    if (label && fabState === 'idle') {
+      label.textContent = '';
+      label.classList.add('lingya-hidden');
+    }
+    badge.title = 'LingYa';
+  }
 }
 
 /**
@@ -474,6 +509,7 @@ module.exports = {
   markTaskDone,
   setFabState,
   getFabState,
+  updateRateLimitUI,
   setStopped,
   isStopped,
   showOverlay,

@@ -546,6 +546,29 @@ function registerIpcHandlers() {
     }
   });
 
+  // 导出对话为 Markdown（渲染进程生成好内容，主进程只负责弹框写盘）
+  ipcMain.handle('conversation-export-md', async (_event, { markdown, suggestedName } = {}) => {
+    try {
+      if (typeof markdown !== 'string' || !markdown) {
+        return { success: false, error: '导出内容为空' };
+      }
+      const win = windowState.getMainWindow();
+      const fallback = 'lingya-conversation-' + new Date().toISOString().slice(0, 10) + '.md';
+      const result = dialog.showSaveDialogSync(win, {
+        defaultPath: suggestedName || fallback,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        title: '导出对话为 Markdown',
+      });
+      if (!result) return { success: false, canceled: true };
+      const fs = require('fs');
+      fs.writeFileSync(result, markdown, 'utf-8');
+      console.log('[LingYa] 对话已导出:', result, '(' + markdown.length + ' 字符)');
+      return { success: true, path: result, bytes: markdown.length };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 构建记忆注入块（手动插入时用）
   ipcMain.handle('memory-build-section', async (_event, { prompt } = {}) => {
     try {
