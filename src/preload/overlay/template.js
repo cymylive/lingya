@@ -454,6 +454,10 @@ const OVERLAY_HTML = [
 ].join('\n');
 
 const OVERLAY_CSS = [
+// 防御：portable 版 %TEMP% 解压异常时 resources.pak 加载失败，
+// Chromium UA 样式表丢失会让 <style>/<script> 源码渲染成可见文本。
+// 作者级规则兜底，与 UA 样式表是否可用无关。
+'style, script { display: none !important; }',
 ':root {',
 '  --ck-bg: rgba(12, 14, 16, 0.97);',
 '  --ck-surface: rgba(255, 255, 255, 0.04);',

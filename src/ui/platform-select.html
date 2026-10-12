@@ -6,6 +6,8 @@
   <title>选择平台 - LingYa</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* 防御：resources.pak 加载失败时 UA 样式表丢失，隐藏 style/script 源码文本 */
+    style, script { display: none !important; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;

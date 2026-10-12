@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.25] - 2026-10-12
+
+### Fixed
+- **新建窗口源码文本泄漏（"乱码"）**：portable 版运行时解压到 `%TEMP%` 时若 `resources.pak` 加载失败，Chromium UA 样式表丢失，导致 `<style>`/`<script>` 源码被当作可见文本渲染
+  - `src/preload/overlay/template.js`：`OVERLAY_CSS` 顶部加 `style, script { display: none !important; }` 作者级兜底
+  - `src/ui/platform-select.html`：同步加同规则
+  - 已用「隐藏 resources.pak」对照实验验证：无防御时 script 计算样式为 `inline`（文本可见），加防御后为 `none`（正常隐藏）
+
 ## [0.6.11] - 2026-10-05
 
 ### Added
