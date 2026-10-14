@@ -195,8 +195,8 @@
   .ck-ctx-sep { height: 1px; margin: 4px 6px; background: var(--ck-border); }
   .ck-ctx-ico { width: 14px; text-align: center; opacity: 0.75; }
   /* ===== Toast ===== */
-  .ck-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(10px); z-index: 99999; padding: 9px 18px; background: rgba(20,24,32,0.95); color: #e2e8f0; border: 1px solid var(--ck-border); border-radius: 8px; font-size: 12.5px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; }
-  .ck-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .ck-toast { position: fixed; bottom: 20px; left: 12px; max-width: 296px; z-index: 2147483647; padding: 8px 12px; background: rgba(20,24,32,0.95); color: #e2e8f0; border: 1px solid var(--ck-border); border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; transform: translateY(10px); word-break: break-word; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .ck-toast.show { opacity: 1; transform: translateY(0); }
 
   /* ===== 编辑器 ===== */
   #ck-preview-edit-area { flex: 1; min-height: 0; width: 100%; border: none; outline: none; resize: none; padding: 12px 14px; background: rgba(0,0,0,0.18); color: var(--ck-text); font-family: "Consolas","Courier New",monospace; font-size: 12.5px; line-height: 1.6; tab-size: 2; white-space: pre; overflow: auto; box-sizing: border-box; }

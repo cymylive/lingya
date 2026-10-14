@@ -1,6 +1,21 @@
 # Changelog
 
+## [0.6.39] - 2026-10-14
+
+### Added
+- **侧边栏功能完整性核对脚本** `npm run check:sidebar`（`scripts/verify-sidebar-parity.js`）：校验 shellAPI 三层、IPC 通道、26 个面板功能点、事件对齐
+
+### Fixed
+- **侧边栏设置不持久化**：发送延迟/自动注入/自动压缩保存后重启回默认值
+  - 侧边栏设置面板不回显 + localStorage 跨 origin 隔离，改为保存时写侧边栏自己的 localStorage 并在打开时回显
+- **点保存无提示**：toast 用 left:50% 落在窗口中间（AI 视图区）被 WebContentsView 盖住，改为侧栏左下角显示
+
+### Notes
+- 全量测试 361/361 通过
+- 全项目审计：语法/API/IPC/事件/DOM 全对齐
+
 ## [0.6.38] - 2026-10-14
+
 
 ### Added
 - **隔离实例目录自动清理**：启动时清理超过 7 天的 `instances/auto-*` 目录（多开残留），新增单测
