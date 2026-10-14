@@ -9,6 +9,7 @@
     "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-reporter=lcov test/tools/*.test.js test/main/*.test.js test/preload/*.test.js > coverage.lcov",
     "test:ci": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
     "check:notes": "node scripts/check-notes.js",
+    "check:sidebar": "node scripts/verify-sidebar-parity.js",
     "build": "electron-builder --publish always",
     "build:win": "electron-builder --win --publish always",
     "build:win:nsis": "electron-builder --win --config.win.target=nsis --publish always",
