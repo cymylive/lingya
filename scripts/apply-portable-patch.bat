@@ -1,26 +1,25 @@
 @echo off
-chcp 65001 >nul
-REM 构建前准备：把 patch 后的 portable.nsi 应用到 node_modules
-REM 用途：npm install 会覆盖 node_modules，构建前跑一次即可
+REM Apply portable.nsi patch before building the portable target.
+REM Run this after "npm install"/"npm ci" because they overwrite node_modules.
 setlocal
 set ROOT=%~dp0..
 set TPL=%ROOT%\node_modules\app-builder-lib\templates\nsis\portable.nsi
 set PATCHED=%ROOT%\build\portable.nsi.patched
 
 if not exist "%PATCHED%" (
-  echo [ERROR] 未找到 %PATCHED%
+  echo [ERROR] missing %PATCHED%
   exit /b 1
 )
 if not exist "%TPL%" (
-  echo [ERROR] 未找到模板 %TPL%
+  echo [ERROR] missing template %TPL%
   exit /b 1
 )
 
 findstr /c:"LingYa patch" "%TPL%" >nul 2>&1
 if %ERRORLEVEL%==0 (
-  echo [SKIP] 模板已是 patch 版
+  echo [SKIP] template already patched
 ) else (
   copy /Y "%PATCHED%" "%TPL%" >nul
-  echo [OK] 已应用 portable.nsi patch
+  echo [OK] applied portable.nsi patch
 )
 endlocal

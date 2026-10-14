@@ -89,6 +89,3 @@ Section
   SetOutPath $EXEDIR
 	RMDir /r $INSTDIR
 SectionEnd
-
-
-(End of file - total 92 lines)

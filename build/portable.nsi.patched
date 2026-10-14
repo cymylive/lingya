@@ -103,6 +103,3 @@ Section
   SetOutPath $EXEDIR
   ; ===== LingYa patch: 保留解压目录供下次复用（原为 RMDir /r $INSTDIR）=====
 SectionEnd
-
-
-(End of file - total 106 lines)
