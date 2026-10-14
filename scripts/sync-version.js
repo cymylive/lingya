@@ -16,9 +16,14 @@ if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
 
 const root = path.join(__dirname, '..');
 
+/** 读取并解析 JSON，容忍 UTF-8 BOM */
+function readJson(p) {
+  return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, ''));
+}
+
 // 更新 package.json
 const pkgPath = path.join(root, 'package.json');
-const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+const pkg = readJson(pkgPath);
 pkg.version = version;
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 console.log('[sync-version] package.json -> ' + version);
@@ -26,7 +31,7 @@ console.log('[sync-version] package.json -> ' + version);
 // 更新 package-lock.json
 const lockPath = path.join(root, 'package-lock.json');
 if (fs.existsSync(lockPath)) {
-  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  const lock = readJson(lockPath);
   if (lock.version) lock.version = version;
   if (lock.packages && lock.packages['']) {
     lock.packages[''].version = version;
