@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.40] - 2026-10-14
+
+### Fixed
+- **便携版满屏乱码（根因修复）**：便携版每次启动解压到 %TEMP%\<hash>\，可能解压不完整（缺 resources.pak / chrome_*.pak / locales\*.pak），导致 Blink UA 默认样式表加载失败、所有元素回落到 CSS 初始值，<style> 里的 CSS 被当文本渲染成满屏乱码
+  - 症状：窗口显示原始 CSS 源码，页面高度撑到 9 万 px
+  - 铁证：运行目录 debug.log 报 resource_bundle.cc Failed to load resources.pak
+
+### Changed
+- **便携版解压机制改造（根治乱码）**：portable 模板由"每次启动 RMDir /r 全删再解压、退出后再删"改为"已完整解压则复用"
+  - 首启解压 500MB 后写 `.lingya-ready` 标记；之后启动检测到标记直接秒起，不再全量解压
+  - 多开时共用同一份已解压目录，杜绝"实例 B 删除实例 A 正在使用的 pak"导致的乱码
+  - `unpackDirName` 固定为 `LingYa-runtime-0.6.40`（随版本变化，跨版本不冲突）
+  - 退出后保留解压目录（原 RMDir /r 会误删他人正在用的文件）
+
+### Notes
+- 便携版（portable）已修复，可放心使用；数据目录仍固定在 <exe目录>\LingYa-Data
+- 构建前如执行过 npm install，需先跑 `npm run prep:portable` 重新应用 portable.nsi patch
+
 ## [0.6.39] - 2026-10-14
 
 ### Added
@@ -621,4 +639,5 @@
 - 危险命令（rm -rf /、format、shutdown 等）触发额外警告
 - 30 秒命令执行超时限制
 - 1MB 命令输出缓冲区限制
+
 
