@@ -37,6 +37,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Apply portable.nsi patch (windows only)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: cmd
+        run: scripts\apply-portable-patch.bat
+
       - name: Build and Publish (正式版)
         if: ${{ !contains(github.ref_name, '-beta') }}
         run: npm run ${{ matrix.command }}
