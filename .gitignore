@@ -27,6 +27,12 @@ logs/
 
 # User data (contains session/cookies)
 userData/
+.dev-data/
+build.log
+_probe.txt
+_*.txt
+_*.png
+_*.log
 
 # Temp
 *.tmp
@@ -41,6 +47,6 @@ coverage.lcov
 test/coverage.lcov
 /wyp/
   
-# 源码修改前的备份  
+# 源锟斤拷锟睫革拷前锟侥憋拷锟斤拷  
 *.bak-*  
 *.bak  

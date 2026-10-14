@@ -2,6 +2,7 @@
  * 覆盖层 UI 基础能力：注入、提示、历史记录、徽章、面板显隐与巡检
  * 由原 preload.js 拆分而来，逻辑保持不变。
  */
+const { ipcRenderer } = require('electron');
 const { OVERLAY_HTML, OVERLAY_CSS } = require('./template');
 const { getProviderByUrl } = require('../../../src/providers');
 const state = require('../dom/state');
@@ -26,6 +27,7 @@ function injectOverlay() {
   container.id = 'lingya-root';
   container.innerHTML = OVERLAY_HTML;
   document.body.appendChild(container);
+  applyFloatSettings(); // 注入后应用显隐设置
 }
 
 // ========== 覆盖层逻辑 ==========
@@ -291,6 +293,26 @@ function hideOverlay() {
 }
 
 /**
+ * 应用悬浮元素显隐设置（读 localStorage）：
+ *   lingya-hide-floating=1 → 隐藏悬浮球 + 覆盖层面板
+ *   lingya-hide-plan-float=1 → 隐藏计划悬浮卡
+ */
+function applyFloatSettings() {
+  let hideFloating = false, hidePlan = false;
+  try {
+    hideFloating = localStorage.getItem('lingya-hide-floating') === '1';
+    hidePlan = localStorage.getItem('lingya-hide-plan-float') === '1';
+  } catch (_) {}
+  const badge = document.getElementById('lingya-status-badge');
+  const overlay = document.getElementById('lingya-overlay');
+  const planFloat = document.getElementById('lingya-plan-float');
+  if (badge) badge.style.display = hideFloating ? 'none' : '';
+  if (overlay && hideFloating) overlay.classList.add('lingya-hidden');
+  if (planFloat) planFloat.style.display = hidePlan ? 'none' : '';
+}
+
+
+/**
  * 显示命令预览并展开覆盖层
  * @param {Object} cmdData - 命令数据对象，包含 command、timestamp、id 等字段
  */
@@ -325,6 +347,7 @@ function addHistory(entry) {
   commandHistory.unshift(entry);
   if (commandHistory.length > 50) commandHistory.pop();
   renderHistory();
+  try { ipcRenderer.send('lingya-report-history', { entry: entry, total: commandHistory.length }); } catch (_) {}
 }
 
 /**
@@ -420,25 +443,10 @@ function updateHomeMode() {
   }
 }
 
-/**
- * 显示首次使用提示浮窗（居中）
- */
-function showFirstTimeDialog() {
-  if (state.currentProjectDir) {
-    hideFirstTimeDialog();
-    return;
-  }
-  const dialog = document.getElementById('lingya-first-time-dialog');
-  if (dialog) dialog.classList.remove('lingya-hidden');
-}
 
-/**
- * 隐藏首次使用提示浮窗
- */
-function hideFirstTimeDialog() {
-  const dialog = document.getElementById('lingya-first-time-dialog');
-  if (dialog) dialog.classList.add('lingya-hidden');
-}
+// 首次提示浮窗已移除（底部/侧边栏已有初始化项目按钮）。保留空实现，避免改动所有调用点。
+function showFirstTimeDialog() {}
+function hideFirstTimeDialog() {}
 
 /**
  * 强制显示覆盖层（移除所有隐藏状态）
@@ -479,6 +487,7 @@ module.exports = {
   isStopped,
   showOverlay,
   hideOverlay,
+  applyFloatSettings,
   displayCommand,
   handleExecute,
   handleIgnore,

@@ -393,6 +393,65 @@ function fallbackSend(provider, input) {
  */
 function registerIpcListeners() {
 // 监听主进程发送的初始提示
+// 侧边栏「插入」→ 把文本填进输入框（不自动发送）
+// 侧边栏「动作」→ 在 AI 视图侧执行（生成文档/沉浸式/停止/压缩/手动解析/导出）
+ipcRenderer.on('lingya-set-setting', (_event, payload) => {
+  try {
+    const k = (payload && payload.key) || '';
+    const v = payload && payload.value;
+    if (!k) return;
+    if (k === 'auto-inject') { localStorage.setItem('lingya-auto-inject', v ? '1' : '0'); }
+    else if (k === 'send-delay-min') { localStorage.setItem('lingya-send-delay-min', String(v)); state.sendDelayMin = Number(v); }
+    else if (k === 'send-delay-max') { localStorage.setItem('lingya-send-delay-max', String(v)); state.sendDelayMax = Number(v); }
+    else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
+    else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
+    else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
+    else if (k === 'hide-plan-float') { localStorage.setItem('lingya-hide-plan-float', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
+  } catch (e) { console.error('[LingYa] set-setting 失败:', e.message); }
+});
+
+ipcRenderer.on('lingya-run-action', async (_event, payload) => {
+  const a = (payload && payload.action) || '';
+  try {
+    if (a === 'gen-doc') {
+      await sendToChat('根据当前项目生成一个类似 claude.md 的项目说明文件，并将文件放到当前项目 .lingyaCode/LINGYA.md', '生成文档', 300);
+    } else if (a === 'immersive') {
+      await sendToChat('现在你的任何疑问,或没有疑问的选择都需要和我确认 , 确认的方式是 你问一个问题我回答一个问题,然后你再问下一个问题, 最好给我选项, 也要给我个其他的选项, 谢谢 爱你哦', '沉浸式交流', 300);
+    } else if (a === 'stop') {
+      const ev = require('../overlay/events'); if (ev.stopTask) await ev.stopTask(false);
+    } else if (a === 'compact') {
+      const cp = require('./compaction'); if (cp.runCompaction) await cp.runCompaction();
+    } else if (a === 'manual-parse') {
+      const io = require('./intercept-observer');
+      const text = io.getLastInterceptedText ? io.getLastInterceptedText() : null;
+      if (text && io.processInterceptedResponse) await io.processInterceptedResponse(text, true);
+    } else if (a === 'clear-history') {
+      try { const { commandHistory } = require('../overlay/ui'); if (commandHistory) commandHistory.length = 0; const ui = require('../overlay/ui'); if (ui.renderHistory) ui.renderHistory(); } catch (_) {}
+    } else if (a === 'export-md') {
+      const log = require('./conversation-log');
+      const cnt = log.getCount ? log.getCount() : 0;
+      if (cnt === 0) { try { const { showToast } = require('../overlay/ui'); showToast('本窗口尚无对话记录', 3000); } catch (_) {} return; }
+      const md = log.exportMarkdown ? log.exportMarkdown() : '';
+      const d = new Date(); const pad = (n) => String(n).padStart(2, '0');
+      const nm = 'lingya-conversation-' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.md';
+      await ipcRenderer.invoke('conversation-export-md', { markdown: md, suggestedName: nm });
+    }
+  } catch (e) { console.error('[LingYa] run-action 失败:', e.message); }
+});
+
+ipcRenderer.on('lingya-insert-to-chat', async (_event, payload) => {
+  try {
+    const p = payload || {};
+    const text = String(p.text || '');
+    if (!text) return;
+    let input = findInputArea();
+    for (let i = 0; !input && i < 5; i++) { await new Promise(r => setTimeout(r, 300)); input = findInputArea(); }
+    if (!input) { try { const { showToast } = require('../overlay/ui'); showToast('未找到输入框', 3000); } catch (_) {} return; }
+    await setInputContent(input, text);
+    try { const { showToast } = require('../overlay/ui'); showToast('已插入', 1500); } catch (_) {}
+  } catch (e) { console.error('[LingYa] insert-to-chat 失败:', e.message); }
+});
+
 ipcRenderer.on('initial-prompt', (_event, content) => {
   console.log('[' + new Date().toISOString() + '] [LingYa] 收到 initial-prompt 事件, content长度=' + (content || '').length);
   state.initialPromptContent = content || '';

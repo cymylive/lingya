@@ -108,6 +108,5 @@ test('handleUrlChange 恢复已保存目录', () => {
   store.handleUrlChange('https://chat.deepseek.com/a/chat/s/abc123', fakeWin);
   assert.strictEqual(store.state.currentSessionId, 'abc123');
   assert.strictEqual(store.state.selectedProjectDir, 'C:/proj');
-  assert.ok(sent.some(([ch]) => ch === 'session-restored'));
-  assert.ok(sent.some(([ch]) => ch === 'project-dir-updated'));
+  assert.ok(sent.some(([ch]) => ch === 'project-dir-updated'), '应发送 project-dir-updated');
 });

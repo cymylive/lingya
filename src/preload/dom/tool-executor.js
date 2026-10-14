@@ -5,6 +5,7 @@
 const { showToast, setTaskStatus, addHistory, truncate, flashBadge } = require('../overlay/ui');
 const { sendToolResultToChat } = require('./chat-input');
 const state = require('./state');
+const { renderToolCard } = require('../overlay/tool-card');
 
 // 是否正在执行命令或工具
 let isExecuting = false;
@@ -26,6 +27,20 @@ function clipForHistory(text) {
 /**
  * 通知用户检测到工具调用（闪烁状态徽章 + 更新预览）
  */
+/** 渲染工具结果卡片（仿 dsh ui-tool）：追加到 #lingya-tool-cards 顶部，最多保留 20 张 */
+function renderResultCard(name, args, ok, output) {
+  const box = document.getElementById('lingya-tool-cards');
+  if (!box) return;
+  const html = renderToolCard({
+    name: name,
+    args: args,
+    status: ok ? 'success' : 'error',
+    output: output
+  });
+  box.insertAdjacentHTML('afterbegin', html);
+  while (box.children.length > 20) box.removeChild(box.lastElementChild);
+}
+
 function notifyToolCallDetected(toolCall) {
   const preview = document.getElementById('lingya-cmd-preview');
   if (preview) {
@@ -80,6 +95,7 @@ async function handleJsToolScript(code) {
       if (resultOutput) {
         resultOutput.textContent = result.output || '(脚本执行完成，无输出)';
       }
+      renderResultCard('JS 脚本', code.slice(0, 60), true, result.output || '(无输出)');
     } else {
       if (resultStatus) {
         resultStatus.textContent = '❌ JS 脚本执行失败';
@@ -88,6 +104,7 @@ async function handleJsToolScript(code) {
       if (resultOutput) {
         resultOutput.textContent = result.error || '未知错误';
       }
+      renderResultCard('JS 脚本', code.slice(0, 60), false, result.error || '未知错误');
     }
 
     addHistory({
@@ -153,6 +170,7 @@ async function handleToolCall(toolCall) {
       if (resultOutput) {
         resultOutput.textContent = JSON.stringify(result.data, null, 2);
       }
+      renderResultCard(toolName, params, true, result.data);
     } else {
       if (resultStatus) {
         resultStatus.textContent = '❌ 工具 ' + toolName + ' 执行失败';
@@ -161,6 +179,7 @@ async function handleToolCall(toolCall) {
       if (resultOutput) {
         resultOutput.textContent = result.error || '未知错误';
       }
+      renderResultCard(toolName, params, false, result.error || '未知错误');
     }
 
     addHistory({

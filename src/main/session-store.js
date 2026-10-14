@@ -80,7 +80,6 @@ function createSessionStore(profileId, storeDir, windowState) {
         state.pendingProjectDir = null;
         if (win && !win.isDestroyed()) {
           win.webContents.send('project-dir-updated', state.selectedProjectDir);
-          win.webContents.send('session-restored', { sessionId, projectDir: state.selectedProjectDir });
         }
         console.log('[LingYa][' + profileId + '] 暂存目录已绑定');
         return;
@@ -90,7 +89,6 @@ function createSessionStore(profileId, storeDir, windowState) {
       if (restoredDir) {
         state.selectedProjectDir = restoredDir;
         if (win && !win.isDestroyed()) {
-          win.webContents.send('session-restored', { sessionId, projectDir: restoredDir });
           win.webContents.send('project-dir-updated', restoredDir);
         }
       } else {

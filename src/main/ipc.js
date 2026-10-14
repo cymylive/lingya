@@ -28,8 +28,18 @@ const toolLifecycle = require('../../tools/tool-lifecycle');
  *  execute 与 read 共用此函数，避免"新建会话时 sessionId 从 null 变为真实值"导致 key 漂移。 */
 function resolveSessionId(ctx, sender) {
   if (!ctx || !ctx.sessionStore) return null;
+  // 会话 ID 来自 AI 网页 URL。侧边栏（壳窗口）调用时 sender 是 shell.html，
+  // 解析不出 sessionId —— 故始终优先用 AI 视图的 URL。
+  let target = sender;
   try {
-    const url = sender && typeof sender.getURL === 'function' ? sender.getURL() : null;
+    if (ctx.view && ctx.view.webContents && !ctx.view.webContents.isDestroyed()) {
+      target = ctx.view.webContents;
+    } else if (ctx.win && ctx.win.webContents && !ctx.win.webContents.isDestroyed()) {
+      target = ctx.win.webContents;
+    }
+  } catch (_) {}
+  try {
+    const url = target && typeof target.getURL === 'function' ? target.getURL() : null;
     const fromUrl = url ? ctx.sessionStore.extractSessionIdFromUrl(url) : null;
     if (fromUrl) return fromUrl;
   } catch (_) {}
@@ -43,8 +53,17 @@ function registerIpcHandlers() {
   // 待办列表变更：广播给所有窗口，前端各自按当前会话重新拉取权威数据
   // （不做 key 匹配，避免新建会话时 execute/read 的 sessionId 时序不一致导致漏推）
   todoEvents.on('change', ({ todos }) => {
-    for (const win of windowState.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send('lingya-todos-updated', todos);
+    for (const ctx of windowState.getAllContexts()) {
+      // AI 视图（ctx.win 的 Proxy 已重定向到 view）——覆盖层订阅方
+      try {
+        const wc = ctx.win && ctx.win.webContents;
+        if (wc && !wc.isDestroyed()) wc.send('lingya-todos-updated', todos);
+      } catch (_) {}
+      // 壳窗口（侧边栏）——真实 BrowserWindow 的 webContents
+      try {
+        const raw = ctx.rawWin;
+        if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-todos-updated', todos);
+      } catch (_) {}
     }
   });
 

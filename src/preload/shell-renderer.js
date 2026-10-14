@@ -64,18 +64,8 @@
   if (abCollapse) abCollapse.addEventListener('click', function(){ setOpen(!open); });
   document.addEventListener('keydown', function(e){ if(e.key==='Escape'&&open) setOpen(false); });
 
-  // 图标条按钮
-  var abItems = document.querySelectorAll('.sh-ab-item[data-tab]');
-  for (var ai=0; ai<abItems.length; ai++) {
-    (function(btn){ btn.addEventListener('click', function(){
-      if (open) { setOpen(false); }
-      else {
-        var all=document.querySelectorAll('.sh-ab-item[data-tab]');
-        for(var j=0;j<all.length;j++) all[j].classList.toggle('active', all[j]===btn);
-        setOpen(true);
-      }
-    }); })(abItems[ai]);
-  }
+  // OLD_AB_REMOVED：活动栏绑定已迁移到文件末尾的多视图框架
+
 
   // ===== 侧栏拖拽调宽 =====
   if (resizer) {
@@ -543,4 +533,639 @@
   applyState(true);   // 初始恢复也通知主进程（open=true 恢复窗口宽）
 
   console.log('[LingYa Shell] renderer v4 (cuckoo port) 就绪, width='+width+', open='+open);
+
+  // ===== 活动栏网格 + 拖拽排序（v0.6.37）=====
+  var AB_W_BASE = 60;      // 单列基础宽度（52 格 + 8 padding）
+  var AB_CELL = 54;        // 每增一列宽度（52 格 + 2 间距）
+  var abCols = 1;
+  var abOrder = [];
+  try { var _ac = parseInt(localStorage.getItem('lingya-ab-cols'),10); if(_ac>=1&&_ac<=3) abCols=_ac; } catch(_e){}
+  try { var _ao = JSON.parse(localStorage.getItem('lingya-ab-order')||'[]'); if(Array.isArray(_ao)) abOrder=_ao; } catch(_e){}
+
+  function abWidth(){ return AB_W_BASE + (abCols-1)*AB_CELL; }
+  function applyAbWidth(){
+    document.documentElement.style.setProperty('--sh-ab-w', abWidth() + 'px');
+    var slot=document.getElementById('lingya-sidebar-slot');
+    if(slot && slot.classList.contains('collapsed')) slot.style.width = abWidth() + 'px';
+  }
+  function applyAbCols(){
+    var grid=document.getElementById('sh-ab-grid');
+    if(grid) grid.setAttribute('data-cols', String(abCols));
+    applyAbWidth();
+    var bs=document.querySelectorAll('.sh-cols-btn');
+    for (var i=0;i<bs.length;i++) bs[i].classList.toggle('active', parseInt(bs[i].getAttribute('data-n'),10)===abCols);
+    try { localStorage.setItem('lingya-ab-cols', String(abCols)); } catch(_e){}
+    // 列数变化影响窗口宽度（通知主进程按当前 open 状态重算）
+    if(window.shellAPI && window.shellAPI.toggleSidebar && open){ window.shellAPI.toggleSidebar(true, width)['catch'](function(){}); }
+  }
+  function applyAbOrder(){
+    var grid=document.getElementById('sh-ab-grid');
+    if(!grid) return;
+    var items={};
+    var all=grid.querySelectorAll('.sh-ab-item[data-view]');
+    for (var i=0;i<all.length;i++) items[all[i].getAttribute('data-view')]=all[i];
+    var names=Object.keys(items);
+    // 按 abOrder 排序；不在 order 里的排后面
+    names.sort(function(a,b){ var ia=abOrder.indexOf(a), ib=abOrder.indexOf(b); if(ia<0&&ib<0) return 0; if(ia<0) return 1; if(ib<0) return -1; return ia-ib; });
+    for (var k=0;k<names.length;k++) grid.appendChild(items[names[k]]);
+    // 持久化完整顺序
+    abOrder=names.slice();
+    try { localStorage.setItem('lingya-ab-order', JSON.stringify(abOrder)); } catch(_e){}
+  }
+  function setupAbDrag(){
+    var grid=document.getElementById('sh-ab-grid');
+    if(!grid) return;
+    var dragEl=null, startX=0, startY=0, moved=false;
+    function onDown(e){
+      if(e.button!==0) return;
+      var el=e.target.closest?e.target.closest('.sh-ab-item[data-view]'):null;
+      if(!el) return;
+      dragEl=el; moved=false; startX=e.clientX; startY=e.clientY;
+      // 注意：此处不加 sh-ab-dragging（它含 pointer-events:none，会吞掉 click）。
+      // 只有真正开始拖动（onMove 超阈值）才加，保证普通点击仍能触发切换视图。
+      document.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerup', onUp, true);
+    }
+    function onMove(e){
+      if(!dragEl) return;
+      if(!moved && Math.abs(e.clientX-startX)+Math.abs(e.clientY-startY)<5) return;
+      if(!moved){ moved=true; dragEl.classList.add('sh-ab-dragging'); }
+      e.preventDefault();
+      // 找指针下的目标图标
+      var over=document.elementFromPoint(e.clientX, e.clientY);
+      var tgt=over && over.closest ? over.closest('.sh-ab-item[data-view]') : null;
+      var all=grid.querySelectorAll('.sh-ab-item[data-view]');
+      for(var i=0;i<all.length;i++) all[i].classList.remove('sh-ab-over');
+      if(tgt && tgt!==dragEl){
+        tgt.classList.add('sh-ab-over');
+        var rect=tgt.getBoundingClientRect();
+        var after=(e.clientX>rect.left+rect.width/2);
+        if(after) grid.insertBefore(dragEl, tgt.nextSibling);
+        else grid.insertBefore(dragEl, tgt);
+      }
+    }
+    function onUp(e){
+      if(!dragEl) return;
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerup', onUp, true);
+      dragEl.classList.remove('sh-ab-dragging');
+      var all=grid.querySelectorAll('.sh-ab-item[data-view]');
+      for(var i=0;i<all.length;i++) all[i].classList.remove('sh-ab-over');
+      if(moved){
+        // 从当前 DOM 顺序读出，持久化（不要再用旧 abOrder 重排，否则还原）
+        var names=[];
+        var els=grid.querySelectorAll('.sh-ab-item[data-view]');
+        for(var k=0;k<els.length;k++) names.push(els[k].getAttribute('data-view'));
+        abOrder=names.slice();
+        try{ localStorage.setItem('lingya-ab-order', JSON.stringify(abOrder)); }catch(_e){}
+      }
+      dragEl=null;
+    }
+    grid.addEventListener('pointerdown', onDown, true);
+  }
+
+  // ===== 多视图框架（v0.6.36，v0.6.37 恢复）=====
+  var rendered = {};
+  function switchView(name){
+    var tabs = document.querySelectorAll('.sh-ab-item[data-view]');
+    for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view')===name);
+    var vs = document.querySelectorAll('.sh-view');
+    for (var j=0;j<vs.length;j++) vs[j].classList.toggle('sh-view-active', vs[j].getAttribute('data-view')===name);
+    if (!rendered[name]) { rendered[name]=true; renderView(name); }
+    try { localStorage.setItem('lingya-shell-view', name); } catch(_e){}
+  }
+  function panel(title, bodyHtml){
+    return '<div class="sh-panel-head"><span class="sh-panel-title">'+title+'</span></div>'+'<div class="sh-panel-body">'+(bodyHtml||'')+'</div>';
+  }
+  function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function toast2(m){ toast(m); }
+  function renderView(name){
+    var el = document.querySelector('.sh-view[data-view="'+name+'"]');
+    if(!el) return;
+    if(name==='plan') return renderPlanView(el);
+    if(name==='memory') return renderMemoryView(el);
+    if(name==='skill') return renderSkillView(el);
+    if(name==='security') return renderSecurityView(el);
+    if(name==='schedule') return renderScheduleView(el);
+    if(name==='feishu') return renderFeishuView(el);
+    if(name==='sessions') return renderSessionsView(el);
+    if(name==='log') return renderLogView(el);
+    if(name==='mcp') return renderMcpView(el);
+    if(name==='windows') return renderWindowsView(el);
+    if(name==='settings') return renderSettingsView(el);
+  }
+
+  // ---- 计划面板 ----
+  function renderPlanView(el){
+    el.innerHTML = panel('任务计划', '<div id="sh-plan-body" class="sh-empty">加载中…</div>');
+    function draw(todos){
+      var box = document.getElementById('sh-plan-body');
+      if(!box) return;
+      var items = Array.isArray(todos)?todos:[];
+      if(!items.length){ box.innerHTML='<div class="sh-empty">暂无计划。AI 用 todoWrite 时显示。</div>'; return; }
+      var done=0; for(var i=0;i<items.length;i++) if(items[i].status==='completed') done++;
+      var pct=Math.round(done/items.length*100);
+      var h='<div style="height:4px;border-radius:999px;background:rgba(255,255,255,.08);margin-bottom:8px;overflow:hidden;"><div style="height:100%;width:'+pct+'%;background:var(--ck-primary);"></div></div>';
+      h+='<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">进度 '+done+'/'+items.length+'</div>';
+      for(var k=0;k<items.length;k++){
+        var t=items[k], st=t.status||'pending';
+        var ico= st==='completed'?'✔': st==='in_progress'?'◐':'○';
+        var col= st==='completed'?'#4ade80': st==='in_progress'?'var(--ck-primary)':'var(--ck-text-dim)';
+        var deco= st==='completed'?'text-decoration:line-through;opacity:.6;':'';
+        h+='<div class="sh-list-item" style="display:flex;gap:6px;align-items:flex-start;"><span style="color:'+col+';flex-shrink:0;">'+ico+'</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;'+deco+'">'+esc(t.content)+'</span></div>';
+      }
+      box.innerHTML=h;
+    }
+    if(window.shellAPI&&window.shellAPI.getTodos){ window.shellAPI.getTodos().then(function(r){ draw(r&&r.todos); })['catch'](function(){}); }
+    if(window.shellAPI&&window.shellAPI.onTodosUpdated){ window.shellAPI.onTodosUpdated(function(){ if(window.shellAPI.getTodos){ window.shellAPI.getTodos().then(function(r2){ draw(r2&&r2.todos); })['catch'](function(){}); } }); }
+  }
+
+  // ---- 记忆面板 ----
+
+  function renderMemoryView(el){
+    el.innerHTML = panel('长期记忆',
+      '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">'+
+        '<select id="sh-mem-filter" style="background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:11px;flex:1;"><option value="">全部类型</option><option value="user">用户画像</option><option value="feedback">行为反馈</option><option value="topic">话题上下文</option><option value="reference">参考资料</option></select>'+
+        '<button class="sh-btn" id="sh-mem-new">新建</button>'+
+        '<button class="sh-btn" id="sh-mem-insertall">全部插入</button>'+
+        '<button class="sh-btn" id="sh-mem-import">导入</button>'+
+        '<button class="sh-btn" id="sh-mem-export">导出</button>'+
+      '</div>'+
+      '<input id="sh-mem-search" placeholder="搜索记忆…" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px 8px;color:var(--ck-text);font-size:12px;outline:none;margin-bottom:6px;" />'+
+      '<div id="sh-mem-editor" class="sh-card" style="display:none;margin-bottom:8px;">'+
+        '<input id="sh-mem-ed-name" placeholder="标题" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<select id="sh-mem-ed-type" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;"><option value="user">用户画像</option><option value="feedback">行为反馈</option><option value="topic">话题上下文</option><option value="reference">参考资料</option></select>'+
+        '<textarea id="sh-mem-ed-content" placeholder="内容" rows="4" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;resize:vertical;"></textarea>'+
+        '<input id="sh-mem-ed-tags" placeholder="标签（逗号分隔）" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<label style="font-size:11px;color:var(--ck-text-dim);display:flex;gap:6px;align-items:center;margin-bottom:6px;"><input type="checkbox" id="sh-mem-ed-pinned" /> 置顶</label>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn primary" id="sh-mem-ed-save">保存</button><button class="sh-btn" id="sh-mem-ed-cancel">取消</button></div>'+
+      '</div>'+
+      '<div id="sh-mem-body" class="sh-empty">加载中…</div>');
+    var mems=[], editingId=null;
+    function tlabel(t){ var M={user:'用户画像',feedback:'行为反馈',topic:'话题上下文',reference:'参考资料'}; return M[t]||t||''; }
+    function showEditor(m){ editingId=m?m.id:null; var ed=document.getElementById('sh-mem-editor'); if(ed) ed.style.display='block'; var n=document.getElementById('sh-mem-ed-name'); if(n) n.value=m?m.name:''; var ty=document.getElementById('sh-mem-ed-type'); if(ty) ty.value=m?(m.type||'user'):'user'; var c=document.getElementById('sh-mem-ed-content'); if(c) c.value=m?m.content:''; var tg=document.getElementById('sh-mem-ed-tags'); if(tg) tg.value=(m&&m.tags)?m.tags.join(', '):''; var pn=document.getElementById('sh-mem-ed-pinned'); if(pn) pn.checked=!!(m&&m.pinned); }
+    function hideEditor(){ editingId=null; var ed=document.getElementById('sh-mem-editor'); if(ed) ed.style.display='none'; }
+    function draw(){
+      var box=document.getElementById('sh-mem-body'); if(!box) return;
+      var f=(document.getElementById('sh-mem-filter')||{}).value||'';
+      var kw=((document.getElementById('sh-mem-search')||{}).value||'').toLowerCase();
+      var list=mems.filter(function(m){ if(f&&m.type!==f) return false; if(!kw) return true; return (String(m.name||'')+String(m.content||'')+(m.tags||[]).join(' ')).toLowerCase().indexOf(kw)>=0; });
+      if(!list.length){ box.innerHTML='<div class="sh-empty">'+(mems.length?'无匹配':'暂无记忆')+'</div>'; return; }
+      var h='';
+      for(var i=0;i<list.length;i++){ var m=list[i];
+        h+='<div class="sh-list-item"><div style="display:flex;align-items:center;gap:6px;">';
+        h+='<span style="font-size:10px;color:var(--ck-primary);">'+esc(tlabel(m.type))+'</span>';
+        if(m.pinned) h+='<span style="font-size:10px;">📌</span>';
+        h+='<span style="font-weight:600;color:var(--ck-title);flex:1;overflow:hidden;text-overflow:ellipsis;">'+esc(m.name||'(未命名)')+'</span></div>';
+        h+='<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;max-height:60px;overflow:hidden;">'+esc(m.content||'')+'</div>';
+        h+='<div style="display:flex;gap:10px;margin-top:6px;font-size:11px;">';
+        h+='<span class="sh-mem-insert" data-id="'+esc(m.id)+'" style="cursor:pointer;color:var(--ck-primary);">插入</span>';
+        h+='<span class="sh-mem-edit" data-id="'+esc(m.id)+'" style="cursor:pointer;color:var(--ck-text);">编辑</span>';
+        h+='<span class="sh-mem-del" data-id="'+esc(m.id)+'" style="cursor:pointer;color:#f87171;">删除</span></div></div>';
+      }
+      box.innerHTML=h;
+      var byId=function(id){ for(var k=0;k<mems.length;k++) if(String(mems[k].id)===String(id)) return mems[k]; return null; };
+      var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(byId(e2.getAttribute('data-id'))); }); })(els[x]); } };
+      q('.sh-mem-insert',function(m){ if(!m) return; if(window.shellAPI&&window.shellAPI.insertToChat) window.shellAPI.insertToChat('【记忆】'+m.name+'：'+m.content,'插入记忆').then(function(r){ toast2(r&&r.success?'已插入':'插入失败'); })['catch'](function(){}); });
+      q('.sh-mem-edit',function(m){ showEditor(m); });
+      q('.sh-mem-del',function(m){ if(!m) return; if(window.shellAPI&&window.shellAPI.deleteMemory) window.shellAPI.deleteMemory(m.id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
+    }
+    function load(){ if(!window.shellAPI||!window.shellAPI.listMemories) return; window.shellAPI.listMemories().then(function(r){ mems=(r&&r.memories)||[]; draw(); })['catch'](function(){}); }
+    var edSave=document.getElementById('sh-mem-ed-save');
+    if(edSave) edSave.addEventListener('click',function(){
+      var name=((document.getElementById('sh-mem-ed-name')||{}).value||'').trim();
+      var content=((document.getElementById('sh-mem-ed-content')||{}).value||'').trim();
+      if(!name){ toast2('标题不能为空'); return; }
+      if(!content){ toast2('内容不能为空'); return; }
+      var mem={ type:((document.getElementById('sh-mem-ed-type')||{}).value||'user'), name:name, content:content, tags:(((document.getElementById('sh-mem-ed-tags')||{}).value||'').split(',').map(function(x){return x.trim();}).filter(Boolean)), pinned:!!((document.getElementById('sh-mem-ed-pinned')||{}).checked) };
+      var pr = (editingId!=null) ? window.shellAPI.updateMemory(Object.assign({id:editingId},mem)) : window.shellAPI.saveMemory(mem);
+      pr.then(function(r){ if(r&&r.success){ toast2(editingId!=null?'已更新':'已保存'); hideEditor(); load(); } else toast2('保存失败'); })['catch'](function(){ toast2('保存失败'); });
+    });
+    var edCancel=document.getElementById('sh-mem-ed-cancel'); if(edCancel) edCancel.addEventListener('click',hideEditor);
+    var nw=document.getElementById('sh-mem-new'); if(nw) nw.addEventListener('click',function(){ showEditor(null); });
+    var ia=document.getElementById('sh-mem-insertall'); if(ia) ia.addEventListener('click',function(){ if(!mems.length){ toast2('没有记忆'); return; } var nl=String.fromCharCode(10); var txt='【长期记忆】'+nl+mems.map(function(m){return '- ['+tlabel(m.type)+'] '+m.name+'：'+m.content;}).join(nl); if(window.shellAPI&&window.shellAPI.insertToChat) window.shellAPI.insertToChat(txt,'插入全部记忆').then(function(r){ toast2(r&&r.success?('已插入 '+mems.length+' 条'):'插入失败'); })['catch'](function(){}); });
+    var im=document.getElementById('sh-mem-import'); if(im) im.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.importMemories) window.shellAPI.importMemories().then(function(r){ if(r&&r.success){ toast2('导入完成：新增 '+r.imported); load(); } else if(r&&!r.canceled) toast2('导入失败'); })['catch'](function(){}); });
+    var ex=document.getElementById('sh-mem-export'); if(ex) ex.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.exportMemories) window.shellAPI.exportMemories().then(function(r){ if(r&&r.success) toast2('已导出 '+r.count+' 条'); })['catch'](function(){}); });
+    var se=document.getElementById('sh-mem-search'); if(se) se.addEventListener('input',draw);
+    var fl=document.getElementById('sh-mem-filter'); if(fl) fl.addEventListener('change',draw);
+    load();
+  }
+
+
+  function renderSkillView(el){
+    el.innerHTML = panel('技能库',
+      '<div style="display:flex;gap:4px;margin-bottom:6px;">'+
+        '<button class="sh-btn primary" id="sh-sk-new">新建</button>'+
+        '<button class="sh-btn" id="sh-sk-import">本地导入</button>'+
+      '</div>'+
+      '<input id="sh-sk-search" placeholder="搜索技能…" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px 8px;color:var(--ck-text);font-size:12px;outline:none;margin-bottom:6px;" />'+
+      '<div id="sh-sk-editor" class="sh-card" style="display:none;margin-bottom:8px;">'+
+        '<input id="sh-sk-ed-name" placeholder="技能名称" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<input id="sh-sk-ed-desc" placeholder="简介" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<textarea id="sh-sk-ed-instructions" placeholder="指令内容（插入到对话）" rows="4" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;resize:vertical;"></textarea>'+
+        '<label style="font-size:11px;color:var(--ck-text-dim);display:flex;gap:6px;align-items:center;margin-bottom:6px;"><input type="checkbox" id="sh-sk-ed-memory" checked /> 会话记忆</label>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn primary" id="sh-sk-ed-save">保存</button><button class="sh-btn" id="sh-sk-ed-cancel">取消</button></div>'+
+      '</div>'+
+      '<div id="sh-sk-body" class="sh-empty">加载中…</div>');
+    var skills=[], editingName=null;
+    function srcLabel(x){ var M={custom:'自定义',local:'本地导入'}; return M[x]||x||'自定义'; }
+    function showEditor(sk){ editingName=sk?sk.name:null; var ed=document.getElementById('sh-sk-editor'); if(ed) ed.style.display='block'; var n=document.getElementById('sh-sk-ed-name'); if(n) n.value=sk?sk.name:''; var d=document.getElementById('sh-sk-ed-desc'); if(d) d.value=sk?sk.description:''; var it=document.getElementById('sh-sk-ed-instructions'); if(it) it.value=sk?sk.instructions:''; var m=document.getElementById('sh-sk-ed-memory'); if(m) m.checked=sk?(sk.memoryEnabled!==false):true; }
+    function hideEditor(){ editingName=null; var ed=document.getElementById('sh-sk-editor'); if(ed) ed.style.display='none'; }
+    function draw(){
+      var box=document.getElementById('sh-sk-body'); if(!box) return;
+      var kw=((document.getElementById('sh-sk-search')||{}).value||'').toLowerCase();
+      var list=skills.filter(function(s){ if(!kw) return true; return (String(s.name||'')+String(s.description||'')+String(s.instructions||'')).toLowerCase().indexOf(kw)>=0; });
+      if(!list.length){ box.innerHTML='<div class="sh-empty">'+(skills.length?'无匹配':'暂无技能')+'</div>'; return; }
+      var h='';
+      for(var i=0;i<list.length;i++){ var s=list[i]; var on=s.enabled!==false;
+        h+='<div class="sh-list-item"><div style="display:flex;align-items:center;gap:6px;">';
+        h+='<span class="sh-sk-toggle" data-name="'+esc(s.name)+'" style="cursor:pointer;color:'+(on?'#4ade80':'var(--ck-text-dim)')+';">'+(on?'●':'○')+'</span>';
+        h+='<span style="font-weight:600;color:var(--ck-title);flex:1;overflow:hidden;text-overflow:ellipsis;">'+esc(s.name)+'</span>';
+        h+='<span style="font-size:10px;color:var(--ck-text-dim);">'+esc(srcLabel(s.source))+'</span></div>';
+        if(s.description) h+='<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;max-height:50px;overflow:hidden;">'+esc(s.description)+'</div>';
+        h+='<div style="display:flex;gap:10px;margin-top:6px;font-size:11px;">';
+        h+='<span class="sh-sk-insert" data-name="'+esc(s.name)+'" style="cursor:pointer;color:var(--ck-primary);">插入</span>';
+        h+='<span class="sh-sk-edit" data-name="'+esc(s.name)+'" style="cursor:pointer;color:var(--ck-text);">编辑</span>';
+        h+='<span class="sh-sk-del" data-name="'+esc(s.name)+'" style="cursor:pointer;color:#f87171;">删除</span></div></div>';
+      }
+      box.innerHTML=h;
+      var byName=function(nm){ for(var k=0;k<skills.length;k++) if(skills[k].name===nm) return skills[k]; return null; };
+      var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(e2.getAttribute('data-name')); }); })(els[x]); } };
+      q('.sh-sk-toggle',function(nm){ var s=byName(nm); if(!s) return; var next=!(s.enabled!==false); window.shellAPI.setSkillEnabled(nm,next).then(function(){ load(); })['catch'](function(){}); });
+      q('.sh-sk-insert',function(nm){ var s=byName(nm); if(!s) return; if(window.shellAPI&&window.shellAPI.insertToChat) window.shellAPI.insertToChat(s.instructions||'','插入技能').then(function(r){ toast2(r&&r.success?'已插入':'插入失败'); })['catch'](function(){}); });
+      q('.sh-sk-edit',function(nm){ showEditor(byName(nm)); });
+      q('.sh-sk-del',function(nm){ window.shellAPI.deleteSkill(nm).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
+    }
+    function load(){ if(!window.shellAPI||!window.shellAPI.listSkills) return; window.shellAPI.listSkills().then(function(r){ skills=(r&&r.skills)||[]; draw(); })['catch'](function(){}); }
+    var sv=document.getElementById('sh-sk-ed-save');
+    if(sv) sv.addEventListener('click',function(){
+      var skill={ name:((document.getElementById('sh-sk-ed-name')||{}).value||'').trim(), description:((document.getElementById('sh-sk-ed-desc')||{}).value||'').trim(), instructions:((document.getElementById('sh-sk-ed-instructions')||{}).value||'').trim(), memoryEnabled:!!((document.getElementById('sh-sk-ed-memory')||{}).checked), source:'custom' };
+      if(!skill.name){ toast2('技能名称不能为空'); return; }
+      if(!skill.instructions){ toast2('指令内容不能为空'); return; }
+      window.shellAPI.saveSkill(skill).then(function(r){ if(r&&r.success){ toast2(editingName!=null?'已更新':'已保存'); hideEditor(); load(); } else toast2('保存失败'); })['catch'](function(){ toast2('保存失败'); });
+    });
+    var cn=document.getElementById('sh-sk-ed-cancel'); if(cn) cn.addEventListener('click',hideEditor);
+    var nwb=document.getElementById('sh-sk-new'); if(nwb) nwb.addEventListener('click',function(){ showEditor(null); });
+    var im=document.getElementById('sh-sk-import'); if(im) im.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.importSkillFolder) window.shellAPI.importSkillFolder().then(function(r){ if(r&&r.success){ toast2('已导入 '+(r.imported||0)+' 个技能'); load(); } else if(r&&!r.canceled) toast2('导入失败'); })['catch'](function(){}); });
+    var se=document.getElementById('sh-sk-search'); if(se) se.addEventListener('input',draw);
+    load();
+  }
+
+
+  function renderSecurityView(el){
+    el.innerHTML = panel('安全增强', '<div id="sh-sec-body" class="sh-empty">加载中…</div>');
+    if(!window.shellAPI||!window.shellAPI.getSecurityConfig) return;
+    window.shellAPI.getSecurityConfig().then(function(c){
+      var box=document.getElementById('sh-sec-body'); if(!box) return;
+      c=c||{};
+      function chk(id,label,key){ return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;"><input type="checkbox" id="'+id+'" '+(c[key]?'checked':'')+' /> '+label+'</label>'; }
+      function inp(id,label,val,ph){ return '<div style="margin-top:6px;font-size:11px;color:var(--ck-text-dim);">'+label+'</div><input id="'+id+'" value="'+esc(val||'')+'" placeholder="'+esc(ph||'')+'" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'; }
+      function num(id,label,val){ return '<div style="margin-top:6px;font-size:11px;color:var(--ck-text-dim);">'+label+'</div><input type="number" id="'+id+'" value="'+esc(val)+'" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'; }
+      function ta(id,label,val){ return '<div style="margin-top:6px;font-size:11px;color:var(--ck-text-dim);">'+label+'</div><textarea id="'+id+'" rows="4" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;resize:vertical;">'+esc(val||'')+'</textarea>'; }
+      var h='<div class="sh-card">';
+      h+=chk('sh-sec-ctf','CTF 提示词注入','ctfInjectionEnabled');
+      h+=ta('sh-sec-ctfprompt','CTF 提示词',c.ctfPrompt);
+      h+=chk('sh-sec-refusal','拒绝拦截','refusalEnabled');
+      h+=chk('sh-sec-ai','AI 改写拒绝','aiRewriteEnabled');
+      h+=chk('sh-sec-aichat','用当前对话改写','aiRewriteViaChat');
+      h+=inp('sh-sec-endpoint','AI 接口地址',c.aiEndpoint,'https://api.openai.com/v1');
+      h+=inp('sh-sec-key','AI Key','',c.aiKeyConfigured?'已配置（留空不修改）':'sk-...');
+      h+=inp('sh-sec-model','模型',c.aiModel);
+      h+=chk('sh-sec-autoc','自动续写','autoContinueEnabled');
+      h+=inp('sh-sec-autotext','续写文本',c.autoContinueText);
+      h+=num('sh-sec-automax','自动续写次数上限',c.autoContinueMax!=null?c.autoContinueMax:5);
+      h+=num('sh-sec-planmax','计划续跑次数上限',c.planContinueMax!=null?c.planContinueMax:5);
+      h+=chk('sh-sec-unplanned','无计划兜底续跑','unplannedContinueEnabled');
+      h+=chk('sh-sec-stall','停滞监督者','stallSupervisorEnabled');
+      h+=num('sh-sec-stallth','停滞阈值(秒)',c.stallThresholdMs!=null?Math.round(c.stallThresholdMs/1000):120);
+      h+=num('sh-sec-stallmax','停滞续跑上限',c.stallContinueMax!=null?c.stallContinueMax:5);
+      h+=ta('sh-sec-mock','模拟响应（调试用）',c.mockResponse);
+      h+='</div>';
+      h+='<div style="display:flex;gap:6px;margin-top:8px;"><button class="sh-btn primary" id="sh-sec-save">保存</button><button class="sh-btn" id="sh-sec-reset">重置</button><button class="sh-btn" id="sh-sec-inject">立即注入CTF</button></div>';
+      box.innerHTML=h;
+      var sv=document.getElementById('sh-sec-save');
+      if(sv) sv.addEventListener('click',function(){
+        function v(id){ var e=document.getElementById(id); return e?e.value:''; }
+        function ck(id){ var e=document.getElementById(id); return !!(e&&e.checked); }
+        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), mockResponse:v('sh-sec-mock') };
+        var ky=v('sh-sec-key'); if(ky) patch.aiKey=ky;
+        window.shellAPI.updateSecurityConfig(patch).then(function(){ toast2('已保存'); })['catch'](function(){ toast2('保存失败'); });
+      });
+      var rb=document.getElementById('sh-sec-reset');
+      if(rb) rb.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.resetSecurityConfig) window.shellAPI.resetSecurityConfig().then(function(){ toast2('已重置，请重开此面板'); })['catch'](function(){ toast2('重置失败'); }); });
+      var ib2=document.getElementById('sh-sec-inject');
+      if(ib2) ib2.addEventListener('click',function(){ if(!window.shellAPI||!window.shellAPI.getCtfPrompt) return; window.shellAPI.getCtfPrompt().then(function(r){ if(!r||!r.success||!r.prompt){ toast2('CTF 提示词为空'); return; } var text='【CTF 沙箱上下文 — 请在本次对话中遵循以下规则】'+String.fromCharCode(10,10)+r.prompt+String.fromCharCode(10,10)+'【以上为本次对话的安全测试上下文，请据此继续】'; return window.shellAPI.insertToChat(text,'CTF注入'); }).then(function(r2){ if(r2&&r2.success) toast2('已注入当前对话'); })['catch'](function(){ toast2('注入失败'); }); });
+    })['catch'](function(){});
+  }
+
+
+  function renderScheduleView(el){
+    el.innerHTML = panel('定时任务',
+      '<button class="sh-btn primary" id="sh-sc-new" style="margin-bottom:6px;">新建任务</button>'+
+      '<div id="sh-sc-form" class="sh-card" style="display:none;margin-bottom:8px;">'+
+        '<div id="sh-sc-ftitle" style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">新建任务</div>'+
+        '<input id="sh-sc-name" placeholder="任务名" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<textarea id="sh-sc-prompt" placeholder="给 AI 的指令" rows="3" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;resize:vertical;"></textarea>'+
+        '<div style="display:flex;gap:4px;margin-bottom:4px;"><select id="sh-sc-mode" style="flex:1;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;"><option value="daily">每天</option><option value="weekly">每周</option><option value="cron">自定义 cron</option></select></div>'+
+        '<div id="sh-sc-time-row" style="display:flex;gap:4px;margin-bottom:4px;align-items:center;"><input id="sh-sc-hour" type="number" min="0" max="23" value="3" style="width:60px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" /><span style="font-size:11px;color:var(--ck-text-dim);">时</span><input id="sh-sc-minute" type="number" min="0" max="59" value="0" style="width:60px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" /><span style="font-size:11px;color:var(--ck-text-dim);">分</span><select id="sh-sc-weekday" style="display:none;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select></div>'+
+        '<input id="sh-sc-cron" placeholder="分 时 日 月 周" style="display:none;width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<div id="sh-sc-cron-hint" style="font-size:11px;margin-bottom:4px;"></div>'+
+        '<select id="sh-sc-window" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;"></select>'+
+        '<input id="sh-sc-project" placeholder="项目目录（可选）" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<label style="font-size:11px;color:var(--ck-text-dim);display:flex;gap:6px;align-items:center;margin-bottom:6px;"><input type="checkbox" id="sh-sc-enabled" checked /> 启用</label>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn primary" id="sh-sc-save">保存</button><button class="sh-btn" id="sh-sc-cancel" style="display:none;">取消</button></div>'+
+      '</div>'+
+      '<div id="sh-sc-body" class="sh-empty">加载中…</div>');
+    var tasks=[], editingId=null;
+    function ev(id){ return document.getElementById(id); }
+    function modeVis(){ var mode=(ev('sh-sc-mode')||{}).value||'daily'; var tr=ev('sh-sc-time-row'); if(tr) tr.style.display=(mode==='cron')?'none':'flex'; var ci=ev('sh-sc-cron'); if(ci) ci.style.display=(mode==='cron')?'block':'none'; var wk=ev('sh-sc-weekday'); if(wk) wk.style.display=(mode==='weekly')?'block':'none'; }
+    function collectCron(){ var mode=(ev('sh-sc-mode')||{}).value||'daily'; if(mode==='cron') return (ev('sh-sc-cron')||{}).value.trim(); var h=(ev('sh-sc-hour')||{}).value||'0'; var m=(ev('sh-sc-minute')||{}).value||'0'; if(mode==='weekly'){ var wd=(ev('sh-sc-weekday')||{}).value||'0'; return (Number(m)||0)+' '+(Number(h)||0)+' * * '+(Number(wd)||0); } return (Number(m)||0)+' '+(Number(h)||0)+' * * *'; }
+    function resetForm(){ editingId=null; var t=ev('sh-sc-ftitle'); if(t) t.textContent='新建任务'; ['sh-sc-name','sh-sc-prompt','sh-sc-cron','sh-sc-project'].forEach(function(id){ var e=ev(id); if(e) e.value=''; }); var md=ev('sh-sc-mode'); if(md) md.value='daily'; var h=ev('sh-sc-hour'); if(h) h.value='3'; var mi=ev('sh-sc-minute'); if(mi) mi.value='0'; var en=ev('sh-sc-enabled'); if(en) en.checked=true; var cn=ev('sh-sc-cancel'); if(cn) cn.style.display='none'; modeVis(); }
+    function loadWindows(){ if(!window.shellAPI||!window.shellAPI.listScheduleWindows) return; window.shellAPI.listScheduleWindows().then(function(r){ var sel=ev('sh-sc-window'); if(!sel) return; var wins=(r&&r.success&&r.windows)||[]; sel.innerHTML='<option value="">— 当前活跃窗口 —</option>'+wins.map(function(w){ return '<option value="'+esc(w.id)+'">'+esc(w.name)+(w.open?'':'（未打开）')+'</option>'; }).join(''); })['catch'](function(){}); }
+    function draw(){ var box=ev('sh-sc-body'); if(!box) return; if(!tasks.length){ box.innerHTML='<div class="sh-empty">暂无定时任务</div>'; return; } var h=''; for(var i=0;i<tasks.length;i++){ var t=tasks[i]; h+='<div class="sh-list-item"><div style="display:flex;align-items:center;gap:6px;"><span style="font-weight:600;color:var(--ck-title);flex:1;">'+esc(t.name)+'</span><span style="font-size:10px;color:var(--ck-primary);">'+esc(t.cron)+'</span>'+(t.enabled?'':'<span style="font-size:10px;color:var(--ck-text-dim);">停用</span>')+'</div>'; h+='<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;max-height:40px;overflow:hidden;">'+esc(t.prompt)+'</div>'; h+='<div style="display:flex;gap:10px;margin-top:6px;font-size:11px;"><span class="sh-sc-run" data-id="'+esc(t.id)+'" style="cursor:pointer;color:var(--ck-primary);">立即执行</span><span class="sh-sc-edit" data-id="'+esc(t.id)+'" style="cursor:pointer;color:var(--ck-text);">编辑</span><span class="sh-sc-toggle" data-id="'+esc(t.id)+'" style="cursor:pointer;color:var(--ck-text);">'+(t.enabled?'停用':'启用')+'</span><span class="sh-sc-del" data-id="'+esc(t.id)+'" style="cursor:pointer;color:#f87171;">删除</span></div></div>'; } box.innerHTML=h; var byId=function(id){ for(var k=0;k<tasks.length;k++) if(String(tasks[k].id)===String(id)) return tasks[k]; return null; }; var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(byId(e2.getAttribute('data-id'))); }); })(els[x]); } }; q('.sh-sc-run',function(t){ if(!t) return; window.shellAPI.runScheduleNow(t.id).then(function(){ toast2('已触发'); })['catch'](function(){}); }); q('.sh-sc-toggle',function(t){ if(!t) return; window.shellAPI.updateSchedule(t.id,{enabled:!t.enabled}).then(function(){ load(); })['catch'](function(){}); }); q('.sh-sc-del',function(t){ if(!t) return; if(!confirm('确定删除「'+t.name+'」？')) return; window.shellAPI.deleteSchedule(t.id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); }); q('.sh-sc-edit',function(t){ if(!t) return; editingId=t.id; var ft=ev('sh-sc-ftitle'); if(ft) ft.textContent='编辑：'+t.name; if(ev('sh-sc-name')) ev('sh-sc-name').value=t.name; if(ev('sh-sc-prompt')) ev('sh-sc-prompt').value=t.prompt; if(ev('sh-sc-enabled')) ev('sh-sc-enabled').checked=!!t.enabled; if(ev('sh-sc-window')) ev('sh-sc-window').value=t.profileId||''; if(ev('sh-sc-project')) ev('sh-sc-project').value=t.projectDir||''; var parts=String(t.cron).split(/\s+/); if(parts.length===5&&parts[2]==='*'&&parts[3]==='*'){ if(ev('sh-sc-hour')) ev('sh-sc-hour').value=parts[1]; if(ev('sh-sc-minute')) ev('sh-sc-minute').value=parts[0]; if(parts[4]==='*'){ if(ev('sh-sc-mode')) ev('sh-sc-mode').value='daily'; } else { if(ev('sh-sc-mode')) ev('sh-sc-mode').value='weekly'; if(ev('sh-sc-weekday')) ev('sh-sc-weekday').value=parts[4]; } } else { if(ev('sh-sc-mode')) ev('sh-sc-mode').value='cron'; if(ev('sh-sc-cron')) ev('sh-sc-cron').value=t.cron; } var cn=ev('sh-sc-cancel'); if(cn) cn.style.display='inline-block'; var fm=ev('sh-sc-form'); if(fm) fm.style.display='block'; modeVis(); }); }
+    function load(){ if(!window.shellAPI||!window.shellAPI.listSchedules) return; window.shellAPI.listSchedules().then(function(r){ tasks=(r&&r.success&&r.tasks)||[]; draw(); })['catch'](function(){}); }
+    var nwb=ev('sh-sc-new'); if(nwb) nwb.addEventListener('click',function(){ resetForm(); var fm=ev('sh-sc-form'); if(fm) fm.style.display='block'; });
+    var cb=ev('sh-sc-cancel'); if(cb) cb.addEventListener('click',function(){ resetForm(); var fm=ev('sh-sc-form'); if(fm) fm.style.display='none'; });
+    var md2=ev('sh-sc-mode'); if(md2) md2.addEventListener('change',modeVis);
+    var ci2=ev('sh-sc-cron'); if(ci2) ci2.addEventListener('input',function(){ var hint=ev('sh-sc-cron-hint'); if(!hint) return; var cr=collectCron(); if(!cr){ hint.textContent=''; return; } if(window.shellAPI&&window.shellAPI.validateScheduleCron) window.shellAPI.validateScheduleCron(cr).then(function(r){ hint.textContent=(r&&r.valid)?'✅ 有效':'❌ 无效'; hint.style.color=(r&&r.valid)?'#4ade80':'#f87171'; })['catch'](function(){}); });
+    var svb=ev('sh-sc-save'); if(svb) svb.addEventListener('click',function(){ var name=((ev('sh-sc-name')||{}).value||'').trim(); var prompt=((ev('sh-sc-prompt')||{}).value||'').trim(); var cron=collectCron(); var enabled=!!((ev('sh-sc-enabled')||{}).checked); var profileId=(ev('sh-sc-window')||{}).value||''; var projectDir=((ev('sh-sc-project')||{}).value||'').trim(); if(!name){ toast2('请填任务名'); return; } if(!prompt){ toast2('请填指令'); return; } if(window.shellAPI&&window.shellAPI.validateScheduleCron){ window.shellAPI.validateScheduleCron(cron).then(function(v){ if(!v||!v.valid){ toast2('调度表达式无效'); return; } doSave(name,cron,prompt,enabled,profileId,projectDir); })['catch'](function(){ doSave(name,cron,prompt,enabled,profileId,projectDir); }); } else doSave(name,cron,prompt,enabled,profileId,projectDir); });
+    function doSave(name,cron,prompt,enabled,profileId,projectDir){ var data={name:name,cron:cron,prompt:prompt,enabled:enabled,profileId:profileId,projectDir:projectDir}; var pr=editingId?window.shellAPI.updateSchedule(editingId,data):window.shellAPI.addSchedule(data); pr.then(function(r){ if(r&&r.success){ toast2(editingId?'已更新':'已创建'); resetForm(); var fm=ev('sh-sc-form'); if(fm) fm.style.display='none'; load(); } else toast2('保存失败：'+((r&&r.error)||'')); })['catch'](function(){ toast2('保存失败'); }); }
+    loadWindows(); load();
+  }
+
+
+  function renderFeishuView(el){
+    el.innerHTML = panel('飞书同步',
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">连接状态：<span id="sh-fs-status">—</span></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;"><input type="checkbox" id="sh-fs-enabled" /> 启用飞书同步</label>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);">App ID</div><input id="sh-fs-appid" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);">App Secret</div><input id="sh-fs-secret" type="password" placeholder="留空不修改" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);">目标 OpenID</div><input id="sh-fs-target" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:6px;">推送选项</div>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-fs-push-user" /> 用户消息</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-fs-push-ai" /> AI 回复</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-fs-push-tool" /> 工具状态</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-fs-push-toolname" /> 带上工具名</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-fs-push-done" /> 完成标志</label>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;">卡住超时(秒)</div><input id="sh-fs-stall" type="number" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">群绑定</div><div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">当前：<span id="sh-fs-chat-cur">—</span></div><select id="sh-fs-chat" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;"></select><button class="sh-btn" id="sh-fs-bind">绑定此群</button></div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:8px;"><button class="sh-btn primary" id="sh-fs-save">保存配置</button><button class="sh-btn" id="sh-fs-reconnect">重连</button><button class="sh-btn" id="sh-fs-disconnect">断开</button><button class="sh-btn" id="sh-fs-refresh">刷新群列表</button></div>');
+    var ev=function(id){ return document.getElementById(id); };
+    function setSt(status,detail){ var b=ev('sh-fs-status'); if(!b) return; var M={connected:['已连接','#4ade80'],connecting:['连接中…','#fbbf24'],error:['错误','#f87171'],disconnected:['未连接','#7c8798']}; var it=M[status]||M.disconnected; b.textContent=it[0]+(detail?('（'+detail+'）'):''); b.style.color=it[1]; }
+    function loadFsConfig(){
+      if(!window.shellAPI||!window.shellAPI.getFeishuConfig) return;
+      window.shellAPI.getFeishuConfig().then(function(r){ if(!r||!r.success) return; var c=r.config||{};
+        if(ev('sh-fs-appid')) ev('sh-fs-appid').value=c.appId||'';
+        if(ev('sh-fs-secret')){ ev('sh-fs-secret').value=''; ev('sh-fs-secret').placeholder=c.hasSecret?'已配置（留空不修改）':'App Secret'; }
+        if(ev('sh-fs-enabled')) ev('sh-fs-enabled').checked=!!c.enabled;
+        if(ev('sh-fs-target')) ev('sh-fs-target').value=c.targetOpenId||'';
+        function sc(id,v,d){ var e=ev(id); if(e) e.checked=(v===undefined?d:!!v); }
+        sc('sh-fs-push-user',c.pushUserMessage,true); sc('sh-fs-push-ai',c.pushAiReply,true); sc('sh-fs-push-tool',c.pushToolStatus,true); sc('sh-fs-push-toolname',c.pushToolName,false); sc('sh-fs-push-done',c.pushTaskDone,true);
+        if(ev('sh-fs-stall')) ev('sh-fs-stall').value=(typeof c.stallTimeoutSec==='number'?c.stallTimeoutSec:660);
+        setSt(r.status,r.statusDetail);
+      })['catch'](function(){});
+    }
+    function loadFsBinding(){
+      if(!window.shellAPI||!window.shellAPI.getFeishuBinding) return;
+      window.shellAPI.getFeishuBinding().then(function(b){ if(ev('sh-fs-chat-cur')) ev('sh-fs-chat-cur').textContent=(b&&b.chatName)?(b.chatName+'（已绑定）'):'未绑定'; })['catch'](function(){});
+    }
+    function loadFsChats(){
+      if(!window.shellAPI||!window.shellAPI.listFeishuChats) return;
+      var sel=ev('sh-fs-chat'); if(sel) sel.innerHTML='<option value="">加载群列表中…</option>';
+      window.shellAPI.listFeishuChats().then(function(r){
+        var sel2=ev('sh-fs-chat'); if(!sel2) return;
+        if(!r || !r.success){ var msg=(r&&r.error)||'查询失败'; sel2.innerHTML='<option value="">（'+esc(msg)+'）</option>'; return; }
+        var chats=r.chats||[];
+        if(!chats.length){ sel2.innerHTML='<option value="">（机器人未加入任何群，请把应用加入目标群）</option>'; return; }
+        sel2.innerHTML=chats.map(function(ch){ return '<option value="'+esc(ch.chatId||ch.id||'')+'">'+esc(ch.name||ch.chatId||'')+'</option>'; }).join('');
+      })['catch'](function(){ var sel3=ev('sh-fs-chat'); if(sel3) sel3.innerHTML='<option value="">（群列表加载异常）</option>'; });
+    }
+    function loadFsAll(){ loadFsConfig(); loadFsBinding(); loadFsChats(); }
+    loadFsAll();
+    var sv=ev('sh-fs-save'); if(sv) sv.addEventListener('click',function(){ var _s=(ev('sh-fs-secret')||{}).value||''; var data={ enabled:!!((ev('sh-fs-enabled')||{}).checked), appId:(ev('sh-fs-appid')||{}).value||'', targetOpenId:(ev('sh-fs-target')||{}).value||'', pushUserMessage:!!((ev('sh-fs-push-user')||{}).checked), pushAiReply:!!((ev('sh-fs-push-ai')||{}).checked), pushToolStatus:!!((ev('sh-fs-push-tool')||{}).checked), pushToolName:!!((ev('sh-fs-push-toolname')||{}).checked), pushTaskDone:!!((ev('sh-fs-push-done')||{}).checked), stallTimeoutSec:Number((ev('sh-fs-stall')||{}).value)||660 }; if(_s && _s!=='••••••') data.appSecret=_s; if(window.shellAPI&&window.shellAPI.saveFeishuConfig) window.shellAPI.saveFeishuConfig(data).then(function(r){ toast2(r&&r.success?'已保存':'保存失败'); })['catch'](function(){ toast2('保存失败'); }); });
+    var rc=ev('sh-fs-reconnect'); if(rc) rc.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.feishuReconnect) window.shellAPI.feishuReconnect().then(function(){ toast2('重连中'); })['catch'](function(){}); });
+    var dc=ev('sh-fs-disconnect'); if(dc) dc.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.feishuDisconnect) window.shellAPI.feishuDisconnect().then(function(){ toast2('已断开'); })['catch'](function(){}); });
+    var rf=ev('sh-fs-refresh'); if(rf) rf.addEventListener('click',function(){ loadFsAll(); toast2('已刷新'); });
+    var bd=ev('sh-fs-bind'); if(bd) bd.addEventListener('click',function(){ var sel=ev('sh-fs-chat'); if(!sel||!sel.value){ toast2('请选择群'); return; } var nm=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:''; if(window.shellAPI&&window.shellAPI.bindFeishuChat) window.shellAPI.bindFeishuChat(sel.value,nm).then(function(r){ toast2(r&&r.success?'已绑定':'绑定失败'); })['catch'](function(){}); });
+  }
+
+  // ---- 设置面板 ----
+
+  function renderSettingsView(el){
+    el.innerHTML = panel('设置', 
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">主题</div><button class="sh-btn" id="sh-set-theme">切换深色/浅色</button></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">Agent 模式</div><div id="sh-set-agent"><button class="sh-btn" data-agent="build">🔨 Build</button> <button class="sh-btn" data-agent="plan">📋 Plan</button></div></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">项目</div><button class="sh-btn" id="sh-set-init">初始化项目</button> <button class="sh-btn" id="sh-set-choose">选择目录</button> <button class="sh-btn" id="sh-set-gendoc">生成说明文档</button></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">窗口</div><button class="sh-btn" id="sh-set-newwin">新建窗口</button></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">对话</div><button class="sh-btn" id="sh-set-compact">压缩上下文</button> <button class="sh-btn" id="sh-set-export">导出对话(.md)</button> <button class="sh-btn" id="sh-set-immersive">沉浸式交流</button> <button class="sh-btn" id="sh-set-parse">手动解析</button> <button class="sh-btn" id="sh-set-stop">停止任务</button></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">悬浮元素</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hidefloat" /> 隐藏悬浮球与覆盖层面板</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hideplan" /> 隐藏计划悬浮卡</label></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动注入</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-autoinject" /> 新会话自动注入记忆与技能</label></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动压缩</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-acen" /> 开启自动压缩</label><div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:12px;"><span style="color:var(--ck-text-dim);">超过</span><input id="sh-set-acth" type="number" value="80" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">万 tokens</span><button class="sh-btn" id="sh-set-acsave">保存</button></div></div>'+
+      '<div class="sh-card"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">发送延迟(ms)</div><div style="display:flex;gap:4px;align-items:center;font-size:12px;"><input id="sh-set-dmin" type="number" value="2000" style="width:80px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">至</span><input id="sh-set-dmax" type="number" value="4000" style="width:80px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><button class="sh-btn" id="sh-set-dsave">保存</button></div></div>');
+    var ev=function(id){ return document.getElementById(id); };
+    var tb=ev('sh-set-theme');
+    (function(){ var ag=document.getElementById('sh-set-agent'); if(ag&&window.shellAPI&&window.shellAPI.listAgents){ var cur='build'; function hl(){ var bs=ag.querySelectorAll('button[data-agent]'); for(var x=0;x<bs.length;x++){ bs[x].style.background=(bs[x].getAttribute('data-agent')===cur)?'var(--ck-primary)':''; bs[x].style.color=(bs[x].getAttribute('data-agent')===cur)?'#fff':''; } } window.shellAPI.listAgents().then(function(r){ cur=(r&&r.current)||'build'; hl(); })['catch'](function(){}); var bs2=ag.querySelectorAll('button[data-agent]'); for(var y=0;y<bs2.length;y++){ (function(b){ b.addEventListener('click',function(){ var aid=b.getAttribute('data-agent'); if(window.shellAPI&&window.shellAPI.setAgent) window.shellAPI.setAgent(aid).then(function(r2){ if(r2&&r2.success){ cur=r2.agentId||aid; hl(); toast2('已切换到 '+cur+' 模式'); } })['catch'](function(){}); }); })(bs2[y]); } } })(); if(tb) tb.addEventListener('click',function(){ var cur=document.documentElement.classList.contains('lingya-theme-light')?'light':'dark'; applyTheme(cur==='light'?'dark':'light'); });
+    var ib=ev('sh-set-init'); if(ib) ib.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){}); });
+    var cb=ev('sh-set-choose'); if(cb) cb.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.chooseDir) window.shellAPI.chooseDir().then(function(){ toast2('已选择'); })['catch'](function(){}); });
+    var gd=ev('sh-set-gendoc'); if(gd) gd.addEventListener('click',function(){ act('gen-doc'); });
+    var nb=ev('sh-set-newwin'); if(nb) nb.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.createProfileWindow) window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); })['catch'](function(){}); });
+    function act(a){ if(window.shellAPI&&window.shellAPI.runAction) window.shellAPI.runAction(a).then(function(r){ toast2(r&&r.success?'已触发':'执行失败'); })['catch'](function(){ toast2('执行失败'); }); }
+    var cp=ev('sh-set-compact'); if(cp) cp.addEventListener('click',function(){ act('compact'); });
+    var ex=ev('sh-set-export'); if(ex) ex.addEventListener('click',function(){ act('export-md'); });
+    var im=ev('sh-set-immersive'); if(im) im.addEventListener('click',function(){ act('immersive'); });
+    var pa=ev('sh-set-parse'); if(pa) pa.addEventListener('click',function(){ act('manual-parse'); });
+    var st=ev('sh-set-stop'); if(st) st.addEventListener('click',function(){ act('stop'); });
+    var ai=ev('sh-set-autoinject'); if(ai) ai.addEventListener('change',function(){ if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-inject', ai.checked); });
+    function loadFloatCb(){ try{ var hf=localStorage.getItem('lingya-hide-floating')==='1'; var hp=localStorage.getItem('lingya-hide-plan-float')==='1'; var e1=ev('sh-set-hidefloat'); if(e1) e1.checked=hf; var e2=ev('sh-set-hideplan'); if(e2) e2.checked=hp; }catch(_e){} }
+    loadFloatCb();
+    var hf=ev('sh-set-hidefloat'); if(hf) hf.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-floating', hf.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-floating', hf.checked); toast2(hf.checked?'已隐藏悬浮元素':'已显示悬浮元素'); });
+    var hp=ev('sh-set-hideplan'); if(hp) hp.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-plan-float', hp.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-plan-float', hp.checked); toast2(hp.checked?'已隐藏计划卡':'已显示计划卡'); });
+    var acs=ev('sh-set-acsave'); if(acs) acs.addEventListener('click',function(){ if(!window.shellAPI||!window.shellAPI.setSetting) return; var en=!!((ev('sh-set-acen')||{}).checked); var th=Number((ev('sh-set-acth')||{}).value)||80; window.shellAPI.setSetting('auto-compact-enabled',en); window.shellAPI.setSetting('auto-compact-threshold',th); toast2('自动压缩已保存'); });
+        var ds=ev('sh-set-dsave'); if(ds) ds.addEventListener('click',function(){ var mn=Number((ev('sh-set-dmin')||{}).value)||0; var mx=Number((ev('sh-set-dmax')||{}).value)||0; if(window.shellAPI&&window.shellAPI.setSetting){ window.shellAPI.setSetting('send-delay-min',mn); window.shellAPI.setSetting('send-delay-max',mx); toast2('已保存'); } });
+  }
+
+  // 绑定视图按钮 + 活动栏网格/拖拽
+  (function(){
+    var tabs=document.querySelectorAll('.sh-ab-item[data-view]');
+    for(var i=0;i<tabs.length;i++){ (function(btn){ btn.addEventListener('click',function(){
+      var v=btn.getAttribute('data-view');
+      if(open && btn.classList.contains('active')) { setOpen(false); return; }
+      if(!open){ setOpen(true); }
+      switchView(v);
+    }); })(tabs[i]); }
+    var cbs=document.querySelectorAll('.sh-cols-btn');
+    for(var k=0;k<cbs.length;k++){ (function(b){ b.addEventListener('click',function(){ abCols=parseInt(b.getAttribute('data-n'),10)||1; applyAbCols(); }); })(cbs[k]); }
+    var abSetBtn=document.getElementById('sh-ab-settings');
+    var abPopup=document.getElementById('sh-ab-popup');
+    if(abSetBtn && abPopup){
+      abSetBtn.addEventListener('click', function(e){ e.stopPropagation();
+        // 若侧栏收起，先展开（否则窗口太窄，弹窗会超出右边界不可见）
+        if(!open){ try{ setOpen(true); }catch(_e){} }
+        abPopup.classList.toggle('sh-ab-popup-hidden');
+        // 弹窗位置：优先活动栏右侧，超出窗口则 clamp 到窗口内
+        var reposition = function(){
+          try {
+            var abw = abWidth();
+            var popupW = abPopup.offsetWidth || 200;
+            var winW = window.innerWidth;
+            var left = abw + 10;
+            if(left + popupW > winW - 8) left = Math.max(8, winW - popupW - 8);
+            abPopup.style.left = left + 'px';
+          } catch(_e){}
+        };
+        reposition();
+        setTimeout(reposition, 260);
+      });
+      document.addEventListener('click', function(e){ if(!abPopup.classList.contains('sh-ab-popup-hidden') && !abPopup.contains(e.target) && e.target!==abSetBtn){ abPopup.classList.add('sh-ab-popup-hidden'); } });
+    }
+    applyAbOrder();
+    setupAbDrag();
+    applyAbCols();
+    var savedV='files'; try{ savedV=localStorage.getItem('lingya-shell-view')||'files'; }catch(_){}
+    switchView(savedV);
+  })();
+
+
+  // ===== v2 面板（会话/日志/MCP/窗口）=====
+
+  function renderSessionsView(el){
+    el.innerHTML = panel('会话列表',
+      '<div style="display:flex;gap:4px;margin-bottom:6px;"><button class="sh-btn" id="sh-ss-refresh">刷新</button><button class="sh-btn" id="sh-ss-init">初始化项目</button></div>'+
+      '<div id="sh-ss-body" class="sh-empty">加载中…</div>');
+    function load(){
+      if(!window.shellAPI||!window.shellAPI.listSessions) return;
+      window.shellAPI.listSessions().then(function(r){
+        var box=document.getElementById('sh-ss-body'); if(!box) return;
+        var list=(r&&r.success&&r.sessions)||[];
+        if(!list.length){ box.innerHTML='<div class="sh-empty">暂无会话（先选择项目目录）</div>'; return; }
+        var h='';
+        for(var i=0;i<list.length;i++){ var sid=String(list[i]); var label=sid.length>20?(sid.slice(0,20)+'…'):sid;
+          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+esc(label)+'</span><span style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
+        }
+        box.innerHTML=h;
+        var items=box.querySelectorAll('.sh-ss-item');
+        for(var j=0;j<items.length;j++){ (function(it){ it.addEventListener('click',function(){
+          if(!window.shellAPI.navigateSession) return;
+          window.shellAPI.navigateSession(it.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
+        }); })(items[j]); }
+      })['catch'](function(){});
+    }
+    var rf=document.getElementById('sh-ss-refresh'); if(rf) rf.addEventListener('click',load);
+    var ini=document.getElementById('sh-ss-init'); if(ini) ini.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){}); });
+    load();
+  }
+
+  function renderLogView(el){
+    el.innerHTML = panel('执行日志',
+      '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">'+
+      '<button class="sh-btn" id="sh-lg-clear">清空历史</button>'+
+      '<button class="sh-btn" id="sh-lg-parse">手动解析</button>'+
+      '<button class="sh-btn" id="sh-lg-stop">停止任务</button>'+
+      '<button class="sh-btn" id="sh-lg-export">导出对话</button>'+
+      '</div>'+
+      '<div id="sh-lg-list" class="sh-empty" style="margin-bottom:8px;">暂无执行记录（AI 执行工具后显示）</div>'+
+      '<div class="sh-card"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">说明</div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);line-height:1.6;">命令历史、执行结果、工具调用卡片实时显示在主界面（AI 网页右侧的覆盖层「日志」页签）。此面板提供常用操作入口：清空历史、手动解析、停止任务、导出对话。</div></div>');
+    var ev=function(id){ return document.getElementById(id); };
+    function act(a){ if(window.shellAPI&&window.shellAPI.runAction) window.shellAPI.runAction(a).then(function(r){ toast2(r&&r.success?'已触发':'失败'); })['catch'](function(){ toast2('失败'); }); }
+    var c1=ev('sh-lg-clear'); if(c1) c1.addEventListener('click',function(){ act('clear-history'); });
+    var p1=ev('sh-lg-parse'); if(p1) p1.addEventListener('click',function(){ act('manual-parse'); });
+    var s1=ev('sh-lg-stop'); if(s1) s1.addEventListener('click',function(){ act('stop'); });
+    var e1=ev('sh-lg-export'); if(e1) e1.addEventListener('click',function(){ act('export-md'); });
+    var hist=[];
+    function drawHist(){ var box=document.getElementById('sh-lg-list'); if(!box) return; if(!hist.length){ box.innerHTML='暂无执行记录'; return; } var h=''; for(var i=0;i<Math.min(hist.length,30);i++){ var en=hist[i]||{}; var ok=en.success; h+='<div class="sh-list-item" style="display:flex;gap:6px;align-items:center;"><span style="color:'+(ok?'#4ade80':'#f87171')+';flex-shrink:0;">'+(ok?'✔':'✖')+'</span><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+esc(en.command||'')+'</span></div>'; } box.innerHTML=h; }
+    if(window.shellAPI&&window.shellAPI.onHistoryUpdated){ window.shellAPI.onHistoryUpdated(function(p){ if(p&&p.entry){ hist.unshift(p.entry); if(hist.length>50) hist.pop(); drawHist(); } }); }
+    var hs=ev('sh-lg-stop');
+  }
+
+
+  function renderMcpView(el){
+    el.innerHTML = panel('MCP 工具',
+      '<div style="display:flex;gap:4px;margin-bottom:6px;"><button class="sh-btn" id="sh-mcp-refresh">刷新</button></div>'+
+      '<div id="sh-mcp-list" class="sh-empty" style="margin-bottom:8px;">加载中…</div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">配置（mcpServers JSON）</div>'+
+      '<textarea id="sh-mcp-json" rows="8" placeholder=\'{"mcpServers": {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/proj"]}}}\' style="width:100%;box-sizing:border-box;background:var(--ck-code-bg);border:1px solid var(--ck-border);border-radius:6px;padding:6px;color:var(--ck-text);font-size:11px;font-family:Consolas,monospace;resize:vertical;margin-bottom:6px;"></textarea>'+
+      '<button class="sh-btn primary" id="sh-mcp-save">保存配置</button>');
+    function loadJson(){
+      if(!window.shellAPI||!window.shellAPI.listMcpServers) return;
+      window.shellAPI.listMcpServers().then(function(r){
+        var servers=(r&&r.success&&r.servers)||[];
+        var ms={};
+        for(var i=0;i<servers.length;i++){ var s=servers[i]; var def={};
+          if(s.type==='http'){ if(s.url) def.url=s.url; if(s.headers) def.headers=s.headers; }
+          else { if(s.command) def.command=s.command; if(s.args&&s.args.length) def.args=s.args; if(s.env) def.env=s.env; }
+          ms[s.name]=def;
+        }
+        var ta=document.getElementById('sh-mcp-json'); if(ta) ta.value=JSON.stringify({mcpServers:ms},null,2);
+      })['catch'](function(){});
+    }
+    function draw(){
+      if(!window.shellAPI||!window.shellAPI.listMcpServers) return;
+      window.shellAPI.listMcpServers().then(function(r){
+        var box=document.getElementById('sh-mcp-list'); if(!box) return;
+        var servers=(r&&r.success&&r.servers)||[];
+        if(!servers.length){ box.innerHTML='<div class="sh-empty">暂无 MCP Server</div>'; return; }
+        var h='';
+        for(var i=0;i<servers.length;i++){ var s=servers[i]; var st=s.connected?'已连接':(s.enabled?'未连接':'已禁用'); var col=s.connected?'#4ade80':(s.enabled?'#ffc107':'#5d6280');
+          h+='<div class="sh-list-item sh-mcp-item" data-name="'+esc(s.name)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:12px;color:var(--ck-text);">'+esc(s.name)+'</span><span style="width:8px;height:8px;border-radius:50%;background:'+col+';flex-shrink:0;"></span><span style="font-size:10px;color:var(--ck-text-dim);">'+st+'</span></div>';
+        }
+        box.innerHTML=h;
+        var items=box.querySelectorAll('.sh-mcp-item');
+        for(var j=0;j<items.length;j++){ (function(it){ it.addEventListener('click',function(){
+          var nm=it.getAttribute('data-name'); var srv=null; for(var k=0;k<servers.length;k++) if(servers[k].name===nm) srv=servers[k];
+          if(!srv) return;
+          var pr=(srv.connected||srv.enabled)?window.shellAPI.disableMcpServer(nm):window.shellAPI.enableMcpServer(nm);
+          pr.then(function(){ draw(); loadJson(); })['catch'](function(){});
+        }); })(items[j]); }
+      })['catch'](function(){});
+    }
+    var rf=document.getElementById('sh-mcp-refresh'); if(rf) rf.addEventListener('click',function(){ draw(); loadJson(); });
+    var sv=document.getElementById('sh-mcp-save'); if(sv) sv.addEventListener('click',function(){
+      var ta=document.getElementById('sh-mcp-json'); if(!ta||!ta.value.trim()){ toast2('请输入配置'); return; }
+      var parsed; try{ parsed=JSON.parse(ta.value); }catch(e){ toast2('JSON 解析失败'); return; }
+      if(!parsed.mcpServers||typeof parsed.mcpServers!=='object'){ toast2('需要 mcpServers 对象'); return; }
+      window.shellAPI.listMcpServers().then(function(r){
+        var old=(r&&r.success&&r.servers)||[];
+        var newNames=Object.keys(parsed.mcpServers);
+        var chain=Promise.resolve();
+        for(var i=0;i<old.length;i++){ if(newNames.indexOf(old[i].name)<0){ (function(nm){ chain=chain.then(function(){ return window.shellAPI.removeMcpServer(nm); }); })(old[i].name); } }
+        newNames.forEach(function(name){ var def=parsed.mcpServers[name]||{}; var server={ name:name, type:def.url?'http':'stdio', command:def.command, args:def.args||[], url:def.url, headers:def.headers, env:def.env }; chain=chain.then(function(){ return window.shellAPI.upsertMcpServer(server); }); });
+        chain.then(function(){ toast2('配置已保存'); draw(); loadJson(); })['catch'](function(){ toast2('保存失败'); });
+      })['catch'](function(){ toast2('保存失败'); });
+    });
+    draw(); loadJson();
+  }
+
+
+  function renderWindowsView(el){
+    el.innerHTML = panel('窗口管理',
+      '<button class="sh-btn primary" id="sh-win-new" style="margin-bottom:6px;">新建窗口</button>'+
+      '<div id="sh-win-body" class="sh-empty">加载中…</div>');
+    function load(){
+      if(!window.shellAPI||!window.shellAPI.listProfiles) return;
+      window.shellAPI.listProfiles().then(function(r){
+        var box=document.getElementById('sh-win-body'); if(!box) return;
+        var list=(r&&r.success&&r.profiles)||[];
+        if(!list.length){ box.innerHTML='<div class="sh-empty">暂无窗口</div>'; return; }
+        var h='';
+        for(var i=0;i<list.length;i++){ var w=list[i];
+          h+='<div class="sh-list-item"><div style="display:flex;align-items:center;gap:6px;"><span class="sh-win-open" data-id="'+esc(w.id)+'" style="font-weight:600;color:var(--ck-title);flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;">'+esc(w.name)+'</span>';
+          h+='<span style="font-size:10px;color:var(--ck-text-dim);">'+esc(w.providerId||'平台')+'</span>';
+          h+='<span class="sh-win-rename" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:var(--ck-text);">改名</span>';
+          h+='<span class="sh-win-del" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:#f87171;">删除</span></div></div>';
+        }
+        box.innerHTML=h;
+        var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(e2.getAttribute('data-id'),e2.getAttribute('data-name')); }); })(els[x]); } };
+        q('.sh-win-open',function(id){ window.shellAPI.openProfileWindow(id).then(function(r2){ toast2(r2&&r2.success?(r2.focused?'已切换':'已打开'):'打开失败'); })['catch'](function(){}); });
+        q('.sh-win-rename',function(id,name){ var nn=prompt('新名称',name); if(nn==null) return; window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); });
+        q('.sh-win-del',function(id,name){ if(!confirm('确定删除窗口「'+name+'」？')) return; window.shellAPI.deleteProfileWindow(id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
+      })['catch'](function(){});
+    }
+    var nb=document.getElementById('sh-win-new'); if(nb) nb.addEventListener('click',function(){ window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); load(); })['catch'](function(){}); });
+    load();
+  }
+
+
 })();

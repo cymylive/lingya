@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.30",
+  "version": "0.6.38",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "test": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
     "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-reporter=lcov test/tools/*.test.js test/main/*.test.js test/preload/*.test.js > coverage.lcov",
     "test:ci": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
+    "check:notes": "node scripts/check-notes.js",
     "build": "electron-builder --publish always",
     "build:win": "electron-builder --win --publish always",
     "build:win:nsis": "electron-builder --win --config.win.target=nsis --publish always",
@@ -49,7 +50,7 @@
   },
   "homepage": "https://github.com/cymylive/lingya#readme",
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^24.13.3"
   },
   "engines": {

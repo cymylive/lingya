@@ -533,13 +533,7 @@ function bindEvents() {
   const compactBtn = document.getElementById('lingya-btn-compact');
   compactBtn?.addEventListener('click', runCompaction);
 
-  // 首次使用提示浮窗：初始化按钮（与右侧初始化项目逻辑一致）
-  const firstInitBtn = document.getElementById('lingya-btn-first-init');
-  firstInitBtn?.addEventListener('click', handleInitProject);
-
-  // 首次使用提示浮窗：关闭按钮
-  const firstCloseBtn = document.getElementById('lingya-btn-first-close');
-  firstCloseBtn?.addEventListener('click', hideFirstTimeDialog);
+  // 首次使用提示浮窗已移除（底部/侧边栏已有初始化按钮）
   clearBtn?.addEventListener('click', () => {
     commandHistory.length = 0;
     renderHistory();

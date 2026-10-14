@@ -51,7 +51,7 @@ const OVERLAY_HTML = [
 '        </div>',
 '      </div>',
 '      <div id="lingya-init-card" class="lingya-section">',
-'        <button id="lingya-btn-init" class="lingya-btn lingya-btn-primary lingya-btn-block">初始化项目</button>',
+'        <button id="lingya-btn-init" class="lingya-btn lingya-btn-primary lingya-btn-sm">初始化项目</button>',
 '      </div>',
 '      <div class="lingya-label lingya-grid-label">快捷操作</div>',
 '      <div class="lingya-grid">',
@@ -129,6 +129,7 @@ const OVERLAY_HTML = [
 '        <label class="lingya-label">执行结果：</label>',
 '        <div id="lingya-result-status" class="lingya-result-status"></div>',
 '        <pre id="lingya-result-output" class="lingya-result-output"></pre>',
+      '        <div id="lingya-tool-cards" class="lingya-tool-cards"></div>',
 '      </div>',
 '      <div class="lingya-section">',
 '        <details id="lingya-history">',
@@ -446,15 +447,8 @@ const OVERLAY_HTML = [
 '  </div>',
 '  <div id="lingya-plan-float-list" class="lingya-plan-float-list"></div>',
 '</div>',
-'<div id="lingya-first-time-dialog" class="lingya-first-time-dialog lingya-hidden">',
-'  <div class="lingya-first-time-box">',
-'    <button id="lingya-btn-first-close" class="lingya-btn-icon lingya-first-time-close" title="关闭">×</button>',
-'    <div class="lingya-first-time-text">首次创建对话时，需要初始化项目，并选择一个项目目录，不然无法使用</div>',
-'    <div class="lingya-actions">',
-'      <button id="lingya-btn-first-init" class="lingya-btn lingya-btn-primary">初始化项目</button>',
-'    </div>',
-'  </div>',
-'</div>',
+
+'/* ============================================================',
 ].join('\n');
 
 const OVERLAY_CSS = [
@@ -546,6 +540,7 @@ const OVERLAY_CSS = [
 '.lingya-agent-hint.lingya-agent-plan { color: #fbbf24; }',
 '.lingya-header-right { display: flex; align-items: center; gap: 6px; }',
 '.lingya-btn-block { flex: 1 1 100%; width: 100%; }',
+'.lingya-btn-sm { align-self: flex-start; padding: 4px 12px; font-size: 12px; }',
 '.lingya-grid-label { margin-top: 2px; }',
 '.lingya-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }',
 '.lingya-grid-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 12px 4px; background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 10px; color: var(--ck-title); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.18s; }',
@@ -874,28 +869,6 @@ const OVERLAY_CSS = [
 '.lingya-session-item .session-id { color: var(--ck-accent); font-size: 11px; }',
 '.lingya-session-item .session-action { color: var(--ck-code-text); font-size: 11px; font-weight: 600; }',
 '.lingya-session-empty { color: var(--ck-text-dim); font-size: 12px; font-style: italic; padding: 8px 0; text-align: center; }',
-'.lingya-first-time-dialog {',
-'  position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;',
-'  display: flex; align-items: flex-start; justify-content: center;',
-'  padding-top: 24px;',
-'  pointer-events: none;',
-'}',
-'.lingya-first-time-dialog.lingya-hidden { display: none !important; }',
-'.lingya-first-time-box {',
-'  position: relative; max-width: 420px; width: 90%;',
-'  background: var(--ck-bg);',
-'  border: 1px solid rgba(45, 212, 191, 0.35);',
-'  border-radius: 18px;',
-'  padding: 28px 24px 22px;',
-'  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(45, 212, 191, 0.08);',
-'  color: var(--ck-text); font-size: 14px; line-height: 1.6;',
-'  text-align: center;',
-'  pointer-events: auto;',
-'}',
-'.lingya-first-time-close { position: absolute; top: 10px; right: 10px; }',
-'.lingya-first-time-text { margin-bottom: 18px; color: var(--ck-text); }',
-'.lingya-first-time-box .lingya-actions { justify-content: center; }',
-'.lingya-first-time-box .lingya-btn { flex: 0 0 auto; min-width: 150px; }',
 '.lingya-plan-tab-count { color: var(--ck-primary); font-size: 11px; font-weight: 700; margin-left: 3px; }',
 '.lingya-plan-float {',
 '  position: fixed; bottom: 84px; left: 24px; right: auto; width: 250px; max-height: 45vh;',
@@ -1001,6 +974,12 @@ const OVERLAY_CSS = [
 '.lingya-ft-preview-title { font-size: 11px; color: var(--ck-title); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
 '.lingya-ft-preview-body { margin: 0; padding: 8px; font-family: "Cascadia Code", "Consolas", monospace; font-size: 11px; line-height: 1.5; color: var(--ck-code-text); max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }',
 '.lingya-ft-stat { font-size: 10px; color: var(--ck-text-dim); text-align: right; padding-top: 2px; }',
-].join('\n');
+// ===== 计划进度条（块②，仿 dsh ui-plan）=====
+'.lingya-plan-progress { height: 4px; border-radius: 999px; background: rgba(255,255,255,0.08); margin: 6px 2px 8px; overflow: hidden; }',
+'.lingya-plan-progress-bar { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--ck-primary), var(--ck-primary-strong)); transition: width .25s ease; }',
+// ===== 工具卡片容器（块①，仿 dsh ui-tool）=====
+'.lingya-tool-cards { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }',
+
+].join('\n') + (function(){try{return require('./tool-card').TOOL_CARD_CSS}catch(_){return ''}})();
 
 module.exports = { OVERLAY_HTML, OVERLAY_CSS };

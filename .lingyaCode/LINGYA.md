@@ -304,3 +304,52 @@ npm run build:mac:local             # macOS
 | `CHANGELOG.md` | 更新日志 |
 | `Roadmap.md` | 路线图 |
 | `CONTRIBUTING.md` | 贡献指南 |
+
+
+
+---
+
+## 十、协作规范（移植自 DeepSeek Harness）
+
+> 本章节移植自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的工程规范体系，用于约束 AI 助手与人类协作者的改动行为。
+
+### 10.1 改代码前：先想清楚「为什么」
+
+**非平凡改动必须留下架构决策笔记（Agent Note）。** 判断标准：
+
+> 「半年后有人想删这段代码，这份笔记能否阻止他犯错？」能，就写。
+
+需要写的场景：新增/修改架构决策、修复非平凡 bug、移除功能、引入新流程。
+不需要写：纯机械改动、局部 UI 微调。
+
+笔记放 `.lingyaCode/notes/{lifecycle}/{class}/`，格式见 `notes/README.md`，用 `npm run check:notes` 校验。
+
+### 10.2 改动原则
+
+- **外科手术式修改**：最小改动范围，不顺手重构无关代码
+- **一次只改一个决定性变量**：便于回滚和定位
+- **保留原始产物**：派生文件单独写，优先可逆修改
+- **同一路径失败 2-3 次必须转向**：不要重复一个称职开发者永远不会使其可行的路径
+
+### 10.3 改动后：验证闭环
+
+- 修改后必须跑 `npm test`，确保 246 用例通过
+- 涉及 UI 的改动，元素 **id 保持不变**（events.js / ui.js 依赖 getElementById）
+- 触发限制：**打包/发版前必须先问用户**（不要主动打包）
+
+### 10.4 分层纪律
+
+- 主进程与渲染进程严格分离：preload 不能直接 require Node 模块
+- 渲染进程调主进程一律通过 `window.electronAPI`（api.js 定义）
+- 危险命令由 dangerous-commands.js 拦截
+- 常用外部工具用最小工具链（Python/pwntools、requests、Node、bash），一次只引入一个依赖
+
+### 10.5 常用命令
+
+```bash
+npm start              # 启动
+npm test               # 246 用例
+npm run check:notes    # 校验架构决策笔记
+npm run test:coverage  # 覆盖率
+npm run build:win:portable:local  # 本地打包
+```

@@ -32,6 +32,16 @@ function itemsHtml(items) {
   }).join('');
 }
 
+/** 进度条 HTML（dsh 式：完成比例可视化） */
+function progressHtml(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  const done = items.filter((t) => t.status === 'completed').length;
+  const pct = Math.round((done / items.length) * 100);
+  return '<div class="lingya-plan-progress">' +
+    '<div class="lingya-plan-progress-bar" style="width:' + pct + '%"></div>' +
+  '</div>';
+}
+
 /** 渲染待办列表（同时刷新页签面板 + 悬浮卡） */
 function renderTodos(todos) {
   const items = Array.isArray(todos) ? todos : [];
@@ -45,7 +55,7 @@ function renderTodos(todos) {
   if (count) count.textContent = progress;
   if (list) {
     list.innerHTML = hasItems
-      ? itemsHtml(items)
+      ? progressHtml(items) + itemsHtml(items)
       : '<div class="lingya-plan-empty">暂无计划。AI 使用 todoWrite 时会显示在这里。</div>';
   }
 
@@ -60,7 +70,7 @@ function renderTodos(todos) {
   if (floatCount) floatCount.textContent = progress;
   if (floatList) {
     floatList.innerHTML = hasItems
-      ? itemsHtml(items)
+      ? progressHtml(items) + itemsHtml(items)
       : '<div class="lingya-plan-empty">暂无计划</div>';
   }
   if (float) float.classList.remove('lingya-hidden');

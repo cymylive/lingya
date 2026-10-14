@@ -1,6 +1,146 @@
 # Changelog
 
+## [0.6.38] - 2026-10-14
+
+### Added
+- **隔离实例目录自动清理**：启动时清理超过 7 天的 `instances/auto-*` 目录（多开残留），新增单测
+
+### Fixed
+- **点击侧边栏图标无反应**：拖拽 `pointer-events:none` 在 pointerdown 时立即加导致 click 被吞，改为移动超阈值后才加
+- **活动栏拖拽不能任意换位**：拖拽元素遮挡 `elementFromPoint`，加 `pointer-events:none` 让检测穿透；并从 DOM 实际顺序持久化（原来被旧 abOrder 还原）
+- **设置弹窗 2 栏时不可见**：点齿轮先展开侧栏 + 弹窗位置 clamp 到窗口内
+- **启动检测更新失败弹窗**：禁用启动时自动检查更新
+- **初始化项目按钮过大**：改小为 `lingya-btn-sm`
+- **首次提示浮窗**：整体移除（底部/侧边栏已有初始化按钮）
+
+### Changed
+- 清理 2 个废弃事件（`page-loaded`/`session-restored`，无监听方）
+- `_shouldQuit`（单实例模式未拿到锁）时提前退出，跳过无用初始化
+
+### Audit
+- 全项目审计：103 个 JS 文件语法 0 错误；renderer↔preload / overlay↔api API 缺失 0；IPC 通道 handle↔invoke 无孤儿；事件 11 send/11 on 全对齐；DOM id 无悬空
+
+### Notes
+- 全量测试 361/361 通过
+
+## [0.6.37] - 2026-10-14
+
+
+### Added
+- **侧边栏活动栏图标网格 + 拖拽排序**：图标支持 1/2/3 列显示，拖动图标自定义顺序（持久化）
+- **活动栏图标小名称标签**（图标下方中文小字，VSCode 风格）
+- **底部齿轮设置弹窗**（SVG 图标），内含列数选择 + 拖拽提示
+- **悬浮元素可开关**：悬浮球/覆盖层面板/计划悬浮卡可在设置里显示或隐藏
+
+### Fixed
+- **侧边栏「任务计划」面板不显示 + 不同步进度**：
+  - 根因 1：`resolveSessionId` 用侧边栏（壳窗口）的 sender 解析不出 sessionId → 改为始终用 AI 视图 URL
+  - 根因 2：`lingya-todos-updated` 广播只发 AI 视图，壳窗口收不到 → 广播同时发给壳窗口
+- **计划长文本撑破卡片**：文字加 min-width:0 + 换行，卡片加 overflow 约束
+- **设置弹窗双栏时被活动栏盖住**：left 改 calc(var(--sh-ab-w)+10px) 动态跟随
+- **活动栏图标不居中**：emoji 包固定容器 + line-height:1
+- **活动栏与面板无缝贴一起**：加实色分隔线 + 投影
+- **shell-preload 漏暴露飞书 6 个 API + saveSkill**（群列表静默不加载、技能保存失败）
+
+### Notes
+- 全量测试 359/359 通过
+
+## [0.6.36] - 2026-10-14
+
+
+### Added
+- **侧边栏多面板系统（12 面板，功能对等覆盖层）**：
+  - 活动栏图标：项目文件 / 任务计划 / 长期记忆 / 技能库 / 安全增强 / 定时任务 / 飞书同步 / 会话列表 / 执行日志 / MCP 工具 / 窗口管理 / 设置
+  - 记忆：类型筛选 · 搜索 · 新建/编辑/删除 · 插入/全部插入到聊天 · 导入/导出
+  - 技能：搜索 · 新建/编辑/删除 · 启停 · 插入 · 本地导入
+  - 安全：全部字段（CTF注入/AI改写/自动续写/停滞监督等）+ 重置 + 立即注入
+  - 定时：列表 · 立即执行 · 编辑 · 启停 · 删除 · 新建（每天/每周/cron 三模式）
+  - 飞书：连接状态 · 配置 · 5 推送选项 · 群绑定 · 重连/断开/刷新
+  - 会话/MCP/窗口：列表 · 跳转 · 启用禁用 · JSON 配置 · 打开/改名/删除
+  - 设置：Agent 模式 · 自动压缩 · 生成文档 · 压缩上下文 · 导出对话 · 沉浸式 · 手动解析 · 停止 · 自动注入 · 发送延迟 · 悬浮元素开关
+- **5 个跨上下文通道**（侧边栏 ↔ AI 视图）：insert-to-chat / new-chat / run-action / set-setting / report-history
+- **活动栏图标 1/2/3 列网格 + 拖拽排序**（自定义列数 + 顺序，持久化）
+- **活动栏图标小名称标签**（图标下方中文小字）
+- **底部齿轮设置弹窗**（SVG 图标，含列数选择）
+- **悬浮元素可开关**：悬浮球/覆盖层面板/计划悬浮卡可在设置里显示或隐藏
+
+### Fixed
+- 修复 shell-preload 漏暴露飞书 6 个 API + saveSkill（导致群列表静默不加载、技能保存失败）
+- 修复设置弹窗双栏时被活动栏盖住（left 改 calc 动态跟随）
+- 修复活动栏图标不居中（emoji 包固定容器 + line-height: 1）
+- 侧边栏活动栏加实色分隔线 + 投影（原无缝贴一起）
+
+### Changed
+- 侧边栏右缘渐变发光边（与 AI 网页区分）
+
+### Notes
+- 全量测试 359/359 通过
+
+## [0.6.35] - 2026-10-14
+
+
+### Added
+- **多实例支持（多开）**：同一个 LingYa.exe 可同时运行多个独立实例
+  - 默认允许多开：第二个及后续实例自动使用隔离数据目录 `<数据目录>/instances/auto-<pid>`，互不干扰
+  - 具名实例：设环境变量 `LINGYA_INSTANCE=<名>` → 使用固定目录 `<数据目录>/instances/<名>`，配置可持久、可复现
+  - 恢复单实例：设环境变量 `LINGYA_SINGLE=1` → 第二次启动直接退出（回到旧行为）
+  - `src/main/data-dir.js` 新增 `sanitizeInstanceName()` / `resolveInstanceDir()`（含路径穿越防护）
+  - `src/main/index.js`：单实例锁重构 —— 先 setPath 基础目录（锁基于真实数据目录）→ 请求锁 → 未拿到锁则切隔离目录
+  - 新增单测 `test/main/data-dir-instance.test.js`（5 用例）
+- 全量测试 359/359 通过
+
+## [0.6.34] - 2026-10-14
+
+
+### Reverted
+- **回滚 v0.6.33 的界面视觉重设计**：移除 144 行 CSS 覆盖层（360px 面板、毛玻璃、渐变标题、下划线页签、卡片化区块等），界面恢复 0.6.32 的墨鸦原风格
+- 保留 v0.6.32 的功能性改动：工具调用卡片、计划卡片进度条
+- 全量测试 354/354 通过
+
+## [0.6.33] - 2026-10-14
+
+
+### Changed
+- **界面整体视觉重设计（仿 DeepSeek Harness 视觉语言）**：
+  - 面板加宽 300px → **360px**，最大高度 60vh → 74vh
+  - 大圆角（16px）+ 深阴影 + **毛玻璃背景**（backdrop-filter blur + saturate）
+  - 标题 **渐变文字**（青碧渐变，background-clip: text）
+  - 页签从"块状"改为 **下划线指示器风**（dsh 风格）
+  - 所有区块 **卡片化**（每个 section 变独立卡片，圆角 + 边框 + 内边距）
+  - 主按钮 **渐变填充**（135deg 青碧渐变），次级按钮 hover 变主色边框
+  - 快捷操作网格 hover **上浮 2px** + 主色边框
+  - 输入框/选择器统一圆角，focus 时主色边框
+  - 滚动条美化（hover 变主色）
+  - 全部通过 CSS 覆盖层实现，**不改 HTML 结构、不改元素 id**，零回归风险
+- 全量测试 354/354 通过
+
+## [0.6.32] - 2026-10-14
+
+
+### Added
+- **架构决策笔记体系（Agent Note，借鉴 DeepSeek Harness）**：
+  - 新建 `.lingyaCode/notes/{proposed,implemented,rejected}/{feature,bug-fix,simplification,architecture,process,testing}/` 三态目录结构
+  - `notes/README.md` 规范说明 + `_template.{proposed,implemented,rejected}.md` 三态模板
+  - `scripts/check-notes.js` 校验器（纯 Node 零依赖）：校验生命周期/状态一致、类别封闭、`## Problem` 开头、`## Alternatives considered` 必需、文件名格式、implemented 禁提案用语
+  - `npm run check:notes` 一键校验
+  - 强制「改代码前先想清楚为什么」：非平凡改动必须留下决策笔记（Problem → Decision → Alternatives → Consequences）
+- **工具调用卡片（仿 dsh ui-tool）**：
+  - `src/preload/overlay/tool-card.js`：`renderToolCard()` + `TOOL_CARD_CSS` + `injectToolCardCSS()`
+  - 工具执行结果从纯文本升级为卡片：工具名 + 参数摘要 + 状态徽标（成功/失败/执行中）+ 可折叠输出
+  - 接入 `tool-executor.js` 渲染流程，结果区新增 `#lingya-tool-cards` 容器
+  - 防 XSS 转义，最多保留 20 张卡片
+- **计划卡片进度条**：`plan-panel.js` 加 `progressHtml()`，页签面板和悬浮卡显示完成进度条
+
+### Changed
+- `.lingyaCode/LINGYA.md` 新增第十章「协作规范（移植自 DeepSeek Harness）」：改动原则、验证闭环、分层纪律
+- `docs/UI-REDESIGN-PLAN.md`：仿 dsh UI 布局改造方案
+
+### Notes
+- 借鉴对象：DeepSeek Harness（dsh，TypeScript + React 独立 Web 应用）。dsh 无法直接移植到 LingYa（CommonJS 注入式浮层），仅借鉴其设计语言与工程规范。
+- 全量测试 354/354 通过。
+
 ## [0.6.30] - 2026-10-12
+
 
 ### Added
 - **文件树完整编辑能力**：

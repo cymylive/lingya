@@ -2,7 +2,7 @@
  * LingYa 主进程入口（多窗口多 profile 版）
  * 由项目根目录 main.js 薄壳加载。
  */
-const { app, BrowserWindow, Menu, dialog, WebContentsView } = require('electron');
+const { app, BrowserWindow, Menu, dialog, WebContentsView, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -15,7 +15,7 @@ const tray = require('./tray');
 
 // ========== 数据目录解析（便携优先）==========
 // 见 data-dir.js：便携版数据与程序同目录，换电脑/搬目录配置不丢。
-const { resolveDataDir } = require('./data-dir');
+const { resolveDataDir, resolveInstanceDir } = require('./data-dir');
 const SESSION_DIR = process.env.LINGYA_SESSION_DIR || 'lingya-ai-pro-session';
 const dataDirInfo = resolveDataDir({
   appDataPath: app.getPath('appData'),
@@ -25,18 +25,69 @@ const dataDirInfo = resolveDataDir({
   sessionDir: SESSION_DIR,
 });
 const USER_DATA_DIR = dataDirInfo.dir;
+
+// ========== 多实例支持 ==========
+// 默认允许多开：第二及后续实例自动使用隔离数据目录，互不干扰。
+//   - 第一个实例：用基础数据目录（保留既有配置）
+//   - 第二及后续：自动隔离到 <数据目录>/instances/auto-<pid>
+//   - 具名实例：设 LINGYA_INSTANCE=<名> -> <数据目录>/instances/<名>（固定，配置可持久）
+//   - 恢复单实例：设 LINGYA_SINGLE=1（第二次启动直接退出）
+//
+// 顺序要点：先 setPath 到基础目录，让单实例锁基于真实数据目录，
+// 再请求锁；拿到锁用基础目录，没拿到则切到隔离目录。
+const _forceSingle = process.env.LINGYA_SINGLE === '1';
+const _namedInstance = resolveInstanceDir(USER_DATA_DIR, process.env);
+
+// 基础目录必须先存在（setPath 要求）
+try {
+  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+} catch (err) {
+  console.error('[LingYa] 创建基础数据目录失败:', err.message);
+}
+app.setPath('userData', USER_DATA_DIR);
+
+let EFFECTIVE_USER_DATA_DIR = USER_DATA_DIR;
+let _shouldQuit = false;
+let _isolatedInstance = false;
+
+if (_namedInstance) {
+  EFFECTIVE_USER_DATA_DIR = _namedInstance;
+  _isolatedInstance = true;
+} else {
+  const _gotLock = app.requestSingleInstanceLock();
+  if (!_gotLock) {
+    if (_forceSingle) {
+      _shouldQuit = true;
+    } else {
+      EFFECTIVE_USER_DATA_DIR = path.join(USER_DATA_DIR, 'instances', 'auto-' + process.pid);
+      _isolatedInstance = true;
+    }
+  }
+}
+
+// 单实例模式且未拿到锁：直接退出，跳过后续所有初始化（审计优化，避免无用 init）
+if (_shouldQuit) {
+  app.quit();
+  return;
+}
+
 if (dataDirInfo.migrated) {
   console.log('[LingYa] 已将旧数据从 ' + dataDirInfo.legacyDir + ' 迁移到便携目录');
 }
 
-// app.setPath('userData', ...) 要求目标目录必须已存在，否则会抛错导致启动闪退。
-// 用户首次运行或手动删除该目录时，此处负责兜底创建。
+// 启动时清理过期的自动隔离实例目录（>7 天），避免 instances/auto-* 无限累积
 try {
-  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+  const cleaned = require("./data-dir").cleanStaleInstances(USER_DATA_DIR, 7 * 24 * 60 * 60 * 1000, fs);
+  if (cleaned > 0) console.log("[LingYa] 已清理 " + cleaned + " 个过期隔离实例目录");
+} catch (_) {}
+
+// 隔离实例：把 userData 切到隔离目录
+try {
+  fs.mkdirSync(EFFECTIVE_USER_DATA_DIR, { recursive: true });
 } catch (err) {
   console.error('[LingYa] 创建 userData 目录失败:', err.message);
 }
-app.setPath('userData', USER_DATA_DIR);
+app.setPath('userData', EFFECTIVE_USER_DATA_DIR);
 console.log('[LingYa] 数据目录:', app.getPath('userData') + (dataDirInfo.portable ? '（便携模式）' : ''));
 
 // 初始化记忆存储（全局共享）
@@ -281,7 +332,6 @@ function createWindow(profile) {
 
   aiView.webContents.on('did-finish-load', () => {
     if (!mainWindow.isDestroyed()) {
-      try { aiView.webContents.send('page-loaded'); } catch (_) {}
       sessionStore.tryRestoreSessionFromUrl(winProxy);
     }
   });
@@ -542,6 +592,72 @@ ipcMainForProfile.handle('shell-sidebar-drag', async (event, { phase } = {}) => 
   } catch (err) { return { success: false, error: err.message }; }
 });
 
+// 侧边栏 → AI 视图：把文本插入到聊天输入框（跨 webContents 转发）
+ipcMainForProfile.handle('shell-insert-to-chat', async (event, { text, tag, delay } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const wc = ctx.win.webContents;
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+    wc.send('lingya-insert-to-chat', { text: String(text||''), tag: tag||'', delay: (typeof delay==='number'?delay:undefined) });
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 侧边栏 → AI 视图：发起新会话（导航到平台首页）
+ipcMainForProfile.handle('shell-new-chat', async (event) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const wc = ctx.win.webContents;
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+    let homeUrl = null;
+    try { const { getProviderByUrl } = require('../providers'); const p = getProviderByUrl(wc.getURL()); if (p && p.homeUrl) homeUrl = p.homeUrl; } catch (_) {}
+    if (!homeUrl) return { success: false, error: '无法确定平台首页' };
+    await wc.loadURL(homeUrl);
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 侧边栏 → AI 视图：执行一个动作（生成文档/沉浸式/停止/压缩/手动解析/导出对话）
+ipcMainForProfile.handle('shell-run-action', async (event, { action } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const wc = ctx.win.webContents;
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+    wc.send('lingya-run-action', { action: String(action||'') });
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 侧边栏 → AI 视图：设置偏好（自动注入 / 发送延迟），写入 AI 视图 localStorage
+ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const wc = ctx.win.webContents;
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+    wc.send('lingya-set-setting', { key: String(key||''), value: value });
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 侧边栏 → AI 视图：读偏好（返回 Promise，主进程转发后由 AI 视图回填）
+// 简化：不实现读回，侧边栏用固定默认值展示
+
+// AI 视图 → 壳窗口：转发命令历史（供侧边栏日志面板展示）
+ipcMain.on('lingya-report-history', (event, payload) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return;
+    const rawWin = ctx.rawWin || ctx.win;
+    if (rawWin && !rawWin.isDestroyed() && rawWin.webContents) {
+      rawWin.webContents.send('lingya-history-updated', payload);
+    }
+  } catch (_) {}
+});
+
 // 覆盖层"新建窗口"按钮触发
 ipcMainForProfile.handle('create-profile-window', async (_event, { providerId } = {}) => {
   const profiles = profileManager.readProfiles();
@@ -783,18 +899,21 @@ ipcMainForProfile.handle('get-mcp-tools', async () => {
   return { success: true, tools: mcpClient.getMcpToolList() };
 });
 
-// ========== 单实例锁 ==========
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-if (!gotSingleInstanceLock) {
+// ========== 单实例锁（多实例支持）==========
+// 锁的获取已在顶部「多实例支持」段完成，这里只决定是否退出 + 是否注册聚焦。
+if (_shouldQuit) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    const mainWindow = windowState.getMainWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
+  // 仅单实例模式才把「第二次启动」聚焦到已有窗口；多开模式忽略（用户本就想多开）。
+  if (_forceSingle) {
+    app.on('second-instance', () => {
+      const mainWindow = windowState.getMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    });
+  }
 
   app.whenReady().then(() => {
     setupAppMenu();
@@ -810,6 +929,10 @@ if (!gotSingleInstanceLock) {
     mcpClient.connectEnabledServers().catch(err => {
       console.error('[MCP] 初始化连接失败:', err.message);
     });
+
+    if (_isolatedInstance) {
+      console.log('[LingYa] 多实例模式（独立数据目录）:', EFFECTIVE_USER_DATA_DIR);
+    }
   });
 }
 

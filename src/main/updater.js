@@ -252,20 +252,9 @@ autoUpdater.on('error', async (error) => {
 // ========== 启动时自动检查 ==========
 function initAutoUpdater(win) {
   setMainWindow(win);
-
-  // 仅在生产环境（打包后）才检查更新
-  if (!app.isPackaged) {
-    console.log('[Updater] 开发环境，跳过自动检查更新');
-    return;
-  }
-
-  // 应用启动后延迟 5 秒检查，避免影响启动速度
-  setTimeout(() => {
-    console.log('[Updater] 启动自动检查更新');
-    autoUpdater.checkForUpdates().catch((error) => {
-      console.error('[Updater] 启动检查更新失败:', error);
-    });
-  }, 5000);
+  // 已按要求禁用「启动时自动检查更新」——避免每次启动弹「检查更新失败」。
+  // 手动检查（菜单/按钮触发 checkForUpdates）仍可用。
+  console.log('[Updater] 已禁用启动自动检查更新');
 }
 
 module.exports = {

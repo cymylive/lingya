@@ -98,6 +98,58 @@ function resolveDataDir(options) {
   return { dir: portableDir, portable: true, legacyDir, migrated };
 }
 
+/** 清洗实例名（防路径穿越） */
+function sanitizeInstanceName(name) {
+  return String(name || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
+}
+
+/**
+ * 解析具名实例目录。
+ * LINGYA_INSTANCE=<name> 时返回 <baseDir>/instances/<name>，否则 null。
+ * 具名实例目录固定，配置可持久（区别于自动隔离的临时实例）。
+ * @param {string} baseDir 基础数据目录
+ * @param {object} env 环境变量
+ * @returns {string|null}
+ */
+function resolveInstanceDir(baseDir, env) {
+  const name = ((env && env.LINGYA_INSTANCE) || '').trim();
+  if (!name) return null;
+  const safe = sanitizeInstanceName(name);
+  if (!safe) return null;
+  return path.join(baseDir, 'instances', safe);
+}
+
+/**
+ * 清理过期的自动隔离实例目录（<baseDir>/instances/auto-*）。
+ * 多开时每个自动实例用 auto-<pid> 命名，退出后不自动删除；启动时清理
+ * 超过 maxAgeMs（默认 7 天）未修改的 auto-* 目录，避免无限累积。
+ * 具名实例（instances/<name>）不受影响。
+ * @param {string} baseDir 基础数据目录
+ * @param {number} maxAgeMs 最大保留时长（毫秒）
+ * @param {object} fsArg fs 模块
+ * @returns {number} 清理的目录数
+ */
+function cleanStaleInstances(baseDir, maxAgeMs, fsArg) {
+  const f = fsArg || fs;
+  const instDir = path.join(baseDir, "instances");
+  let removed = 0;
+  let entries;
+  try { entries = f.readdirSync(instDir, { withFileTypes: true }); } catch (_) { return 0; }
+  const now = Date.now();
+  for (const e of entries) {
+    if (!e.isDirectory() || !/^auto-[0-9]+$/.test(e.name)) continue;
+    const full = path.join(instDir, e.name);
+    try {
+      const st = f.statSync(full);
+      if (now - st.mtimeMs > maxAgeMs) {
+        f.rmSync(full, { recursive: true, force: true });
+        removed++;
+      }
+    } catch (_) {}
+  }
+  return removed;
+}
+
 module.exports = {
   PORTABLE_DATA_DIRNAME,
   PORTABLE_MARKERS,
@@ -105,4 +157,7 @@ module.exports = {
   copyDirRecursive,
   isEmptyDir,
   resolveDataDir,
+  sanitizeInstanceName,
+  resolveInstanceDir,
+  cleanStaleInstances,
 };

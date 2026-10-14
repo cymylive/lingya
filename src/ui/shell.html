@@ -18,7 +18,7 @@
     --ck-primary: #2dd4bf;
     --ck-primary-soft: rgba(45,212,191,0.16);
     --ck-title: #ccfbf1;
-    --sh-ab-w: 46px;
+    --sh-ab-w: 60px;
   }
   html.lingya-theme-light {
     --ck-bg: rgba(252,252,253,0.98);
@@ -37,25 +37,58 @@
   /* ===== 侧栏容器 ===== */
   #lingya-sidebar-slot {
     position: absolute; top: 0; left: 0; bottom: 0; width: 0;
-    overflow: hidden; display: flex;
-    background: var(--ck-bg); border-right: 1px solid var(--ck-border);
+    overflow: visible; display: flex;
+    background: var(--ck-bg);
     transition: width 0.18s ease;
   }
-  #lingya-sidebar-slot.collapsed { width: var(--sh-ab-w); box-shadow: 2px 0 12px rgba(0,0,0,0.4); }
-  #lingya-sidebar-slot.open { width: 320px; }
+  /* 右侧渐变分隔线（美观的边） */
+  #lingya-sidebar-slot::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 1px;
+    background: linear-gradient(180deg, transparent, var(--ck-primary) 12%, var(--ck-border) 50%, var(--ck-primary) 88%, transparent);
+    opacity: 0.55; pointer-events: none; z-index: 40;
+  }
+  /* 右缘柔光高光 */
+  #lingya-sidebar-slot::before {
+    content: ""; position: absolute; top: 0; right: -12px; bottom: 0; width: 12px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.22), transparent);
+    pointer-events: none; z-index: 39;
+  }
+  #lingya-sidebar-slot.collapsed {
+    width: var(--sh-ab-w);
+    box-shadow: 4px 0 20px rgba(0,0,0,0.45), 1px 0 0 rgba(45,212,191,0.10);
+  }
+  #lingya-sidebar-slot.open { width: 320px; box-shadow: 6px 0 28px rgba(0,0,0,0.5); }
   #lingya-sidebar-slot.dragging { transition: none; }
 
   /* ===== 活动栏 ===== */
   #lingya-activitybar {
-    width: var(--sh-ab-w); flex-shrink: 0; display: flex; flex-direction: column;
+    width: var(--sh-ab-w); min-width: var(--sh-ab-w); flex-shrink: 0; display: flex; flex-direction: column;
     align-items: center; padding: 12px 0; gap: 2px; background: var(--ck-bg-sub);
-    border-right: 1px solid var(--ck-border);
+    position: relative;
+  }
+  /* 活动栏右侧分隔线（明显，与面板隔离） */
+  #lingya-activitybar {
+    border-right: 1px solid rgba(120, 130, 150, 0.35);
+  }
+  html.lingya-theme-light #lingya-activitybar {
+    border-right: 1px solid rgba(0, 0, 0, 0.14);
+  }
+  /* 活动栏右侧投影（增强分离感） */
+  #lingya-activitybar::after {
+    content: ""; position: absolute; top: 0; right: -5px; bottom: 0; width: 5px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.14), transparent);
+    pointer-events: none; z-index: 1;
   }
   .sh-ab-item {
-    width: 36px; height: 36px; border: none; border-radius: 8px;
-    background: transparent; cursor: pointer; display: flex; align-items: center;
-    justify-content: center; font-size: 17px; position: relative; transition: background 0.18s;
+    min-width: 50px; width: auto; padding: 6px 4px; border: none; border-radius: 8px;
+    background: transparent; cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1px; font-size: 16px; line-height: 1; position: relative;
+    transition: background 0.18s; box-sizing: border-box;
   }
+  .sh-ab-ico { height: 20px; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
+  .sh-ab-label { font-size: 9px; line-height: 1; color: var(--ck-text-dim); white-space: nowrap; }
+  .sh-ab-item.active .sh-ab-label { color: var(--ck-primary); }
+  .sh-ab-item svg { width: 18px; height: 18px; }
   .sh-ab-item:hover { background: var(--ck-surface-hover); }
   .sh-ab-item.active { background: var(--ck-primary-soft); }
   .sh-ab-item.active::before {
@@ -181,17 +214,78 @@
   .ck-prompt-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
   .ck-prompt-btn.primary { background: var(--ck-primary); border-color: var(--ck-primary); color: #fff; }
   .ck-prompt-btn.primary:hover { opacity: 0.9; }
+
+  /* ===== 多视图（v0.6.36）===== */
+  .sh-view { display: none; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+  .sh-view.sh-view-active { display: flex; }
+  .sh-view-loading { padding: 20px; text-align: center; color: var(--ck-text-dim); font-size: 12px; }
+  .sh-panel-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 6px; flex-shrink: 0; }
+  .sh-panel-title { flex: 1; font-size: 12px; font-weight: 700; color: var(--ck-title); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sh-panel-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .sh-card { background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 10px; padding: 10px; font-size: 12px; }
+  .sh-btn { padding: 6px 12px; border: 1px solid var(--ck-border); background: var(--ck-surface); color: var(--ck-text); border-radius: 7px; font-size: 12px; cursor: pointer; }
+  .sh-btn:hover { background: var(--ck-surface-hover); }
+  .sh-btn.primary { background: var(--ck-primary); border-color: var(--ck-primary); color: #fff; }
+  .sh-list-item { padding: 8px; border: 1px solid var(--ck-border); border-radius: 8px; background: var(--ck-surface); margin-bottom: 6px; box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
+  .sh-empty { color: var(--ck-text-dim); font-size: 12px; text-align: center; padding: 16px; }
+  /* ===== 活动栏网格 + 拖拽（v0.6.37）===== */
+  .sh-ab-grid { display: grid; grid-template-columns: repeat(1, 52px); gap: 2px; padding: 4px; width: 100%; box-sizing: border-box; justify-content: center; }
+  .sh-ab-grid[data-cols="2"] { grid-template-columns: repeat(2, 52px); }
+  .sh-ab-grid[data-cols="3"] { grid-template-columns: repeat(3, 52px); }
+  .sh-ab-item[draggable="true"] { cursor: grab; }
+  .sh-ab-item.sh-ab-dragging { opacity: 0.4; pointer-events: none; }
+  .sh-ab-item.sh-ab-over { outline: 2px dashed var(--ck-primary); outline-offset: -2px; }
+  .sh-ab-grip { font-size: 9px; color: var(--ck-text-dim); margin-top: 1px; line-height: 1; }
+  .sh-cols-btn.active { background: var(--ck-primary-soft); color: var(--ck-primary); font-weight: 700; }
+  /* 侧边栏设置弹窗 */
+  .sh-ab-popup { position: fixed; left: calc(var(--sh-ab-w, 60px) + 10px); bottom: 56px; z-index: 2147483647; width: 200px; background: var(--ck-bg); border: 1px solid var(--ck-border); border-radius: 10px; padding: 12px; box-shadow: 0 12px 36px rgba(0,0,0,0.5); }
+  .sh-ab-popup-hidden { display: none; }
+  .sh-pop-title { font-size: 12px; font-weight: 700; color: var(--ck-title); margin-bottom: 10px; }
+  .sh-pop-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .sh-pop-label { font-size: 11px; color: var(--ck-text-dim); }
+  .sh-pop-seg { display: flex; gap: 4px; }
+  .sh-pop-seg .sh-cols-btn { flex: 1; padding: 6px 4px; border: 1px solid var(--ck-border); background: var(--ck-surface); color: var(--ck-text); border-radius: 7px; font-size: 11.5px; cursor: pointer; transition: all .15s; }
+  .sh-pop-seg .sh-cols-btn:hover { background: var(--ck-surface-hover); }
+  .sh-pop-seg .sh-cols-btn.active { background: var(--ck-primary); border-color: var(--ck-primary); color: #fff; font-weight: 700; }
+  .sh-pop-hint { font-size: 10px; color: var(--ck-text-dim); margin-top: 4px; }
 </style>
 </head>
 <body>
   <div id="lingya-sidebar-slot" class="collapsed">
     <div id="lingya-activitybar">
-      <button class="sh-ab-item active" data-tab="files" title="项目文件">&#128193;</button>
+      <div id="sh-ab-grid" class="sh-ab-grid" data-cols="1">
+      <button class="sh-ab-item active" data-view="files" title="项目文件"><span class="sh-ab-ico">&#128193;</span><span class="sh-ab-label">文件</span></button>
+      <button class="sh-ab-item" data-view="plan" title="任务计划"><span class="sh-ab-ico">&#128203;</span><span class="sh-ab-label">计划</span></button>
+      <button class="sh-ab-item" data-view="memory" title="长期记忆"><span class="sh-ab-ico">&#129504;</span><span class="sh-ab-label">记忆</span></button>
+      <button class="sh-ab-item" data-view="skill" title="技能库"><span class="sh-ab-ico">&#9889;</span><span class="sh-ab-label">技能</span></button>
+      <button class="sh-ab-item" data-view="security" title="安全增强"><span class="sh-ab-ico">&#128737;</span><span class="sh-ab-label">安全</span></button>
+      <button class="sh-ab-item" data-view="schedule" title="定时任务"><span class="sh-ab-ico">&#9200;</span><span class="sh-ab-label">定时</span></button>
+      <button class="sh-ab-item" data-view="feishu" title="飞书同步"><span class="sh-ab-ico">&#128241;</span><span class="sh-ab-label">飞书</span></button>
+      <button class="sh-ab-item" data-view="sessions" title="会话列表"><span class="sh-ab-ico">&#128172;</span><span class="sh-ab-label">会话</span></button>
+      <button class="sh-ab-item" data-view="log" title="执行日志"><span class="sh-ab-ico">&#128220;</span><span class="sh-ab-label">日志</span></button>
+      <button class="sh-ab-item" data-view="mcp" title="MCP 工具"><span class="sh-ab-ico">&#128268;</span><span class="sh-ab-label">MCP</span></button>
+      <button class="sh-ab-item" data-view="windows" title="窗口管理"><span class="sh-ab-ico">&#128451;</span><span class="sh-ab-label">窗口</span></button>
+      <button class="sh-ab-item" data-view="settings" title="设置"><span class="sh-ab-ico">&#9881;</span><span class="sh-ab-label">设置</span></button>
+      </div>
       <div class="sh-ab-spacer"></div>
+      <button class="sh-ab-item" id="sh-ab-settings" title="侧边栏设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       <button class="sh-ab-item" id="sh-ab-collapse" title="收起/展开">&#171;</button>
+    </div>
+    <div id="sh-ab-popup" class="sh-ab-popup sh-ab-popup-hidden">
+      <div class="sh-pop-title">侧边栏设置</div>
+      <div class="sh-pop-row">
+        <span class="sh-pop-label">图标列数</span>
+        <div class="sh-pop-seg">
+          <button class="sh-cols-btn active" data-n="1">单列</button>
+          <button class="sh-cols-btn" data-n="2">双列</button>
+          <button class="sh-cols-btn" data-n="3">三列</button>
+        </div>
+      </div>
+      <div class="sh-pop-hint">拖动图标可自定义排序</div>
     </div>
     <div id="lingya-sidebar-panel">
       <div id="lingya-sidebar-content" style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;">
+        <div class="sh-view sh-view-active" data-view="files">
         <div class="ck-actions">
           <span class="ck-set-group-title" style="flex:1;" id="ft-root">项目文件</span>
           <button class="ck-icon-btn" id="ft-choose-dir" title="选择项目目录">
@@ -237,6 +331,18 @@
             </div>
           </div>
         </div>
+        </div>
+        <div class="sh-view" data-view="plan"></div>
+        <div class="sh-view" data-view="memory"></div>
+        <div class="sh-view" data-view="skill"></div>
+        <div class="sh-view" data-view="security"></div>
+        <div class="sh-view" data-view="schedule"></div>
+        <div class="sh-view" data-view="feishu"></div>
+        <div class="sh-view" data-view="settings"></div>
+        <div class="sh-view" data-view="sessions"></div>
+        <div class="sh-view" data-view="log"></div>
+        <div class="sh-view" data-view="mcp"></div>
+        <div class="sh-view" data-view="windows"></div>
       </div>
     </div>
     <div id="lingya-sidebar-resizer" title="拖动调整宽度"></div>
