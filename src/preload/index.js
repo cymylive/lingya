@@ -14,6 +14,7 @@ const projectDir = require('./overlay/project-dir');
 const bindEvents = require('./overlay/events');
 const chatInput = require('./dom/chat-input');
 const { getProviderByUrl } = require('../providers');
+const toolNames = require('./tool-names');
 
 // ========== 平台识别 ==========
 // 在 init 之前先判断当前平台，决定走"网络拦截"还是"DOM 抓取"模式
@@ -42,6 +43,10 @@ if (useIntercept) {
 
 // 注册主进程消息监听（与原 preload.js 顶层注册时机一致）
 chatInput.registerIpcListeners();
+
+// 工具名集合：拉取一次 + 监听主进程广播（插件启用/禁用后刷新白名单）
+toolNames.refreshToolNames().catch(() => {});
+toolNames.setupToolNamesListener();
 
 // ========== 初始化 ==========
 

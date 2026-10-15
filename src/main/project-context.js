@@ -211,6 +211,35 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     console.error('[MCP] 初始化时连接失败:', err.message);
   }
 
+  // 插件能力注入块：列出已装插件，引导 AI 主动使用
+  let pluginSection = '';
+  try {
+    const lines = ['## 插件能力', '', '本应用支持插件扩展（本地插件 + DSH 外部插件），插件会为 AI 增加工具。', ''];
+    const localPlugins = (() => { try { return require('./plugin-host').listPlugins(); } catch (_) { return []; } })();
+    const dshPlugins = (() => { try { return require('./dsh').listPlugins(); } catch (_) { return []; } })();
+    const usable = [...localPlugins.filter((p) => p.enabled && p.loaded), ...dshPlugins.filter((p) => p.enabled && p.loaded)];
+    if (usable.length === 0) {
+      lines.push('当前**没有**已启用的插件。');
+      lines.push('');
+      lines.push('插件工具会像内置工具一样出现在你的工具清单里，可直接调用。');
+      lines.push('不确定有哪些时，调用 `listPlugins()` 查询当前已安装的插件及其工具。');
+      lines.push('用户想装插件时，可提示其在左侧「插件」面板操作（本地插件 / DSH 插件市场）。');
+    } else {
+      lines.push('当前已启用 **' + usable.length + '** 个插件，它们贡献的工具已在你的工具清单中：');
+      for (const p of usable) {
+        const tools = (p.toolNames || []).join(', ') || '（无工具）';
+        lines.push('- **' + (p.name || p.id) + '** — 提供工具：' + tools);
+      }
+      lines.push('');
+      lines.push('**主动使用**：当用户任务能用某个插件工具更好完成时，直接调用该工具，不要绕路。');
+      lines.push('不确定已装哪些插件时，调用 `listPlugins()` 查询。');
+      lines.push('用户想装更多插件时，可提示其在左侧「插件」面板操作（本地插件 / DSH 插件市场）。');
+    }
+    pluginSection = lines.join('\n');
+  } catch (err) {
+    console.error('[LingYa] 构建插件注入块失败:', err.message);
+  }
+
   // MCP 章节：按需查看模式，不在提示词中全量注入工具列表
   const mcpSection = [
     '## MCP 能力',
@@ -307,6 +336,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{SKILL_SECTION}}': skillSection,
     '{{CTF_SECTION}}': ctfSection,
     '{{AGENT_SECTION}}': agent.section || '',
+    '{{PLUGIN_SECTION}}': pluginSection,
   };
   let combined = templateContent;
   for (const [key, value] of Object.entries(placeholders)) {

@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.40",
+  "version": "0.6.51",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -114,11 +114,13 @@
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.40"
+      "unpackDirName": "LingYa-runtime-0.6.51"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",
-      "**/node_modules/@vscode/ripgrep-win32-x64/**"
+      "**/node_modules/@vscode/ripgrep-win32-x64/**",
+      "**/node_modules/esbuild/**",
+      "**/node_modules/@esbuild/**"
     ],
     "extraResources": [
       {
@@ -132,6 +134,13 @@
       {
         "from": "assets/icon.png",
         "to": "assets/icon.png"
+      },
+      {
+        "from": "plugins",
+        "to": "plugins",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "files": [
@@ -153,6 +162,7 @@
     "@vscode/ripgrep": "^1.18.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
+    "esbuild": "^0.28.2",
     "mysql2": "^3.24.2",
     "turndown": "^7.2.4"
   },

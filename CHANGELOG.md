@@ -1,5 +1,195 @@
 # Changelog
 
+## [0.6.51] - 2026-10-16
+
+### Added
+- **DSH 兼容层扩充 ctx.skills 服务 + agent session.header**：让 skill 类插件也能执行
+  - `src/main/dsh/skills-service.js`：ctx.skills（list/get/snapshot，复用 LingYa skill-store）
+  - Agent 加 `session.header.cwd`（dsh-tool-skill 依赖）
+  - stub 命名导出扩充（isSkillName / assertNever / createUserMessage 等）
+
+### Verified
+- **3 个已装 DSH 插件全部可执行**：
+  - `dsh-tool-goal`：get_goal / create_goal / update_goal ✅
+  - `dsh-tool-web`：web_search / web_fetch ✅
+  - `dsh-tool-skill`：skill ✅（运行时接口全通，返回"技能不存在"属正常业务逻辑）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.50] - 2026-10-15
+
+### Fixed
+- **DSH 插件市场安装后列表被清空**（关键）：市场里点「安装」后，市场列表整个消失，需手动刷新才重新出现
+  - 根因：安装触发 `lingya-tools-changed` 广播 → `mountPluginViews()` 检测到"当前在插件视图"就强制重渲染整个面板 → 市场状态（函数内局部变量 marketItems/marketCat）被重置 → 市场列表清空
+  - 修复：市场状态提到**模块级**（dshMarketItems/dshMarketCat），面板重渲染时用缓存**立即重绘**市场列表（不再清空）
+  - 附带：市场安装后用返回值里的 plugins 直接刷新已装列表（不再二次异步拉取，避免竞态）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.49] - 2026-10-15
+
+### Added
+- **最小 DSH Agent 运行时**：让依赖 agent 生命周期的 DSH 插件（goal 等）**真正能执行**
+  - `src/main/dsh/agent-runtime.js`：Agent + AgentRegistry + SessionLog（事件流）
+    - `agent.session.events`（turn/start、user/message 等事件）
+    - `ctx.agents.get(id)` / `currentInitiator()` / `roots()`
+    - `openTurn()` / `closeTurn()`（工具执行时开一个 model turn）
+  - `src/main/dsh/goals-service.js`：ctx.goals（get/create/edit/pause/resume/complete/block）
+  - loader 在工具执行时注入 `exec.agent`（含真实 agent + turn）
+
+### Verified
+- **`@deepseek-ai/dsh-tool-goal` 真正可执行**：
+  - `get_goal` → `{"goal":null}` ✅
+  - `create_goal` → 创建目标成功 ✅
+  - `update_goal` → 更新成功（revision++）✅
+- 修复：loader 的 agentRuntime 未正确传给 wrapAsLingYaTool
+
+### Notes
+- 全量测试 361/361
+- DSH 兼容层能力大幅提升：从"无状态插件"（web/todo）扩展到"agent 生命周期插件"（goal）
+
+## [0.6.48] - 2026-10-15
+
+### Fixed
+- **打包版 DSH 插件加载失败（esbuild 二进制路径）**：关键修复
+  - 根因：打包后 esbuild 二进制在 `app.asar.unpacked`（真实存在），但 esbuild 去 `app.asar` 内找 → **Electron 不重定向 spawn 的二进制路径** → ENOENT → 所有 DSH 插件加载失败
+  - 修复：loader 在打包环境（路径含 app.asar）下自动探测 unpacked 里的 esbuild 二进制，设 `ESBUILD_BINARY_PATH`
+  - 多候选路径（require.resolve / __dirname / resourcesPath 上溯）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.47] - 2026-10-15
+
+### Fixed
+- **DSH 工具与内置重名 → 改为覆盖（而非跳过）**：装了 DSH 插件就该用它
+  - 覆盖时记录被覆盖的内置工具，**卸载插件时自动恢复**
+  - 修复：`web_search`/`web_fetch`/`todo_write` 被 DSH 插件覆盖后真正生效
+
+### Verified
+- **DSH 插件真正可用（完整验证）**：
+  - `@deepseek-ai/dsh-tool-web` → `web_fetch` 抓取 example.com ✅、`web_search` 真实搜索 ✅
+  - `@deepseek-ai/dsh-tool-todo` → `todo_write` 更新列表 ✅
+
+### Notes
+- 全量测试 361/361
+- 已知：`dsh-tool-todo` 的 Config（allowParallelInProgress 必填）解析告警，但不影响工具注册执行
+
+## [0.6.46] - 2026-10-15
+
+### Added
+- **DSH 兼容层 `ctx.web` 服务**：实现 `ctx.web.search` / `ctx.web.fetch`（复用 LingYa 的抓取 + Exa/Bing 搜索能力）
+  - 让依赖 `ctx.web` 的 DSH 插件（如 `@deepseek-ai/dsh-tool-web`）**真正能执行**，不再返回 stub 空数据
+
+### Verified
+- **`@deepseek-ai/dsh-tool-web` 真正可用**：
+  - `web_search` → 真实搜索结果（Exa 结构化）
+  - `web_fetch` → 真实网页内容（example.com 抓取成功）
+- 这是首个**执行也跑通**的 DSH 官方插件
+
+### Fixed
+- **DSH 工具与内置工具重名**：改为跳过重名（内置优先），避免卸载 DSH 插件时误删内置工具
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.45] - 2026-10-15
+
+### Fixed
+- **DSH 插件加载 esbuild 互操作修复**：命名导入（`import { HarnessError } from '@deepseek-ai/dsh-llm'`）拿到 undefined
+  - 根因：esbuild 在 `platform=node` 下用 `__toESM`/`__copyProps` 只遍历模块的 **ownKeys**；stub 模块用函数做 Proxy target 时无法提供合规的 `ownKeys`/`getOwnPropertyDescriptor`（函数 target 有 invariant 约束）
+  - 修复：stub 模块级 Proxy 改用**普通对象**做 target + 提供 `ownKeys` + `getOwnPropertyDescriptor` trap（覆盖 HarnessError/Context/Service/defineTool 等常见命名导出）
+  - 效果：`HarnessError` 等命名导出可正常取到，插件能跑到业务逻辑层
+
+### Known limitations
+- DSH 官方工具（goal/todo/subagent 等）依赖 DSH 的 **agent 运行时**（session event log + active turn + driver），LingYa 无此运行时 → **能加载、能注册、AI 可见，但执行时受限于运行时状态**。这是兼容层的本质边界，除非移植整个 dsh-agent 运行时。
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.44] - 2026-10-15
+
+### Fixed
+- **打包版 DSH 插件安装失败（空壳）根因修复**：开发模式正常、打包后安装不了
+  - **根因 1**：双击 exe 运行时 **PATH 里没有 node/npm**（开发时 `npm start` 才有）→ npm.cmd 找不到 → 只写了空壳 package.json
+    - 修复：installer 主动探测 node 目录（环境变量 NODE_ROOT/NODE_HOME + PATH + 常见位置 D:\\NodeJS 等），把 node 目录注入子进程 PATH
+  - **根因 2**：`asarUnpack` 没解包 esbuild → 打包后 esbuild 二进制无法 spawn
+    - 修复：asarUnpack 加 `**/node_modules/esbuild/**` + `**/node_modules/@esbuild/**`
+  - **加固**：安装后校验 node_modules 非空；npm 未找到时给出明确指引；UI 加持久安装状态栏（不再只靠短暂 toast）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.43] - 2026-10-15
+
+### Fixed
+- **DSH 插件"未加载"根因修复**：npm 安装失败（peer 依赖 404）+ schemastery shim 不完整
+  - **installer 加 `--legacy-peer-deps`**：DSH 插件的 peer 依赖（`@deepseek-ai/dsh-*`）多为 workspace 内部包，未发布到 npm → 严格解析 peer 依赖会 404
+  - **installer 改用 ComSpec /c** 执行 npm.cmd（避免 shell:true 弃用警告与注入风险）
+  - **schemastery shim 重写**：实现真能解析默认值的极简 schemastery（object/number/string/boolean/array/union + default/required/step/min/max 等链式方法 + natural/integer/date 等类型别名）
+  - **esbuild CJS 互操作修复**：platform=node 下 __toESM 总是令 default=整个模块 → 把 z 的方法展开到 module.exports 顶层，兼容 `import z from` 默认导入
+  - **loader 用插件 Config 解析默认值**：apply 前调 `Config(config)` 合并默认
+
+### Verified
+- **官方插件 `@deepseek-ai/dsh-tool-goal` 加载成功**（注册 get_goal / create_goal / update_goal）
+- **官方插件 `@deepseek-ai/dsh-tool-web` 加载成功**（注册 web_search / web_fetch）
+- `@deepseek-ai/dsh-tool-subagent` 仍失败：依赖未发布的框架内部运行时包 `@deepseek-ai/dsh-subagent`，stub 无法提供其真实函数（本质限制）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.42] - 2026-10-15
+
+### Fixed
+- **插件面板看不到 DSH 市场**：`renderPluginsView` 的 `draw()` 在"本地插件为空"时提前 `return`，导致后面的 DSH 外部插件区块 + 市场 HTML 永远不渲染
+  - 修复：空插件提示改为拼进 `html` 变量，不提前返回
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.41] - 2026-10-15
+
+### Added
+- **插件系统（PluginHost）**：LingYa 支持像装 App 一样扩展能力 —— 放文件夹即装、删除即卸、零残留
+  - **工具插件**：插件可通过 `ctx.registerTool()` 贡献工具，AI 工具清单自动包含（白名单动态化）
+  - **IPC 插件**：`ctx.registerIpc(channel, handler)` 注册自有 IPC 通道，渲染进程用 `pluginInvoke()` 调用
+  - **视图插件**：`ctx.registerView({id,icon,label,render})` 贡献侧栏面板；视图统一收进「插件」入口，不单独占活动栏图标
+  - **preload 插件**：`ctx.registerPreload(script)` 向 AI 网页注入脚本
+  - **依赖声明**：manifest `depends` 支持插件间依赖，拓扑排序加载、检测循环依赖
+  - **热重载**：监听插件目录，改代码自动 reload（300ms 防抖），无需重启
+  - **导入/导出**：插件打包成 `.lingya-plugin.zip` 分享；零依赖 ZIP 读写（store/deflate + CRC32 + 防路径穿越）
+  - **可逆注册**：所有注册返回 disposer，卸载时按逆序回滚，实现零残留
+  - 示例插件：`plugins/hello`（工具）、`plugins/demo-panel`（面板+IPC+依赖）
+  - 侧栏「🧩 插件」面板：启用开关 / 重载 / 导出 / 删除 / 导入插件包 / 打开目录 / 刷新
+  - 随应用播种内置插件到 `<userData>/plugins/`（不覆盖用户已有）
+- **插件标准统一（DSH 超集）**：本地插件与 DSH 插件用同一套写法（`export function apply(ctx)` + `ctx.tools.register`），经 esbuild 打包（支持 ESM + `@deepseek-ai/*` import 劫持）
+- **DSH 兼容层**：可安装/运行 DeepSeek Harness 生态的 npm 插件（"鸿蒙兼容 Android"思路——自己实现同名 API，不依赖 DSH 代码）
+  - `src/main/dsh/`：shim（defineTool 转换 + 万能 stub）、runtime（内存会话+投影）、loader（esbuild 劫持）、paths/state/installer
+  - ctx 提供 DSH 标准 API：`ctx.tools.register` / `ctx.settings` / `ctx.sessions` / `ctx.on` 等
+- **DSH 插件市场**：从 npm registry 分页拉取**全部 357 个** `@deepseek-ai/dsh*` 包
+  - 自动分类（工具 27 / 组合包 7 / 界面 69 / 实验 36 / 服务 218）+ 关键词搜索 + 一键安装
+  - 中文描述映射表（覆盖 40+ 官方插件，列表优先显示中文）
+- **插件主动发现**：`listPlugins()` 工具（返回可直接调用的工具签名）+ 系统提示词「## 插件能力」注入块，让 AI 主动发现并使用插件
+- **AI 自动命名对话**：`nameConversation(title)` 工具，AI 在对话开始时自动命名，会话列表实时刷新（对齐 cuckoo-code）
+- **服务端中断自动续跑修复**：服务端"已停止"/流断开时自动续跑，不再"断了就死"
+  - 根因：`if (!raw) return` 挡在中断检查之前 → "一开始就断"直接卡死
+  - 修复：中断分支提前 + 新增无条件兜底续跑 `continueOnInterruptFallback`
+
+### Fixed
+- **服务端已停止导致任务卡死**：中断（`interrupted`）时优先处理，即使回复文本为空也走续跑（三层兜底：自动续写 → 计划续跑 → 无条件兜底）
+- **插件配置不持久化**：`ctx.settings.set` 现落盘到插件记录（重启保留）
+- **热重载未捕获 promise**：非递归 watch 分支的 reload 加 catch，避免 unhandledRejection
+- **死代码清理**：移除废弃的 `bundlePluginSync`（esbuild.buildSync 不支持 plugins）
+
+### Notes
+- 借鉴 DeepSeek Harness 的 Cordis 插件思想（可逆副作用、服务上下文、依赖注入），未引入其框架
+- 新增依赖 `esbuild`（DSH 兼容层的模块劫持）
+- 打包 extraResources 新增 `plugins/`，内置插件随包分发
+- 全量测试 361/361 通过
+- 全项目审计：语法 0 错误、IPC 107↔107 对齐、preload API 三层对齐、事件对齐
+
 ## [0.6.40] - 2026-10-14
 
 ### Fixed

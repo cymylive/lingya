@@ -85,6 +85,7 @@ const api = {
   // 会话 / 窗口 / Agent / 项目
   listSessions: () => ipcRenderer.invoke('list-sessions'),
   navigateSession: (sessionId) => ipcRenderer.invoke('navigate-session', { sessionId }),
+  setSessionTitle: (title) => ipcRenderer.invoke('set-session-title', { title }),
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   openProfileWindow: (profileId) => ipcRenderer.invoke('open-profile-window', { profileId }),
   createProfileWindow: () => ipcRenderer.invoke('create-profile-window'),
@@ -93,6 +94,26 @@ const api = {
   setAgent: (agentId) => ipcRenderer.invoke('agent-set', { agentId }),
   initProject: () => ipcRenderer.invoke('init-project', { skipPrompt: true }),
   getSecurityCtfPrompt: () => ipcRenderer.invoke('security-get-ctf-prompt'),
+  // ===== 插件系统 =====
+  pluginList: () => ipcRenderer.invoke('plugin-list'),
+  pluginSetEnabled: (id, enabled) => ipcRenderer.invoke('plugin-set-enabled', { id, enabled }),
+  pluginReload: (id) => ipcRenderer.invoke('plugin-reload', { id }),
+  pluginOpenDir: () => ipcRenderer.invoke('plugin-open-dir'),
+  pluginImport: () => ipcRenderer.invoke('plugin-import'),
+  pluginExport: (id) => ipcRenderer.invoke('plugin-export', { id }),
+  pluginDelete: (id) => ipcRenderer.invoke('plugin-delete', { id }),
+  pluginViews: () => ipcRenderer.invoke('plugin-views'),
+  pluginInvoke: (pluginId, channel, args) => ipcRenderer.invoke('plugin-invoke', { pluginId, channel, args }),
+  // DSH 兼容层（外部 npm 插件）
+  dshList: () => ipcRenderer.invoke('dsh-list'),
+  dshInstall: (spec) => ipcRenderer.invoke('dsh-install', { spec }),
+  dshUninstall: (id) => ipcRenderer.invoke('dsh-uninstall', { id }),
+  dshSetEnabled: (id, enabled) => ipcRenderer.invoke('dsh-set-enabled', { id, enabled }),
+  dshReload: (id) => ipcRenderer.invoke('dsh-reload', { id }),
+  dshOpenDir: () => ipcRenderer.invoke('dsh-open-dir'),
+  dshMarket: (force) => ipcRenderer.invoke('dsh-market', { force: !!force }),
+  onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
+  onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
 };
 
 try {

@@ -68,6 +68,14 @@ const PLAN_CONTINUE_WINDOW_MS = 180000;
 let unplannedContinueCount = 0;
 let lastUnplannedContinueAt = 0;
 const UNPLANNED_CONTINUE_WINDOW_MS = 180000;
+
+// 中断兜底续跑：服务端"已停止"/流断开（interrupted=true）时，若前面两条路径都没处理，
+// 无条件续跑一次 —— 中断本身说明任务没完成。避免"断了就死"。
+// 独立计数 + 上限，防止无限循环。
+let interruptContinueCount = 0;
+let lastInterruptContinueAt = 0;
+const INTERRUPT_CONTINUE_WINDOW_MS = 180000;
+const INTERRUPT_CONTINUE_MAX_DEFAULT = 5;
 // AI 明确表示任务已完成时，不再兜底催促（避免催到死）
 const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|所有步骤(已)?完成|没有(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
 
@@ -144,7 +152,7 @@ async function handleInterruptedIfNeeded(raw) {
   // 用户主动停止：不自动继续
   if (state.stopped) return false;
 
-  // 空文本说明还没开始输出就断了，自动继续无意义
+  // 空文本：本函数不做处理（交给调用方的中断兜底 continueOnInterruptFallback）
   if (!raw || raw.trim().length === 0) return false;
 
   // 时间窗口：距上次中断超过窗口视为新一轮
@@ -310,6 +318,35 @@ async function continueIfPlanUnfinished(raw) {
 }
 
 /**
+ * 中断兜底续跑：服务端"已停止"/流断开时，前两条路径都没处理，无条件催一次。
+ * 理由：中断本身说明任务没做完 —— 不该"断了就死"。
+ * 有独立上限（默认 5 次）防无限循环。
+ * @returns {Promise<boolean>} 是否已发出催促
+ */
+async function continueOnInterruptFallback() {
+  if (state.stopped) return false;
+  let cfg = null;
+  try { cfg = await window.electronAPI.getSecurityConfig(); } catch (_) { /* 用默认 */ }
+  const max = (cfg && Number(cfg.autoContinueMax) > 0) ? Math.floor(Number(cfg.autoContinueMax)) : INTERRUPT_CONTINUE_MAX_DEFAULT;
+
+  const now = Date.now();
+  if (now - lastInterruptContinueAt > INTERRUPT_CONTINUE_WINDOW_MS) interruptContinueCount = 0;
+  lastInterruptContinueAt = now;
+  if (interruptContinueCount >= max) {
+    console.log('[LingYa][拦截] 中断兜底续跑已达上限 ' + max + '，停止');
+    return false;
+  }
+  interruptContinueCount++;
+  console.log('[LingYa][拦截] 服务端中断兜底续跑第 ' + interruptContinueCount + ' 次');
+  sendMessageToChat(
+    '【自动续跑】上一条回复被服务端中断（已停止），任务尚未完成。请立即从中断处继续执行下一步（不要重复已完成的步骤、不要只描述计划），' +
+    '完成后用 todoWrite 更新状态。若任务确已完成，请用一句话明确说明"任务已完成"。',
+    '中断续跑'
+  );
+  return true;
+}
+
+/**
  * 处理一条已完成的 AI 回复文本
  * @param {string} text 完整回复文本（Markdown 原文）
  * @param {boolean} [force] 为 true 时跳过去重（手动解析重新执行同一条时使用）
@@ -318,30 +355,34 @@ async function processInterceptedResponse(text, force, interrupted) {
   state.touch(); // 任何 AI 回复到达 = 有活动
   state.awaitingUserInput = false; // 新回复到达 → 说明用户已交互，清除等待标志
   const raw = (text || '').trim();
-  if (!raw) return;
   // 用户已点停止：丢弃本次回复，不执行任何工具、不回传结果
   if (state.stopped) {
     console.log('[LingYa][拦截] 已停止，丢弃本次回复');
     return;
   }
+  // 中断（服务端已停止/流断开）优先处理：即使 raw 为空也要走兜底续跑，
+  // 否则"一开始就断"的场景会直接 return → 任务卡死。
+  if (interrupted) {
+    console.log('[LingYa][拦截] 检测到生成中断（服务端已停止/流断开），raw 长度=' + raw.length);
+    if (raw && !force && raw === lastProcessedText) return;
+    if (raw) lastProcessedText = raw;
+    const handled = await handleInterruptedIfNeeded(raw);
+    if (handled) return;
+    console.log('[LingYa][拦截] 生成中断且未自动续写，回退到计划续跑');
+    if (await continueIfPlanUnfinished(raw)) return;
+    if (await continueOnInterruptFallback()) return;
+    console.log('[LingYa][拦截] 生成中断内容无法续跑，丢弃');
+    return;
+  }
+  if (!raw) return;
   if (!force && raw === lastProcessedText) return;
   lastProcessedText = raw;
 
   console.log('[LingYa][拦截] 收到完整回复，长度=' + raw.length);
 
-  // 生成中断检测：优先于工具/文本处理（中断内容可能不完整，不执行）
-  if (interrupted) {
-    const handled = await handleInterruptedIfNeeded(raw);
-    if (handled) return;
-    // 兜底：即使未开启「自动续写」（或已达其上限），只要本会话有未完成计划、
-    // 或执行过工具（任务型会话），也主动催一次 —— 否则中断内容被直接丢弃 = 循环卡死。
-    console.log('[LingYa][拦截] 生成中断且未自动续写，回退到计划续跑');
-    if (await continueIfPlanUnfinished(raw)) return;
-    console.log('[LingYa][拦截] 生成中断内容无法续跑（无计划且非任务会话），丢弃');
-    return; // 中断内容不可信，不执行其中的工具调用
-  }
   // 正常完成：清空续写计数
   autoContinueCount = 0;
+  interruptContinueCount = 0;
 
   // 0. 是否正在等待"用当前对话改写拒绝"的回复
   if (state.awaitingRefusalRewrite) {

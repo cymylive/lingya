@@ -29,6 +29,8 @@ const { MemorySaveTool, MemoryUpdateTool, MemoryDeleteTool, MemoryListTool } = r
 const { WebSearchTool } = require('./WebSearchTool');
 const { ViewImageTool } = require('./ViewImageTool');
 const { BashBackgroundTool, BashOutputTool, BashKillTool } = require('./BackgroundTaskTool');
+const { NameConversationTool } = require('./NameConversationTool');
+const { ListPluginsTool } = require('./ListPluginsTool');
 
 // 创建全局工具注册表
 const registry = new ToolRegistry();
@@ -65,6 +67,8 @@ registry.register(new ViewImageTool());
 registry.register(new BashBackgroundTool());
 registry.register(new BashOutputTool());
 registry.register(new BashKillTool());
+registry.register(new NameConversationTool());
+registry.register(new ListPluginsTool());
 
 // 导出
 module.exports = {
@@ -95,6 +99,8 @@ module.exports = {
   BashBackgroundTool,
   BashOutputTool,
   BashKillTool,
+  NameConversationTool,
+  ListPluginsTool,
   // 便捷方法
   getAllTools: () => registry,
   getToolDescriptions: () => registry.getDescriptions(),

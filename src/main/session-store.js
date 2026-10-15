@@ -35,17 +35,85 @@ function createSessionStore(profileId, storeDir, windowState) {
     }
   }
 
+  /** 兼容旧数据：把 store[id] 归一化为对象 { projectDir, title, createdAt, updatedAt } */
+  function normalizeEntry(entry) {
+    if (entry == null) return null;
+    if (typeof entry === 'string') return { projectDir: entry, title: null, createdAt: null, updatedAt: null };
+    if (typeof entry === 'object') return {
+      projectDir: entry.projectDir != null ? entry.projectDir : null,
+      title: entry.title || null,
+      createdAt: entry.createdAt || null,
+      updatedAt: entry.updatedAt || null,
+    };
+    return null;
+  }
+
   function getProjectDirBySessionId(sessionId) {
     if (!sessionId) return null;
     const store = readSessionStore();
-    return store[sessionId] || null;
+    const e = normalizeEntry(store[sessionId]);
+    return e ? e.projectDir : null;
   }
 
   function saveSessionDirMapping(sessionId, projectDir) {
     if (!sessionId) return;
     const store = readSessionStore();
-    store[sessionId] = projectDir;
+    const old = normalizeEntry(store[sessionId]);
+    const now = new Date().toISOString();
+    if (old) {
+      old.projectDir = projectDir;
+      if (old.createdAt != null) old.updatedAt = now;
+      store[sessionId] = old;
+    } else {
+      store[sessionId] = { projectDir, title: null, createdAt: now, updatedAt: now };
+    }
     writeSessionStore(store);
+  }
+
+  /** 通知渲染进程会话标题已更新（会话列表实时刷新） */
+  function notifyTitleUpdated(sessionId, title) {
+    try {
+      const win = windowState && windowState.getMainWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('session-title-updated', { sessionId, title });
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  /** 更新会话标题（AI 命名对话）。条目不存在时新建。 */
+  function updateSessionTitle(sessionId, title) {
+    if (!sessionId || !title) return false;
+    const t = String(title).trim();
+    if (!t) return false;
+    const store = readSessionStore();
+    const old = normalizeEntry(store[sessionId]);
+    const now = new Date().toISOString();
+    if (old) {
+      old.title = t;
+      if (old.createdAt != null) old.updatedAt = now;
+      store[sessionId] = old;
+    } else {
+      store[sessionId] = { projectDir: state.selectedProjectDir || null, title: t, createdAt: now, updatedAt: now };
+    }
+    writeSessionStore(store);
+    notifyTitleUpdated(sessionId, t);
+    return true;
+  }
+
+  /**
+   * 设置当前会话标题。若尚无会话 ID（新对话首条消息还没生成 URL），先暂存，
+   * 等会话 ID 出现后由 handleUrlChange 自动绑定。
+   */
+  function setSessionTitle(title) {
+    const t = String(title || '').trim();
+    if (!t) return { success: false, error: '标题为空' };
+    if (state.currentSessionId) {
+      updateSessionTitle(state.currentSessionId, t);
+      return { success: true, sessionId: state.currentSessionId };
+    }
+    state.pendingTitle = t;
+    console.log('[LingYa][' + profileId + '] 暂存对话标题，等待会话ID出现后绑定: ' + t);
+    return { success: true, pending: true };
   }
 
   function extractSessionIdFromUrl(url) {
@@ -64,6 +132,7 @@ function createSessionStore(profileId, storeDir, windowState) {
     currentSessionId: null,
     selectedProjectDir: null,
     pendingProjectDir: null,
+    pendingTitle: null,
   };
 
   function handleUrlChange(url, targetWindow) {
@@ -83,6 +152,13 @@ function createSessionStore(profileId, storeDir, windowState) {
         }
         console.log('[LingYa][' + profileId + '] 暂存目录已绑定');
         return;
+      }
+
+      // 暂存标题（AI 命名在会话 ID 出现前调用）→ 绑定
+      if (state.pendingTitle) {
+        updateSessionTitle(sessionId, state.pendingTitle);
+        console.log('[LingYa][' + profileId + '] 暂存标题已绑定: ' + state.pendingTitle);
+        state.pendingTitle = null;
       }
 
       const restoredDir = getProjectDirBySessionId(sessionId);
@@ -120,8 +196,11 @@ function createSessionStore(profileId, storeDir, windowState) {
   return {
     readSessionStore,
     writeSessionStore,
+    normalizeEntry,
     getProjectDirBySessionId,
     saveSessionDirMapping,
+    updateSessionTitle,
+    setSessionTitle,
     extractSessionIdFromUrl,
     handleUrlChange,
     tryRestoreSessionFromUrl,

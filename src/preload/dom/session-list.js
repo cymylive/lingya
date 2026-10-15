@@ -31,12 +31,17 @@ async function renderSessions() {
       return;
     }
 
-    listContainer.innerHTML = sessions.map((sessionId) => `
-      <div class="lingya-session-item" data-session-id="${escapeHtml(sessionId)}">
-        <span class="session-id">${escapeHtml(sessionId)}</span>
+    listContainer.innerHTML = sessions.map((s) => {
+      // 兼容旧格式（纯字符串）与新格式（{ sessionId, title }）
+      const sid = typeof s === 'string' ? s : (s.sessionId || '');
+      const title = typeof s === 'object' ? (s.title || '') : '';
+      const label = title ? (escapeHtml(title) + ' (' + escapeHtml(sid) + ')') : escapeHtml(sid);
+      return `
+      <div class="lingya-session-item" data-session-id="${escapeHtml(sid)}">
+        <span class="session-id">${label}</span>
         <span class="session-action">▶ 跳转</span>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     // 绑定点击事件
     listContainer.querySelectorAll('.lingya-session-item').forEach((item) => {

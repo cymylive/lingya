@@ -348,7 +348,7 @@ function registerIpcHandlers() {
     } catch (err) { return { success: false, error: err.message }; }
   });
 
-  // 列出会话
+  // 列出会话（带标题；返回 { sessionId, title, updatedAt }）
   ipcMain.handle('list-sessions', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const store = ctx ? ctx.sessionStore : null;
@@ -356,8 +356,25 @@ function registerIpcHandlers() {
       return { success: true, sessions: [] };
     }
     const all = store.readSessionStore();
-    const sessions = Object.keys(all).filter(id => all[id] === store.state.selectedProjectDir);
+    const norm = typeof store.normalizeEntry === 'function' ? store.normalizeEntry : (e) => ({ projectDir: typeof e === 'string' ? e : (e && e.projectDir), title: e && e.title });
+    const sessions = [];
+    for (const id of Object.keys(all)) {
+      const e = norm(all[id]);
+      if (e && e.projectDir === store.state.selectedProjectDir) {
+        sessions.push({ sessionId: id, title: (e && e.title) || null, updatedAt: (e && e.updatedAt) || null });
+      }
+    }
     return { success: true, sessions };
+  });
+
+  // 设置当前会话标题（AI 命名对话走 nameConversation 工具；此通道供前端手动改名）
+  ipcMain.handle('set-session-title', async (event, { title } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.setSessionTitle !== 'function') {
+      return { success: false, error: '会话存储未就绪' };
+    }
+    return store.setSessionTitle(title);
   });
 
   // 导航到会话
@@ -925,6 +942,224 @@ function registerIpcHandlers() {
       }
       const text = await refusalRewriter.rewriteRefusal(refusalText || '', ctfPrompt);
       return { success: true, text };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ========== 插件系统 ==========
+  const pluginHost = require('./plugin-host');
+
+  // 列出所有插件（含启用/加载状态）
+  ipcMain.handle('plugin-list', async () => {
+    try {
+      return { success: true, plugins: pluginHost.listPlugins(), dir: pluginHost.getPluginsDir() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 启用/禁用插件（运行时生效，可逆注册）
+  ipcMain.handle('plugin-set-enabled', async (_event, { id, enabled } = {}) => {
+    try {
+      const res = await pluginHost.setPluginEnabled(id, !!enabled);
+      // 工具集可能变化：广播给所有渲染进程，让 preload 刷新工具名白名单
+      broadcastToolsChanged();
+      return Object.assign({ plugins: pluginHost.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 重载插件（改代码后无需重启 LingYa）
+  ipcMain.handle('plugin-reload', async (_event, { id } = {}) => {
+    try {
+      const res = await pluginHost.reloadPlugin(id);
+      broadcastToolsChanged();
+      return Object.assign({ plugins: pluginHost.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 工具集变化广播（AI 视图 + 壳窗口都要收到）
+  function broadcastToolsChanged() {
+    try {
+      for (const ctx of windowState.getAllContexts()) {
+        try {
+          const wc = ctx.win && ctx.win.webContents;
+          if (wc && !wc.isDestroyed()) wc.send('lingya-tools-changed');
+        } catch (_) {}
+        try {
+          const raw = ctx.rawWin;
+          if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-tools-changed');
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  // 打开插件目录（系统文件管理器）
+  ipcMain.handle('plugin-open-dir', async () => {
+    try {
+      const { shell } = require('electron');
+      const dir = pluginHost.getPluginsDir();
+      if (dir) await shell.openPath(dir);
+      return { success: true, dir };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ========== 工具名集合（供 preload 动态刷新白名单，含插件贡献的工具）==========
+  ipcMain.handle('tool-list-names', async () => {
+    try {
+      return { success: true, names: toolRegistry.listNames() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ========== 插件导入 / 导出 / 删除 ==========
+
+  // 导出插件为 .zip（弹保存框）
+  ipcMain.handle('plugin-export', async (event, { id } = {}) => {
+    try {
+      const res = pluginHost.exportPlugin(id);
+      if (!res.success) return res;
+      const win = windowState.getMainWindow();
+      const saveRes = await dialog.showSaveDialog(win || undefined, {
+        title: '导出插件',
+        defaultPath: res.filename,
+        filters: [{ name: 'LingYa 插件包', extensions: ['zip'] }],
+      });
+      if (saveRes.canceled || !saveRes.filePath) return { success: false, error: '已取消' };
+      require('fs').writeFileSync(saveRes.filePath, res.data);
+      return { success: true, path: saveRes.filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 从 .zip 导入插件（弹打开框）
+  ipcMain.handle('plugin-import', async () => {
+    try {
+      const win = windowState.getMainWindow();
+      const openRes = await dialog.showOpenDialog(win || undefined, {
+        title: '导入插件包',
+        properties: ['openFile'],
+        filters: [{ name: 'LingYa 插件包', extensions: ['zip'] }],
+      });
+      if (openRes.canceled || !openRes.filePaths || !openRes.filePaths.length) {
+        return { success: false, error: '已取消' };
+      }
+      const buf = require('fs').readFileSync(openRes.filePaths[0]);
+      const res = pluginHost.importPlugin(buf);
+      broadcastToolsChanged();
+      return Object.assign({ plugins: pluginHost.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 删除插件（连带卸载 + 移除目录）
+  ipcMain.handle('plugin-delete', async (_event, { id } = {}) => {
+    try {
+      const res = pluginHost.deletePlugin(id);
+      broadcastToolsChanged();
+      return Object.assign({ plugins: pluginHost.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 列出插件注册的视图（含渲染后的 HTML），供壳窗口动态挂载
+  ipcMain.handle('plugin-views', async () => {
+    try {
+      return { success: true, views: pluginHost.listPluginViews() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 通用插件 IPC 调用入口：{ pluginId, channel, args }
+  ipcMain.handle('plugin-invoke', async (event, { pluginId, channel, args } = {}) => {
+    try {
+      return await pluginHost.invokePluginIpc(pluginId, channel, args, event);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 收集插件 preload 脚本（供 AI 视图 preload 注入）
+  ipcMain.handle('plugin-preloads', async () => {
+    try {
+      return { success: true, scripts: pluginHost.collectPreloadScripts() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ========== DSH 兼容层（外部 npm 插件）==========
+  const dsh = require('./dsh');
+
+  ipcMain.handle('dsh-list', async () => {
+    try {
+      return { success: true, plugins: dsh.listPlugins(), dir: require('./dsh/paths').getDshPluginsDir() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('dsh-install', async (_e, { spec } = {}) => {
+    try {
+      const res = await dsh.installPlugin(spec);
+      return Object.assign({ plugins: dsh.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('dsh-uninstall', async (_e, { id } = {}) => {
+    try {
+      const res = await dsh.uninstallPlugin(id);
+      return Object.assign({ plugins: dsh.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('dsh-set-enabled', async (_e, { id, enabled } = {}) => {
+    try {
+      const res = await dsh.setEnabled(id, !!enabled);
+      return Object.assign({ plugins: dsh.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('dsh-reload', async (_e, { id } = {}) => {
+    try {
+      const res = await dsh.reloadPlugin(id);
+      return Object.assign({ plugins: dsh.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('dsh-market', async (_e, { force } = {}) => {
+    try {
+      return await dsh.searchMarket({ force: !!force });
+    } catch (err) {
+      return { success: false, error: err.message, items: [] };
+    }
+  });
+
+  ipcMain.handle('dsh-open-dir', async () => {
+    try {
+      const { shell } = require('electron');
+      const dir = require('./dsh/paths').getDshPluginsDir();
+      if (dir) await shell.openPath(dir);
+      return { success: true, dir };
     } catch (err) {
       return { success: false, error: err.message };
     }

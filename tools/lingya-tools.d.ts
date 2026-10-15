@@ -232,6 +232,17 @@ interface TodoItem {
  */
 declare function todoWrite(todos: TodoItem[]): Promise<string>;
 
+// ================= 会话 =================
+
+/**
+ * 给当前对话起一个简短标题（用于会话列表识别）。
+ * 在对话主题明确后（通常是首条用户消息处理时）调用一次。
+ * @param title 对话标题（简短，建议不超过 20 字）
+ * @returns 确认消息
+ * @throws 标题为空、会话上下文不可用时抛出异常
+ */
+declare function nameConversation(title: string): Promise<string>;
+
 // ================= 删除 =================
 
 /** deleteFile 的返回值 */

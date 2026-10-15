@@ -1,0 +1,9 @@
+{
+  "id": "hello",
+  "name": "Hello 示例插件",
+  "version": "1.1.0",
+  "description": "演示统一插件标准（DSH 风格）：贡献 helloWorld 工具。可以删除此目录来卸载。",
+  "icon": "👋",
+  "entry": "index.js",
+  "config": { "greeting": "Hello" }
+}

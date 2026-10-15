@@ -65,7 +65,10 @@
     width: var(--sh-ab-w); min-width: var(--sh-ab-w); flex-shrink: 0; display: flex; flex-direction: column;
     align-items: center; padding: 12px 0; gap: 2px; background: var(--ck-bg-sub);
     position: relative;
+    overflow-y: auto; overflow-x: hidden;
   }
+  #lingya-activitybar::-webkit-scrollbar { width: 0; }
+  #sh-ab-grid { flex-shrink: 0; }
   /* 活动栏右侧分隔线（明显，与面板隔离） */
   #lingya-activitybar {
     border-right: 1px solid rgba(120, 130, 150, 0.35);
@@ -264,6 +267,7 @@
       <button class="sh-ab-item" data-view="sessions" title="会话列表"><span class="sh-ab-ico">&#128172;</span><span class="sh-ab-label">会话</span></button>
       <button class="sh-ab-item" data-view="log" title="执行日志"><span class="sh-ab-ico">&#128220;</span><span class="sh-ab-label">日志</span></button>
       <button class="sh-ab-item" data-view="mcp" title="MCP 工具"><span class="sh-ab-ico">&#128268;</span><span class="sh-ab-label">MCP</span></button>
+      <button class="sh-ab-item" data-view="plugins" title="插件系统"><span class="sh-ab-ico">&#129513;</span><span class="sh-ab-label">插件</span></button>
       <button class="sh-ab-item" data-view="windows" title="窗口管理"><span class="sh-ab-ico">&#128451;</span><span class="sh-ab-label">窗口</span></button>
       <button class="sh-ab-item" data-view="settings" title="设置"><span class="sh-ab-ico">&#9881;</span><span class="sh-ab-label">设置</span></button>
       </div>
@@ -342,6 +346,7 @@
         <div class="sh-view" data-view="sessions"></div>
         <div class="sh-view" data-view="log"></div>
         <div class="sh-view" data-view="mcp"></div>
+        <div class="sh-view" data-view="plugins"></div>
         <div class="sh-view" data-view="windows"></div>
       </div>
     </div>

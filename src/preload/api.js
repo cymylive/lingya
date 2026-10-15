@@ -174,6 +174,13 @@ let electronAPI = {
   getMcpTools: () => {
     return ipcRenderer.invoke('get-mcp-tools');
   },
+  // ========== 插件系统 API ==========
+  // 通用插件 IPC 调用：供插件 preload 脚本回调宿主
+  pluginInvoke: (pluginId, channel, args) => {
+    return ipcRenderer.invoke('plugin-invoke', { pluginId, channel, args });
+  },
+  getPluginPreloads: () => ipcRenderer.invoke('plugin-preloads'),
+  onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   // ========== 平台相关 API ==========
   listProviders: () => {
     return ipcRenderer.invoke('list-providers');

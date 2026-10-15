@@ -1,0 +1,9 @@
+{
+  "id": "demo-panel",
+  "name": "面板演示插件",
+  "version": "1.0.0",
+  "description": "演示阶段2+3能力：贡献侧栏面板（registerView）+ 自有 IPC 通道（registerIpc）+ 依赖声明（depends）。",
+  "icon": "🎛️",
+  "entry": "index.js",
+  "depends": ["hello"]
+}

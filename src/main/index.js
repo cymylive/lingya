@@ -132,6 +132,82 @@ try {
   console.error('[LingYa] 初始化定时任务存储失败:', err.message);
 }
 
+// 初始化插件系统（状态存储 + 宿主）
+// 注意：必须在 registerIpcHandlers() 之前加载，否则插件贡献的工具不会进入 IPC 可达范围
+try {
+  const pluginStore = require('./plugin-store');
+  const pluginHost = require('./plugin-host');
+  pluginStore.init(app.getPath('userData'));
+  pluginHost.init(app.getPath('userData'));
+  Promise.resolve(pluginHost.loadAllEnabled()).catch((e) => console.error('[LingYa] 加载插件失败:', e.message));
+  pluginHost.startWatching();
+} catch (err) {
+  console.error('[LingYa] 初始化插件系统失败:', err.message);
+}
+
+// 初始化 DSH 兼容层（异步加载已启用的 dsh 插件）
+// 宿主能力在 registerIpcHandlers 之后可用；这里先 init，稍后 loadEnabledPlugins
+let _dshInitPromise = null;
+try {
+  const dsh = require('./dsh');
+  const { toolRegistry } = require('./tool-registry');
+  const memoryStore = require('./memory-store');
+  const skillStore = require('./skill-store');
+  const windowState = require('./window');
+  dsh.init(app.getPath('userData'), {
+    toolRegistry,
+    onToolsChanged: () => {
+      // 广播工具集变化（复用插件系统的事件名）
+      try {
+        for (const ctx of windowState.getAllContexts()) {
+          try { const wc = ctx.win && ctx.win.webContents; if (wc && !wc.isDestroyed()) wc.send('lingya-tools-changed'); } catch (_) {}
+          try { const raw = ctx.rawWin; if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-tools-changed'); } catch (_) {}
+        }
+      } catch (_) {}
+    },
+    host: {
+      getToolNames: () => toolRegistry.listNames(),
+      getPluginConfig: (id) => { try { return memoryStore.getPluginConfig ? memoryStore.getPluginConfig('dsh:' + id) : {}; } catch (_) { return {}; } },
+      setPluginConfig: (id, v) => { try { return memoryStore.setPluginConfig ? memoryStore.setPluginConfig('dsh:' + id, v) : false; } catch (_) { return false; } },
+      getCurrentSession: () => {
+        try {
+          const ctx = windowState.getMainContext();
+          const st = ctx && ctx.sessionStore;
+          return { id: (st && st.state.currentSessionId) || null, projectDir: (st && st.state.selectedProjectDir) || null };
+        } catch (_) { return { id: null, projectDir: null }; }
+      },
+      listSessions: () => {
+        try {
+          const ctx = windowState.getMainContext();
+          const st = ctx && ctx.sessionStore;
+          if (!st) return [];
+          const all = st.readSessionStore();
+          return Object.keys(all).map((id) => ({ id, title: (st.normalizeEntry ? st.normalizeEntry(all[id]) : all[id]).title }));
+        } catch (_) { return []; }
+      },
+      getSession: (id) => {
+        try {
+          const ctx = windowState.getMainContext();
+          const st = ctx && ctx.sessionStore;
+          if (!st) return null;
+          const all = st.readSessionStore();
+          const e = all[id] ? (st.normalizeEntry ? st.normalizeEntry(all[id]) : all[id]) : null;
+          return e ? { id, title: e.title } : null;
+        } catch (_) { return null; }
+      },
+      getSessionTitle: () => {
+        try { const ctx = windowState.getMainContext(); return (ctx && ctx.sessionStore && ctx.sessionStore.state.currentSessionId) || null; } catch (_) { return null; }
+      },
+      setSessionTitle: (t) => {
+        try { const ctx = windowState.getMainContext(); return !!(ctx && ctx.sessionStore && ctx.sessionStore.setSessionTitle(t).success); } catch (_) { return false; }
+      },
+    },
+  });
+  _dshInitPromise = dsh.loadEnabledPlugins().catch((e) => console.error('[DSH] 加载已启用插件失败:', e.message));
+} catch (err) {
+  console.error('[LingYa] 初始化 DSH 兼容层失败:', err.message);
+}
+
 // 渲染进程日志输出目录（仅开发环境持久化；打包版不写日志文件）
 const RENDERER_LOG_DIR = app.isPackaged
   ? null

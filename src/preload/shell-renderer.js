@@ -568,6 +568,12 @@
     // 按 abOrder 排序；不在 order 里的排后面
     names.sort(function(a,b){ var ia=abOrder.indexOf(a), ib=abOrder.indexOf(b); if(ia<0&&ib<0) return 0; if(ia<0) return 1; if(ib<0) return -1; return ia-ib; });
     for (var k=0;k<names.length;k++) grid.appendChild(items[names[k]]);
+    // 插件视图图标固定插在「插件」图标之后，避免被排到列表末尾而不可见
+    var pluginBtns = grid.querySelectorAll('.sh-ab-item[data-plugin-view]');
+    var anchor = grid.querySelector('.sh-ab-item[data-view="plugins"]');
+    for (var m=0;m<pluginBtns.length;m++){
+      if(anchor) { if(anchor.nextSibling) grid.insertBefore(pluginBtns[m], anchor.nextSibling); else grid.appendChild(pluginBtns[m]); anchor = pluginBtns[m]; }
+    }
     // 持久化完整顺序
     abOrder=names.slice();
     try { localStorage.setItem('lingya-ab-order', JSON.stringify(abOrder)); } catch(_e){}
@@ -627,8 +633,11 @@
   // ===== 多视图框架（v0.6.36，v0.6.37 恢复）=====
   var rendered = {};
   function switchView(name){
+    // 插件视图不单独占活动栏图标：高亮统一落在「插件」入口上
+    var isPluginView = !!(typeof pluginViews !== 'undefined' && pluginViews && pluginViews[name]);
+    var hlName = isPluginView ? 'plugins' : name;
     var tabs = document.querySelectorAll('.sh-ab-item[data-view]');
-    for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view')===name);
+    for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view')===hlName);
     var vs = document.querySelectorAll('.sh-view');
     for (var j=0;j<vs.length;j++) vs[j].classList.toggle('sh-view-active', vs[j].getAttribute('data-view')===name);
     if (!rendered[name]) { rendered[name]=true; renderView(name); }
@@ -651,8 +660,361 @@
     if(name==='sessions') return renderSessionsView(el);
     if(name==='log') return renderLogView(el);
     if(name==='mcp') return renderMcpView(el);
+    if(name==='plugins') return renderPluginsView(el);
     if(name==='windows') return renderWindowsView(el);
     if(name==='settings') return renderSettingsView(el);
+    // 插件视图（动态 id 形如 pluginId:viewId）：顶部加「返回插件列表」栏
+    if(pluginViews && pluginViews[name]) {
+      var backBar = '<div style="flex-shrink:0;padding:8px 12px;border-bottom:1px solid var(--ck-border);display:flex;align-items:center;gap:8px;">'
+        + '<button class="sh-btn" id="sh-plug-back" style="font-size:12px;">← 插件列表</button>'
+        + '<span style="font-size:12px;color:var(--ck-text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(pluginViews[name].title || pluginViews[name].label || '') + '</span>'
+        + '</div>';
+      mountPluginHtml(el, backBar + '<div style="flex:1;min-height:0;overflow:auto;">' + pluginViews[name].html + '</div>');
+      var bk = el.querySelector('#sh-plug-back');
+      if(bk) bk.addEventListener('click', function(){ switchView('plugins'); });
+      return;
+    }
+  }
+
+  /**
+   * 把插件视图 HTML 写入容器，并执行其中的 <script>。
+   * 关键：innerHTML 不会执行脚本，且解析后的 <script> 元素 textContent 在部分情况下
+   * 取不到内容 —— 所以先【用正则从原始 HTML 字符串】提取脚本，去掉 script 标签后再写入 DOM。
+   */
+  function mountPluginHtml(el, html){
+    var scripts = [];
+    var body = String(html).replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, function(_m, code){ scripts.push(code); return ''; });
+    el.innerHTML = body;
+    for(var i=0;i<scripts.length;i++){
+      try {
+        var fn = new Function('window', 'document', scripts[i]);
+        fn.call(window, window, document);
+      } catch(err){
+        console.error('[LingYa Shell] 插件视图脚本执行失败:', err && err.message);
+        var errBox = document.createElement('div');
+        errBox.style.cssText = 'color:#f87171;font-size:11px;padding:6px;white-space:pre-wrap;';
+        errBox.textContent = '[插件脚本错误] ' + (err && err.message);
+        el.appendChild(errBox);
+      }
+    }
+  }
+
+  // ===== 插件视图挂载（阶段2）=====
+  var pluginViews = {};   // viewKey -> { html, ... }
+  function mountPluginViews(){
+    if(!window.shellAPI || !window.shellAPI.pluginViews) { console.warn('[LingYa Shell] pluginViews API 不可用'); return; }
+    window.shellAPI.pluginViews().then(function(res){
+      if(!res || !res.success) { console.warn('[LingYa Shell] pluginViews 返回失败', res); return; }
+      var views = res.views || [];
+      var content = document.getElementById('lingya-sidebar-content');
+      if(!content) return;
+      // 插件视图不单独占活动栏图标：容器建好，通过「插件」面板里的「打开面板」按钮进入
+      var oldViews = content.querySelectorAll('.sh-view[data-plugin-view]');
+      for(var j=0;j<oldViews.length;j++) oldViews[j].remove();
+      pluginViews = {};
+      for(var k=0;k<views.length;k++){
+        var v = views[k];
+        var key = v.viewId;
+        pluginViews[key] = { html: v.html, label: v.label, title: v.title, pluginId: v.pluginId };
+        var view = document.createElement('div');
+        view.className = 'sh-view';
+        view.setAttribute('data-view', key);
+        view.setAttribute('data-plugin-view', '1');
+        content.appendChild(view);
+      }
+      console.log('[LingYa Shell] 已挂载插件视图容器:', Object.keys(pluginViews).join(', '));
+      // 若当前正停在插件面板，刷新它以显示最新「打开面板」按钮
+      var cur = null; try { cur = localStorage.getItem('lingya-shell-view'); } catch(_e){}
+      if(cur === 'plugins') { rendered['plugins'] = false; renderView('plugins'); }
+    })['catch'](function(e){ console.error('[LingYa Shell] pluginViews 异常', e); });
+  }
+
+  // 市场状态提到面板外（重渲染时保留，避免安装后市场列表被清空）
+  var dshMarketItems = [];
+  var dshMarketCat = 'tool';
+  var dshRenderMarket = null;   // 由 renderPluginsView 挂载（重绘函数）
+
+  // ---- 插件管理面板 ----
+  function renderPluginsView(el){
+    el.innerHTML = panel('插件', '<div id="sh-plug-body" class="sh-empty">加载中…</div>');
+    function draw(data){
+      var box = document.getElementById('sh-plug-body');
+      if(!box) return;
+      if(!data || !data.success){ box.className='sh-empty'; box.textContent='加载失败：'+((data&&data.error)||'未知'); return; }
+      var ps = data.plugins || [];
+      box.className='';
+      var html='';
+      // 本地插件为空时显示提示，但**不 return** —— 否则下面的 DSH 区块/市场看不到
+      if(!ps.length){
+        html+='<div style="padding:8px;text-align:center;color:var(--ck-text-dim);font-size:11px;">暂无本地插件（放入目录：<span style="word-break:break-all;color:var(--ck-primary);">'+esc(data.dir||'')+'</span>）</div>';
+      }
+      for(var i=0;i<ps.length;i++){
+        var p=ps[i];
+        // 该插件是否有可打开的面板视图
+        var viewKey = null;
+        if(typeof pluginViews !== 'undefined' && pluginViews){
+          for(var vk in pluginViews){ if(vk.indexOf(p.id+':')===0){ viewKey=vk; break; } }
+        }
+        html+='<div class="sh-card" style="margin-bottom:8px;" data-pid="'+esc(p.id)+'">'+
+          '<div style="display:flex;align-items:center;gap:8px;">'+
+            '<span style="font-size:18px;">'+esc(p.icon||'🔌')+'</span>'+
+            '<div style="flex:1;min-width:0;">'+
+              '<div style="font-size:12.5px;font-weight:600;color:var(--ck-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name)+' <span style="font-weight:400;color:var(--ck-text-dim);font-size:10.5px;">v'+esc(p.version)+'</span></div>'+
+              '<div style="font-size:11px;color:var(--ck-text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+attr(p.id)+'">'+esc(p.id)+(p.loaded?' · 已加载':'')+'</div>'+
+            '</div>'+
+            '<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;flex-shrink:0;"><input type="checkbox" class="sh-plug-toggle" data-pid="'+esc(p.id)+'" '+(p.enabled?'checked':'')+' /> 启用</label>'+
+          '</div>'+
+          (p.description?('<div style="font-size:11px;color:var(--ck-text-dim);margin-top:6px;line-height:1.4;">'+esc(p.description)+'</div>'):'')+
+          (viewKey?('<div style="margin-top:8px;"><button class="sh-btn primary sh-plug-open" data-view="'+esc(viewKey)+'" style="font-size:11.5px;width:100%;">打开面板</button></div>'):'')+
+          '<div style="display:flex;gap:6px;margin-top:8px;">'+
+            '<button class="sh-btn sh-plug-reload" data-pid="'+esc(p.id)+'" style="font-size:11px;">重载</button>'+
+            '<button class="sh-btn sh-plug-export" data-pid="'+esc(p.id)+'" style="font-size:11px;">导出</button>'+
+            '<button class="sh-btn sh-plug-delete" data-pid="'+esc(p.id)+'" style="font-size:11px;color:#f87171;">删除</button>'+
+          '</div>'+
+        '</div>';
+      }
+      html+='<div style="display:flex;gap:6px;margin-top:8px;">'+
+        '<button class="sh-btn primary" id="sh-plug-import" style="flex:1;font-size:11.5px;">导入插件包</button>'+
+        '<button class="sh-btn" id="sh-plug-opendir" style="flex:1;font-size:11.5px;">打开插件目录</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-top:6px;">'+
+        '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-top:12px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">DSH 外部插件（npm）</div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;line-height:1.4;">安装 DeepSeek Harness 生态的 npm 插件，如 <code style="color:var(--ck-primary);">@deepseek-ai/dsh-tool-todo</code></div>'+
+        '<input id="sh-dsh-spec" placeholder="npm 包名（可带版本）" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:6px;color:var(--ck-text);font-size:12px;margin-bottom:6px;" />'+
+        '<div style="display:flex;gap:6px;">'+
+          '<button class="sh-btn primary" id="sh-dsh-install" style="flex:1;font-size:11.5px;">安装</button>'+
+          '<button class="sh-btn" id="sh-dsh-refresh" style="font-size:11.5px;">刷新</button>'+
+          '<button class="sh-btn" id="sh-dsh-opendir" style="font-size:11.5px;">目录</button>'+
+        '</div>'+
+        '<div id="sh-dsh-status" style="font-size:11px;margin-top:6px;white-space:pre-wrap;word-break:break-all;"></div>'+
+        '<div id="sh-dsh-list" style="margin-top:8px;"></div>'+
+        '<div style="margin-top:10px;border-top:1px solid var(--ck-border);padding-top:8px;">'+
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'+
+            '<span style="font-size:11.5px;font-weight:600;color:var(--ck-title);flex:1;">插件市场（npm）</span>'+
+            '<button class="sh-btn" id="sh-dsh-market-refresh" style="font-size:10.5px;padding:2px 8px;">刷新</button>'+
+          '</div>'+
+          '<input id="sh-dsh-market-search" placeholder="搜索插件名 / 描述…" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px 8px;color:var(--ck-text);font-size:11.5px;margin-bottom:6px;" />'+
+          '<div id="sh-dsh-market" style="font-size:11px;color:var(--ck-text-dim);">点「刷新」从 npm 拉取 DSH 插件列表</div>'+
+        '</div>'+
+      '</div>';
+      box.innerHTML=html;
+
+      var toggles=box.querySelectorAll('.sh-plug-toggle');
+      for(var t=0;t<toggles.length;t++){ (function(cb){
+        cb.addEventListener('change',function(){
+          if(!window.shellAPI||!window.shellAPI.pluginSetEnabled) return;
+          cb.disabled=true;
+          window.shellAPI.pluginSetEnabled(cb.getAttribute('data-pid'), cb.checked).then(function(r){
+            cb.disabled=false;
+            if(r&&r.success){ toast2(cb.checked?'已启用':'已禁用'); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+            else toast2('操作失败：'+((r&&r.error)||'未知'));
+          })['catch'](function(){ cb.disabled=false; toast2('操作失败'); });
+        });
+      })(toggles[t]); }
+      var rls=box.querySelectorAll('.sh-plug-reload');
+      for(var k=0;k<rls.length;k++){ (function(btn){
+        btn.addEventListener('click',function(){
+          if(!window.shellAPI||!window.shellAPI.pluginReload) return;
+          window.shellAPI.pluginReload(btn.getAttribute('data-pid')).then(function(r){
+            if(r&&r.success){ toast2('已重载'); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+            else toast2('重载失败：'+((r&&r.error)||'未知'));
+          })['catch'](function(){ toast2('重载失败'); });
+        });
+      })(rls[k]); }
+      var exps=box.querySelectorAll('.sh-plug-export');
+      for(var e2=0;e2<exps.length;e2++){ (function(btn){
+        btn.addEventListener('click',function(){
+          if(!window.shellAPI||!window.shellAPI.pluginExport) return;
+          btn.disabled=true;
+          window.shellAPI.pluginExport(btn.getAttribute('data-pid')).then(function(r){
+            btn.disabled=false;
+            if(r&&r.success) toast2('已导出到：'+r.path); else toast2('导出失败：'+((r&&r.error)||'未知'));
+          })['catch'](function(){ btn.disabled=false; toast2('导出失败'); });
+        });
+      })(exps[e2]); }
+      var dels=box.querySelectorAll('.sh-plug-delete');
+      for(var d2=0;d2<dels.length;d2++){ (function(btn){
+        btn.addEventListener('click',function(){
+          var pid=btn.getAttribute('data-pid');
+          if(!confirm('确定删除插件 '+pid+' ？\n（会移除插件目录，不可恢复）')) return;
+          if(!window.shellAPI||!window.shellAPI.pluginDelete) return;
+          window.shellAPI.pluginDelete(pid).then(function(r){
+            if(r&&r.success){ toast2('已删除'); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+            else toast2('删除失败：'+((r&&r.error)||'未知'));
+          })['catch'](function(){ toast2('删除失败'); });
+        });
+      })(dels[d2]); }
+      var opens=box.querySelectorAll('.sh-plug-open');
+      for(var o2=0;o2<opens.length;o2++){ (function(btn){
+        btn.addEventListener('click',function(){ switchView(btn.getAttribute('data-view')); });
+      })(opens[o2]); }
+      var im=document.getElementById('sh-plug-import');
+      if(im) im.addEventListener('click',function(){
+        if(!window.shellAPI||!window.shellAPI.pluginImport) return;
+        im.disabled=true;
+        window.shellAPI.pluginImport().then(function(r){
+          im.disabled=false;
+          if(r&&r.success){ toast2('已导入：'+(r.name||r.id)+(r.overwritten?'（覆盖）':'')); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+          else if(r&&r.error==='已取消'){ /* 用户取消，静默 */ }
+          else toast2('导入失败：'+((r&&r.error)||'未知'));
+        })['catch'](function(){ im.disabled=false; toast2('导入失败'); });
+      });
+      var od=document.getElementById('sh-plug-opendir');
+      if(od) od.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.pluginOpenDir) window.shellAPI.pluginOpenDir()['catch'](function(){}); });
+      var rf=document.getElementById('sh-plug-refresh');
+      if(rf) rf.addEventListener('click',function(){ load(); toast2('已刷新'); });
+      // ===== DSH 外部插件区块 =====
+      function drawDsh(data){
+        var box=document.getElementById('sh-dsh-list'); if(!box) return;
+        var ps=(data&&data.plugins)||[];
+        if(!ps.length){ box.innerHTML='<div style="font-size:11px;color:var(--ck-text-dim);text-align:center;padding:6px;">暂无 DSH 插件</div>'; return; }
+        var h='';
+        for(var i=0;i<ps.length;i++){ var p=ps[i];
+          h+='<div style="border-top:1px solid var(--ck-border);padding:6px 0;font-size:11px;">'+
+            '<div style="display:flex;align-items:center;gap:6px;">'+
+              '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ck-text);" title="'+attr(p.name)+'">'+esc(p.name)+'</span>'+
+              '<label style="display:flex;align-items:center;gap:3px;cursor:pointer;flex-shrink:0;"><input type="checkbox" class="sh-dsh-toggle" data-id="'+esc(p.id)+'" '+(p.enabled?'checked':'')+' /> 启用</label>'+
+            '</div>'+
+            '<div style="color:var(--ck-text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.id)+(p.loaded?(' · 工具: '+(p.toolNames||[]).join(',')):' · 未加载')+'</div>'+
+            '<div style="display:flex;gap:4px;margin-top:4px;">'+
+              '<button class="sh-btn sh-dsh-reload" data-id="'+esc(p.id)+'" style="font-size:10px;padding:2px 8px;">重载</button>'+
+              '<button class="sh-btn sh-dsh-del" data-id="'+esc(p.id)+'" style="font-size:10px;padding:2px 8px;color:#f87171;">卸载</button>'+
+            '</div>'+
+          '</div>';
+        }
+        box.innerHTML=h;
+        var tg=box.querySelectorAll('.sh-dsh-toggle');
+        for(var t=0;t<tg.length;t++){ (function(cb){ cb.addEventListener('change',function(){
+          cb.disabled=true;
+          window.shellAPI.dshSetEnabled(cb.getAttribute('data-id'), cb.checked).then(function(r){ cb.disabled=false; toast2(cb.checked?'已启用':'已禁用'); drawDsh(r); })['catch'](function(){ cb.disabled=false; });
+        }); })(tg[t]); }
+        var rl=box.querySelectorAll('.sh-dsh-reload');
+        for(var k=0;k<rl.length;k++){ (function(b){ b.addEventListener('click',function(){ window.shellAPI.dshReload(b.getAttribute('data-id')).then(function(r){ toast2('已重载'); drawDsh(r); })['catch'](function(){}); }); })(rl[k]); }
+        var dl=box.querySelectorAll('.sh-dsh-del');
+        for(var d=0;d<dl.length;d++){ (function(b){ b.addEventListener('click',function(){ if(!confirm('确定卸载该 DSH 插件？')) return; window.shellAPI.dshUninstall(b.getAttribute('data-id')).then(function(r){ toast2('已卸载'); drawDsh(r); })['catch'](function(){}); }); })(dl[d]); }
+      }
+      function loadDsh(){ if(window.shellAPI&&window.shellAPI.dshList) window.shellAPI.dshList().then(drawDsh)['catch'](function(){}); }
+      loadDsh();
+      var di=document.getElementById('sh-dsh-install');
+      function setDshStatus(html){ var s=document.getElementById('sh-dsh-status'); if(s) s.innerHTML=html; }
+      if(di) di.addEventListener('click',function(){
+        var inp=document.getElementById('sh-dsh-spec'); var spec=inp?inp.value.trim():'';
+        if(!spec){ toast2('请输入 npm 包名'); return; }
+        di.disabled=true; di.textContent='安装中…';
+        setDshStatus('<span style="color:var(--ck-text-dim);">正在安装 '+esc(spec)+'…（首次可能较慢，请稍候）</span>');
+        window.shellAPI.dshInstall(spec).then(function(r){
+          di.disabled=false; di.textContent='安装';
+          if(r&&r.success){
+            setDshStatus('<span style="color:#4ade80;">✓ 已安装 '+(r.loaded?'并加载成功':'（npm 装好，但插件加载失败: '+esc(r.loadError||'未知')+'）')+'</span>');
+            if(inp) inp.value='';
+            if(r.plugins) drawDsh(r); else loadDsh();
+          } else {
+            var err=(r&&r.error)||'未知';
+            setDshStatus('<span style="color:#f87171;">✗ 安装失败：'+esc(err)+'</span>');
+          }
+        })['catch'](function(e){ di.disabled=false; di.textContent='安装'; setDshStatus('<span style="color:#f87171;">✗ 安装异常：'+esc(e&&e.message||String(e))+'</span>'); });
+      });
+      var dr=document.getElementById('sh-dsh-refresh');
+      if(dr) dr.addEventListener('click',function(){ loadDsh(); toast2('已刷新'); });
+      var doo=document.getElementById('sh-dsh-opendir');
+      if(doo) doo.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.dshOpenDir) window.shellAPI.dshOpenDir()['catch'](function(){}); });
+      // ===== 插件市场 =====
+      var marketItems = dshMarketItems;      // 用面板外的缓存（重渲染时保留）
+      var marketCat = dshMarketCat;
+      var CATS = [['tool','工具'],['app','组合包'],['ui','界面'],['experimental','实验'],['service','服务'],['all','全部']];
+      function drawMarket(data){
+        var box=document.getElementById('sh-dsh-market'); if(!box) return;
+        if(!data||!data.success){ box.innerHTML='<span style="color:#f87171;">加载失败：'+esc((data&&data.error)||'未知')+'</span>'; return; }
+        marketItems = data.items||[];
+        dshMarketItems = marketItems;        // 同步到面板外缓存
+        renderMarketList(data);
+      }
+      // 暴露给 load()：面板重渲染后（box 已重建）用缓存重绘市场
+      window.__dshRedrawMarket = function(){
+        if(!dshMarketItems.length) return;
+        try { drawMarket({ success: true, items: dshMarketItems, fromCache: true }); } catch (_) {}
+      };
+      function renderMarketList(data){
+        var box=document.getElementById('sh-dsh-market'); if(!box) return;
+        // 统计各分类
+        var counts={all:marketItems.length};
+        for(var i=0;i<marketItems.length;i++){ var c=marketItems[i].category||'service'; counts[c]=(counts[c]||0)+1; }
+        // 分类标签
+        var tabs='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">';
+        for(var t=0;t<CATS.length;t++){ var ck=CATS[t][0], cl=CATS[t][1];
+          var on=(ck===marketCat);
+          tabs+='<span class="sh-dsh-cat" data-cat="'+ck+'" style="cursor:pointer;font-size:10.5px;padding:2px 7px;border-radius:10px;'+(on?'background:var(--ck-primary);color:#fff;':'background:var(--ck-surface);color:var(--ck-text-dim);')+'">'+cl+' '+(counts[ck]||0)+'</span>';
+        }
+        tabs+='</div>';
+        // 搜索关键词
+        var kwEl = document.getElementById('sh-dsh-market-search');
+        var kw = kwEl ? kwEl.value.trim().toLowerCase() : '';
+        // 过滤：分类 + 关键词（匹配包名或描述）
+        var filtered = marketCat==='all' ? marketItems : marketItems.filter(function(x){return (x.category||'service')===marketCat;});
+        if(kw){ filtered = filtered.filter(function(x){
+          return (x.name||'').toLowerCase().indexOf(kw)>=0
+            || (x.description||'').toLowerCase().indexOf(kw)>=0
+            || (x.descriptionZh||'').toLowerCase().indexOf(kw)>=0;
+        }); }
+        var h=tabs+'<div style="color:var(--ck-text-dim);font-size:10.5px;margin-bottom:4px;">共 '+filtered.length+' 个'+(kw?('（搜索：'+esc(kw)+'）'):'')+(data.fromCache?'（缓存）':'')+'</div>';
+        for(var k=0;k<filtered.length && k<200;k++){ var it=filtered[k];
+          // 优先中文描述，回退英文
+          var desc = it.descriptionZh || it.description || '';
+          var isZh = !!it.descriptionZh;
+          h+='<div style="border-top:1px solid var(--ck-border);padding:5px 0;">'+
+            '<div style="display:flex;align-items:center;gap:6px;">'+
+              '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ck-text);" title="'+attr(it.name)+'">'+esc(it.name.replace('@deepseek-ai/',''))+'</span>'+
+              '<span style="color:var(--ck-text-dim);font-size:10px;flex-shrink:0;">'+esc(it.version)+'</span>'+
+              '<button class="sh-btn sh-dsh-mi-install" data-spec="'+attr(it.name)+'" style="font-size:10px;padding:1px 6px;flex-shrink:0;">安装</button>'+
+            '</div>'+
+            (desc?('<div style="color:'+(isZh?'var(--ck-text-2)':'var(--ck-text-dim)')+';font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+attr(desc)+'">'+esc(desc)+'</div>'):'')+
+          '</div>';
+        }
+        box.innerHTML=h;
+        // 分类点击
+        var cs=box.querySelectorAll('.sh-dsh-cat');
+        for(var m=0;m<cs.length;m++){ (function(el){ el.addEventListener('click',function(){ marketCat=el.getAttribute('data-cat'); dshMarketCat=marketCat; renderMarketList(data); }); })(cs[m]); }
+        // 把市场重绘函数挂到模块级，供面板重渲染后复用（关键：避免安装后市场列表被清空）
+        dshRenderMarket = renderMarketList;
+        var ibs=box.querySelectorAll('.sh-dsh-mi-install');
+        for(var k=0;k<ibs.length;k++){ (function(b){ b.addEventListener('click',function(){
+          var spec=b.getAttribute('data-spec'); b.disabled=true; b.textContent='装中…';
+          var st=document.getElementById('sh-dsh-status'); if(st) st.innerHTML='<span style="color:var(--ck-text-dim);">正在安装 '+esc(spec)+'…</span>';
+          window.shellAPI.dshInstall(spec).then(function(r){
+            b.disabled=false; b.textContent='安装';
+            var st2=document.getElementById('sh-dsh-status');
+            if(r&&r.success){
+              if(st2) st2.innerHTML='<span style="color:#4ade80;">✓ 已安装 '+(r.loaded?'并加载成功':'（加载失败: '+esc(r.loadError||'')+'）')+'</span>';
+              // 用返回值里的 plugins 直接刷新已装列表（避免二次拉取的时序问题）
+              if(r.plugins) drawDsh(r); else loadDsh();
+            } else if(st2) st2.innerHTML='<span style="color:#f87171;">✗ 安装失败：'+esc((r&&r.error)||'未知')+'</span>';
+          })['catch'](function(e){ b.disabled=false; b.textContent='安装'; var st3=document.getElementById('sh-dsh-status'); if(st3) st3.innerHTML='<span style="color:#f87171;">✗ 异常：'+esc(e&&e.message||String(e))+'</span>'; });
+        }); })(ibs[k]); }
+      }
+      var mr=document.getElementById('sh-dsh-market-refresh');
+      if(mr) mr.addEventListener('click',function(){
+        var box=document.getElementById('sh-dsh-market'); if(box) box.textContent='加载中…';
+        mr.disabled=true;
+        window.shellAPI.dshMarket(true).then(function(r){ mr.disabled=false; drawMarket(r); })['catch'](function(){ mr.disabled=false; });
+      });
+      // 搜索框：输入实时过滤（用已加载的 marketItems，不重新请求）
+      var ms=document.getElementById('sh-dsh-market-search');
+      if(ms) ms.addEventListener('input',function(){
+        if(!marketItems.length) return;   // 市场还没加载，忽略
+        renderMarketList({ success:true, items:marketItems, fromCache:true });
+      });
+    }
+    function load(){
+      if(!window.shellAPI||!window.shellAPI.pluginList){ var b=document.getElementById('sh-plug-body'); if(b){b.className='sh-empty';b.textContent='插件 API 不可用';} return; }
+      window.shellAPI.pluginList().then(draw).then(function(){
+        // draw() 重建了 box.innerHTML（含市场容器）→ 若已有市场缓存，立即重绘（不清空）
+        if(dshMarketItems.length && typeof window.__dshRedrawMarket==='function') window.__dshRedrawMarket();
+      })['catch'](function(e){ var b=document.getElementById('sh-plug-body'); if(b){b.className='sh-empty';b.textContent='加载失败：'+e.message;} });
+    }
+    load();
   }
 
   // ---- 计划面板 ----
@@ -1042,14 +1404,20 @@
         var list=(r&&r.success&&r.sessions)||[];
         if(!list.length){ box.innerHTML='<div class="sh-empty">暂无会话（先选择项目目录）</div>'; return; }
         var h='';
-        for(var i=0;i<list.length;i++){ var sid=String(list[i]); var label=sid.length>20?(sid.slice(0,20)+'…'):sid;
-          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+esc(label)+'</span><span style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
+        for(var i=0;i<list.length;i++){
+          var it=list[i];
+          // 兼容旧格式（纯字符串）
+          var sid=String(typeof it==='string'?it:(it.sessionId||''));
+          var title=typeof it==='object'?(it.title||''):'';
+          var shortId=sid.length>14?(sid.slice(0,14)+'…'):sid;
+          var main=title?(esc(title)+' <span style="color:var(--ck-text-dim);font-size:10px;">('+esc(shortId)+')</span>'):esc(shortId);
+          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
         }
         box.innerHTML=h;
         var items=box.querySelectorAll('.sh-ss-item');
-        for(var j=0;j<items.length;j++){ (function(it){ it.addEventListener('click',function(){
+        for(var j=0;j<items.length;j++){ (function(el){ el.addEventListener('click',function(){
           if(!window.shellAPI.navigateSession) return;
-          window.shellAPI.navigateSession(it.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
+          window.shellAPI.navigateSession(el.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
         }); })(items[j]); }
       })['catch'](function(){});
     }
@@ -1168,5 +1536,16 @@
     load();
   }
 
+  // 会话标题更新 → 若正停在会话面板则刷新（AI 命名对话后实时更新列表）
+  if (window.shellAPI && window.shellAPI.onSessionTitleUpdated) {
+    try { window.shellAPI.onSessionTitleUpdated(function(){ try { if(rendered['sessions']){ rendered['sessions']=false; renderView('sessions'); } } catch(_){} }); } catch(_){}
+  }
+
+  // ===== 插件视图挂载（阶段2）=====
+  // 启动时挂一次；插件启停/重载后由 lingya-tools-changed 事件触发刷新
+  try { mountPluginViews(); } catch(_e){}
+  if(window.shellAPI && window.shellAPI.onPluginsChanged){
+    try { window.shellAPI.onPluginsChanged(function(){ try { mountPluginViews(); } catch(_){} }); } catch(_e){}
+  }
 
 })();

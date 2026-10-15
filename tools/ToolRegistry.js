@@ -61,6 +61,19 @@ class ToolRegistry {
     }
     this.tools.set(tool.name, tool);
     console.log(`[ToolRegistry] 注册工具: ${tool.name}`);
+    return tool;
+  }
+
+  /**
+   * 注销工具（插件卸载时调用）。返回是否实际移除。
+   * @param {string} name
+   * @returns {boolean}
+   */
+  unregister(name) {
+    if (!this.tools.has(name)) return false;
+    this.tools.delete(name);
+    console.log(`[ToolRegistry] 注销工具: ${name}`);
+    return true;
   }
 
   /**
