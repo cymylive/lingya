@@ -1038,8 +1038,12 @@
       }
       box.innerHTML=h;
     }
-    if(window.shellAPI&&window.shellAPI.getTodos){ window.shellAPI.getTodos().then(function(r){ draw(r&&r.todos); })['catch'](function(){}); }
-    if(window.shellAPI&&window.shellAPI.onTodosUpdated){ window.shellAPI.onTodosUpdated(function(){ if(window.shellAPI.getTodos){ window.shellAPI.getTodos().then(function(r2){ draw(r2&&r2.todos); })['catch'](function(){}); } }); }
+    function reloadPlan(){ if(window.shellAPI&&window.shellAPI.getTodos){ window.shellAPI.getTodos().then(function(r){ draw(r&&r.todos); })['catch'](function(){}); } }
+    reloadPlan();
+    // todoWrite 变更 → 刷新
+    if(window.shellAPI&&window.shellAPI.onTodosUpdated){ window.shellAPI.onTodosUpdated(reloadPlan); }
+    // 会话切换 → 刷新（侧栏拿不到 AI 页面 URL，靠主进程广播）
+    if(window.shellAPI&&window.shellAPI.onSessionChanged){ window.shellAPI.onSessionChanged(reloadPlan); }
   }
 
   // ---- 记忆面板 ----

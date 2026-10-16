@@ -38,6 +38,7 @@ const api = {
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },
+  onSessionChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-session-changed',h); return ()=>ipcRenderer.removeListener('lingya-session-changed',h); },
   onHistoryUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-history-updated',h); return ()=>ipcRenderer.removeListener('lingya-history-updated',h); },
   // 记忆
   listMemories: () => ipcRenderer.invoke('memory-list'),

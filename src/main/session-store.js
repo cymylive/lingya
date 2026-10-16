@@ -135,9 +135,24 @@ function createSessionStore(profileId, storeDir, windowState) {
     pendingTitle: null,
   };
 
+  /** 广播会话变化给所有窗口（AI 视图 + 壳窗口），供侧栏/覆盖层刷新计划等 */
+  function broadcastSessionChanged(sessionId) {
+    try {
+      if (!windowState || !windowState.getAllContexts) return;
+      for (const ctx of windowState.getAllContexts()) {
+        const payload = { sessionId: sessionId || null };
+        try { const wc = ctx.win && ctx.win.webContents; if (wc && !wc.isDestroyed()) wc.send('lingya-session-changed', payload); } catch (_) {}
+        try { const raw = ctx.rawWin; if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-session-changed', payload); } catch (_) {}
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   function handleUrlChange(url, targetWindow) {
     const sessionId = extractSessionIdFromUrl(url);
     const win = targetWindow || (windowState && windowState.getMainWindow());
+
+    // 会话变化 → 广播（无论提取到 sessionId 与否，都通知侧栏刷新）
+    broadcastSessionChanged(sessionId);
 
     if (sessionId) {
       state.currentSessionId = sessionId;

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.57] - 2026-10-16
+
+### Fixed
+- **侧栏计划面板切会话不刷新**（0.6.56 隔离的真正漏点）：
+  - 根因：侧栏（shell 窗口）与 AI 视图是**不同的 webContents**，侧栏拿不到 AI 页面 URL → `renderPlanView` 只渲染一次（`rendered[name]` 缓存），切换会话时**没有事件通知侧栏刷新** → 一直显示首次加载的旧会话计划
+  - 修复：`session-store.handleUrlChange` 广播 `lingya-session-changed`（发给 AI 视图 + 壳窗口）→ `shell-preload` 暴露 `onSessionChanged` → `renderPlanView` 订阅后重拉
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.56] - 2026-10-16
+
+### Fixed
+- **切到新会话时仍显示上个会话的计划**（彻底修复会话隔离）：
+  - 根因：`resolveSessionId` 在 URL 提取不到 sessionId 时**回退到 `state.currentSessionId`**（仍是上个会话）→ 新会话读到旧会话的 todo
+  - 修复：**URL 属于已知平台时以 URL 为准** —— 能提取 sessionId 用它，提取不到（新会话首页）**返回 null**（不回退）；只有拿不到 URL / 非平台 URL 才回退
+  - 效果：进入新会话（DeepSeek 首页 /）→ sessionId=null → 计划面板显示"暂无计划"
+
+### Notes
+- 全量测试 361/361
+
 ## [0.6.55] - 2026-10-16
 
 ### Changed
