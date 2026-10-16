@@ -132,6 +132,13 @@ try {
   console.error('[LingYa] 初始化定时任务存储失败:', err.message);
 }
 
+// 初始化待办存储（按会话隔离，持久化到 lingya-todos.json）
+try {
+  require('../../tools/TodoWriteTool').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化待办存储失败:', err.message);
+}
+
 // 初始化插件系统（状态存储 + 宿主）
 // 注意：必须在 registerIpcHandlers() 之前加载，否则插件贡献的工具不会进入 IPC 可达范围
 try {

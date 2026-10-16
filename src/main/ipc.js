@@ -19,7 +19,7 @@ const refusalRewriter = require('./refusal-rewriter');
 const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
-const { todoEvents, getTodos } = require('../../tools/TodoWriteTool');
+const { todoEvents, getTodos, clearTodos } = require('../../tools/TodoWriteTool');
 const { checkGate } = require('../../tools/plan-gate');
 const memoryJanitor = require('../../tools/memory-janitor');
 const toolLifecycle = require('../../tools/tool-lifecycle');
@@ -50,29 +50,39 @@ function registerIpcHandlers() {
   // 飞书同步 IPC
   registerFeishuIpc();
 
-  // 待办列表变更：广播给所有窗口，前端各自按当前会话重新拉取权威数据
-  // （不做 key 匹配，避免新建会话时 execute/read 的 sessionId 时序不一致导致漏推）
-  todoEvents.on('change', ({ todos }) => {
+  // 待办列表变更：广播给所有窗口（带 sessionId，前端按当前会话过滤，避免跨会话串扰）
+  todoEvents.on('change', ({ sessionId, todos, archived }) => {
     for (const ctx of windowState.getAllContexts()) {
+      const payload = { sessionId: sessionId || null, todos, archived: !!archived };
       // AI 视图（ctx.win 的 Proxy 已重定向到 view）——覆盖层订阅方
       try {
         const wc = ctx.win && ctx.win.webContents;
-        if (wc && !wc.isDestroyed()) wc.send('lingya-todos-updated', todos);
+        if (wc && !wc.isDestroyed()) wc.send('lingya-todos-updated', payload);
       } catch (_) {}
       // 壳窗口（侧边栏）——真实 BrowserWindow 的 webContents
       try {
         const raw = ctx.rawWin;
-        if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-todos-updated', todos);
+        if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-todos-updated', payload);
       } catch (_) {}
     }
   });
 
-  // 读取当前窗口/会话的待办列表（回传 sessionId 供前端显示/排查）
+  // 读取当前窗口/会话的待办列表（严格按会话隔离，返回 archived 标记）
   ipcMain.handle('get-todos', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const profileId = ctx ? ctx.profileId : null;
     const sessionId = resolveSessionId(ctx, event.sender);
-    return { success: true, todos: getTodos(sessionId, profileId), sessionId };
+    const r = getTodos(sessionId, profileId);
+    return { success: true, todos: r.todos, archived: r.archived, sessionId };
+  });
+
+  // 清空当前会话待办（AI 明确说完成时 / 手动清）
+  ipcMain.handle('clear-todos', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
+    clearTodos(sessionId, profileId);
+    return { success: true };
   });
 
   // 侧栏开合联动窗口宽度：展开时窗口加宽 280px（侧栏占新增空间，AI 对话区净宽不变）

@@ -42,11 +42,15 @@ function progressHtml(items) {
   '</div>';
 }
 
+// 当前会话 ID（用于按会话过滤广播，避免跨会话串扰）
+let currentSessionId = null;
+
 /** 渲染待办列表（同时刷新页签面板 + 悬浮卡） */
-function renderTodos(todos) {
+function renderTodos(todos, archived) {
   const items = Array.isArray(todos) ? todos : [];
   const done = items.filter((t) => t.status === 'completed').length;
-  const progress = done + '/' + items.length;
+  const allDone = items.length > 0 && done === items.length;
+  const progress = (archived || allDone) ? ('✓ ' + items.length + '/' + items.length) : (done + '/' + items.length);
   const hasItems = items.length > 0;
 
   // 页签面板
@@ -81,7 +85,8 @@ async function refreshTodos() {
   try {
     const r = await window.electronAPI.getTodos();
     if (r && r.success) {
-      renderTodos(r.todos);
+      currentSessionId = r.sessionId || null;
+      renderTodos(r.todos, r.archived);
       const el = document.getElementById('lingya-plan-session');
       if (el) el.textContent = r.sessionId ? String(r.sessionId).slice(0, 10) : '(新会话)';
     }
@@ -186,8 +191,15 @@ function watchSessionChange() {
 function bindPlanPanelEvents() {
   refreshTodos();
   if (!unsubscribe) {
-    // 收到变更通知后重新拉取"当前会话"的权威数据（而非直接用广播内容），保证会话隔离
-    unsubscribe = window.electronAPI.onTodosUpdated(() => refreshTodos());
+    // 收到变更通知：若带 sessionId 且与当前会话不符 → 忽略（防跨会话串扰）；
+    // 匹配（或未带 sessionId）→ 重新拉取权威数据
+    unsubscribe = window.electronAPI.onTodosUpdated((payload) => {
+      try {
+        const sid = payload && payload.sessionId;
+        if (sid && currentSessionId && sid !== currentSessionId) return;
+      } catch (_) {}
+      refreshTodos();
+    });
   }
   watchSessionChange();
 

@@ -143,6 +143,11 @@ function createSessionStore(profileId, storeDir, windowState) {
       state.currentSessionId = sessionId;
       console.log('[LingYa][' + profileId + '] 当前会话ID: ' + sessionId);
 
+      // 会话 ID 出现 → 把临时待办（pending:<profileId>）迁移到真实 sessionId 键
+      try {
+        require('../../tools/TodoWriteTool').migratePendingTodos(sessionId, profileId);
+      } catch (_) { /* 尽力而为 */ }
+
       if (state.pendingProjectDir) {
         saveSessionDirMapping(sessionId, state.pendingProjectDir);
         state.selectedProjectDir = state.pendingProjectDir;

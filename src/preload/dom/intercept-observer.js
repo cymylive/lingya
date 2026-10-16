@@ -263,6 +263,11 @@ async function continueIfPlanUnfinished(raw) {
   let res;
   try { res = await window.electronAPI.getTodos(); } catch (_) { return false; }
   const todos = (res && res.success && Array.isArray(res.todos)) ? res.todos : [];
+  // 已归档（全部完成）→ 不续跑
+  if (res && res.archived) {
+    planContinueCount = 0;
+    return false;
+  }
   const unfinished = todos.filter((t) => t && t.status !== 'completed');
 
   // ===== 分支 A：有未完成计划 → 催促继续 =====

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.55] - 2026-10-16
+
+### Changed
+- **计划清单完成后保留**：`todoWrite([])` 空列表被拒绝 —— 已完成的计划保留在面板供回顾（完成项自动加删除线 `text-decoration: line-through`）
+  - 如需开始新计划，直接传新的完整列表（替换旧列表）
+  - 提示词补充：禁止 AI 用空列表清空计划
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.54] - 2026-10-16
+
+### Fixed
+- **待办存储未初始化（路径错误）**：`src/main/index.js` 里 `require('../tools/TodoWriteTool')` 路径错误（`src/main/` 下 `../tools` = `src/tools`，不存在）→ init 抛错被 try/catch 吞掉 → `STORE_FILE=null` → **todo 不落盘**
+  - 修复：改为 `require('../../tools/TodoWriteTool')`（正确指向 `<root>/tools/`）
+  - 这是 0.6.53 计划面板修复的连带 bug（持久化失效）
+
+### Notes
+- 全量测试 361/361
+
+## [0.6.53] - 2026-10-16
+
+### Fixed
+- **计划面板跨会话串扰 + 完成后仍显示未完成**（彻底修复）：
+  - **严格会话隔离**：todo 存储改为 `<userData>/lingya-todos.json`，**只按 sessionId 隔离**，删除"回退到 profileId 键"的泄漏逻辑（此前 A 会话的 todo 会漏到 B 会话）
+  - **新建会话临时键 + 迁移**：sessionId 未就绪时存 `pending:<profileId>`，URL 出现后由 `migratePendingTodos` 迁移到真实 sessionId 键
+  - **完成即归档**：全 completed 时标记 `archived`，面板显示 **✓ N/N**（绿色），自动续跑**跳过归档会话**（不再误催）
+  - **广播带 sessionId**：前端按当前会话过滤，杜绝跨会话串扰
+  - **持久化**：todo 落盘，重启保留
+
+### Notes
+- 全量测试 361/361
+- 烟测：会话隔离 / 归档 / 临时键迁移 / 重启持久化 全部通过
+
 ## [0.6.52] - 2026-10-16
 
 ### Added

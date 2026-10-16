@@ -1,37 +1,99 @@
 const { Tool, ToolResult } = require('./ToolRegistry');
 const { EventEmitter } = require('events');
 const { markEstablished } = require('./plan-gate');
+const fs = require('fs');
+const path = require('path');
 
 // 对齐 dsh STATUSES
 const STATUSES = ['pending', 'in_progress', 'completed'];
 
-// 按会话隔离的待办列表（每个会话各自独立）。
-// 键优先级：sessionId > profileId > '__default'。
-const todosByProfile = new Map();
+// 待办存储：<userData>/lingya-todos.json
+// 结构：{ "<sessionId>": { todos: [...], archived: bool, updatedAt } }
+// 严格按 sessionId 隔离；新建会话（sessionId 未就绪）用临时键 "pending:<profileId>"，
+// 会话 ID 出现后由 migratePendingTodos 迁移到真实键。
+let STORE_FILE = null;
+let store = {};          // 内存缓存（与磁盘同步）
 const todoEvents = new EventEmitter();
 
-function keyOf(sessionId, profileId) {
-  return sessionId || profileId || '__default';
+function init(storeDir) {
+  STORE_FILE = path.join(storeDir, 'lingya-todos.json');
+  store = readStore();
+  console.log('[TodoStore] 存储文件:', STORE_FILE);
 }
 
-function getTodos(sessionId, profileId) {
-  // 精确键优先
-  const exact = todosByProfile.get(keyOf(sessionId, profileId));
-  if (exact) return exact.slice();
-  // 回退：新建会话期间 URL 可能还没有 sessionId，数据存在 profileId 键下。
-  // 此处按 profileId 兜底，避免"写时无 sessionId、读时有 sessionId"导致读不到。
-  if (sessionId && profileId) {
-    const fallback = todosByProfile.get(profileId);
-    if (fallback) return fallback.slice();
+function readStore() {
+  try {
+    if (STORE_FILE && fs.existsSync(STORE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(STORE_FILE, 'utf-8'));
+      return raw && typeof raw === 'object' ? raw : {};
+    }
+  } catch (err) {
+    console.error('[TodoStore] 读取失败:', err.message);
   }
-  return [];
+  return {};
+}
+
+function writeStore() {
+  try {
+    if (STORE_FILE) {
+      fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
+      fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), 'utf-8');
+    }
+  } catch (err) {
+    console.error('[TodoStore] 写入失败:', err.message);
+  }
+}
+
+/** 当前会话的存储键：优先 sessionId，无则临时键 */
+function keyFor(sessionId, profileId) {
+  if (sessionId) return sessionId;
+  return 'pending:' + (profileId || '__default');
+}
+
+/**
+ * 读某会话的待办。严格隔离：只读本会话的键，不回退到其它会话。
+ * @returns {{ todos: Array, archived: boolean }}
+ */
+function getTodos(sessionId, profileId) {
+  const key = keyFor(sessionId, profileId);
+  const rec = store[key];
+  if (!rec || !Array.isArray(rec.todos)) return { todos: [], archived: false };
+  return { todos: rec.todos.slice(), archived: !!rec.archived };
+}
+
+/**
+ * 会话 ID 出现时，把临时键（pending:<profileId>）的待办迁移到真实 sessionId 键。
+ * 由 session-store.handleUrlChange 在拿到 sessionId 后调用。
+ */
+function migratePendingTodos(sessionId, profileId) {
+  if (!sessionId) return false;
+  const tempKey = 'pending:' + (profileId || '__default');
+  const rec = store[tempKey];
+  if (!rec || !Array.isArray(rec.todos) || rec.todos.length === 0) return false;
+  // 目标键已有数据则不覆盖（避免误吞）
+  if (store[sessionId] && Array.isArray(store[sessionId].todos) && store[sessionId].todos.length > 0) {
+    delete store[tempKey];
+    writeStore();
+    return false;
+  }
+  store[sessionId] = { todos: rec.todos, archived: !!rec.archived, updatedAt: Date.now() };
+  delete store[tempKey];
+  writeStore();
+  console.log('[TodoStore] 迁移临时待办', tempKey, '→', sessionId, '共', rec.todos.length, '项');
+  return true;
+}
+
+/** 清空某会话待办（AI 明确说完成时 / 手动清） */
+function clearTodos(sessionId, profileId) {
+  const key = keyFor(sessionId, profileId);
+  if (store[key]) {
+    delete store[key];
+    writeStore();
+  }
 }
 
 /**
  * 对齐 dsh toTodoList：校验并规范化 todo 列表。
- * - content trim 后非空
- * - content 不重复
- * - 串行模式：最多一条 in_progress
  */
 function parseTodoList(todos, allowParallelInProgress) {
   if (!Array.isArray(todos)) {
@@ -64,17 +126,10 @@ function parseTodoList(todos, allowParallelInProgress) {
   return result;
 }
 
-/**
- * 对齐 dsh render：返回统计确认消息。
- */
 function formatTodoOutput(counts) {
   return 'Updated todo list: ' + counts.pending + ' pending, ' + counts.inProgress + ' in progress, ' + counts.completed + ' completed.';
 }
 
-/**
- * todo_write 工具 - 仿照 dsh 的 todo_write。
- * 全量替换待办列表。串行模式：最多一条 in_progress。
- */
 class TodoWriteTool extends Tool {
   constructor() {
     super(
@@ -90,10 +145,7 @@ class TodoWriteTool extends Tool {
               type: 'object',
               additionalProperties: false,
               properties: {
-                content: {
-                  type: 'string',
-                  description: '任务内容，简短的祈使句'
-                },
+                content: { type: 'string', description: '任务内容，简短的祈使句' },
                 status: {
                   type: 'string',
                   enum: ['pending', 'in_progress', 'completed'],
@@ -123,17 +175,20 @@ class TodoWriteTool extends Tool {
         '不要等做完 2-3 项才一起更新，也不要"最后统一收尾"。用户是靠计划面板实时看进度的，' +
         '攒批会让面板长时间停在同一项，等于没有进度。' +
         '正确的节奏是：完成 A → 立即 todoWrite(A=completed, B=in_progress) → 开始做 B → 完成 B → 立即 todoWrite(B=completed, C=in_progress) → ……' +
-        '每次调用都发送完整列表——它替换之前的列表（没有部分更新）。拆解要具体、可验证，每项是简短的祈使句。'
+        '【重要】全部完成时，最后一次调用要把所有项都标为 completed（面板会显示 ✓ 全部完成）。' +
+        '**绝不要用空列表清空计划**——已完成的清单要保留在面板中供用户回顾（完成项自动划掉）。' +
+        '如需开始新任务，直接传入新的完整列表（会替换旧列表）。'
     };
   }
 
   async execute(params) {
-    const { todos, projectDir, profileId, sessionId } = params;
-
+    const { todos, profileId, sessionId } = params;
     try {
-      // 串行模式：allowParallelInProgress = false
       const list = parseTodoList(todos, false);
-
+      // 保护：拒绝空列表清空（用户希望保留已完成的计划清单，便于回顾）
+      if (list.length === 0) {
+        return ToolResult.error('todoWrite 不接受空列表：已完成的计划应保留在面板中（完成项会自动划掉）。如需开始新计划，直接传入新的 todo 列表即可（会替换旧的）。');
+      }
       const count = (status) => list.filter(t => t.status === status).length;
       const counts = {
         pending: count('pending'),
@@ -144,12 +199,24 @@ class TodoWriteTool extends Tool {
       // 建立计划 → 解除该会话的计划门禁
       markEstablished(sessionId, profileId);
 
-      // 无持久化，仅在内存中短暂存储（可选）
-      const key = keyOf(sessionId, profileId);
-      todosByProfile.set(key, list);
-      todoEvents.emit('change', { sessionId: sessionId || null, profileId: profileId || null, key, todos: list });
+      // 全部完成 → 归档标记
+      const archived = list.length > 0 && list.every(t => t.status === 'completed');
 
-      console.log('[TodoWriteTool] 更新待办列表: key=' + key + ', sessionId=' + (sessionId || 'null') + ', profileId=' + (profileId || 'null') + ', ' + JSON.stringify(counts));
+      // 持久化到该会话的键（严格隔离）
+      const key = keyFor(sessionId, profileId);
+      store[key] = { todos: list, archived, updatedAt: Date.now() };
+      writeStore();
+
+      // 广播（带 sessionId，供前端按会话过滤）
+      todoEvents.emit('change', {
+        sessionId: sessionId || null,
+        profileId: profileId || null,
+        key,
+        todos: list,
+        archived,
+      });
+
+      console.log('[TodoWriteTool] 更新待办: key=' + key + ', sessionId=' + (sessionId || 'null') + ', archived=' + archived + ', ' + JSON.stringify(counts));
       return ToolResult.success(formatTodoOutput(counts));
     } catch (err) {
       return ToolResult.error('更新待办列表失败: ' + err.message);
@@ -157,4 +224,4 @@ class TodoWriteTool extends Tool {
   }
 }
 
-module.exports = { TodoWriteTool, parseTodoList, formatTodoOutput, STATUSES, todoEvents, getTodos };
+module.exports = { TodoWriteTool, parseTodoList, formatTodoOutput, STATUSES, todoEvents, getTodos, init, migratePendingTodos, clearTodos };

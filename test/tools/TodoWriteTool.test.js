@@ -79,9 +79,9 @@ test('getTodos 按 profileId 隔离', async () => {
   await tool.execute({ profileId: 'pA', todos: [{ content: 'A-1', status: 'pending' }] });
   await tool.execute({ profileId: 'pB', todos: [{ content: 'B-1', status: 'pending' }] });
 
-  assert.deepStrictEqual(getTodos('pA').map(t => t.content), ['A-1']);
-  assert.deepStrictEqual(getTodos('pB').map(t => t.content), ['B-1']);
-  assert.deepStrictEqual(getTodos('pC'), []);
+  assert.deepStrictEqual(getTodos(null, 'pA').todos.map(t => t.content), ['A-1']);
+  assert.deepStrictEqual(getTodos(null, 'pB').todos.map(t => t.content), ['B-1']);
+  assert.deepStrictEqual(getTodos(null, 'pC').todos, []);
 });
 
 test('todoEvents 事件携带 profileId 与 todos', async () => {
@@ -98,7 +98,7 @@ test('todoEvents 事件携带 profileId 与 todos', async () => {
 test('无 profileId 归入 __default', async () => {
   const tool = new TodoWriteTool();
   await tool.execute({ todos: [{ content: 'D-1', status: 'pending' }] });
-  assert.deepStrictEqual(getTodos().map(t => t.content), ['D-1']);
+  assert.deepStrictEqual(getTodos().todos.map(t => t.content), ['D-1']);
 });
 
 test('同一窗口不同会话互相隔离（sessionId 优先）', async () => {
@@ -107,8 +107,8 @@ test('同一窗口不同会话互相隔离（sessionId 优先）', async () => {
   await tool.execute({ profileId: 'winA', sessionId: 'sess1', todos: [{ content: '会话1-计划', status: 'pending' }] });
   await tool.execute({ profileId: 'winA', sessionId: 'sess2', todos: [{ content: '会话2-计划', status: 'pending' }] });
 
-  assert.deepStrictEqual(getTodos('sess1', 'winA').map(t => t.content), ['会话1-计划']);
-  assert.deepStrictEqual(getTodos('sess2', 'winA').map(t => t.content), ['会话2-计划']);
-  // 未指定 sessionId 时回退到 profileId 维度
-  assert.deepStrictEqual(getTodos(null, 'winA'), []);
+  assert.deepStrictEqual(getTodos('sess1', 'winA').todos.map(t => t.content), ['会话1-计划']);
+  assert.deepStrictEqual(getTodos('sess2', 'winA').todos.map(t => t.content), ['会话2-计划']);
+  // 未指定 sessionId 时读临时键（pending:winA），此前没写过 → 空
+  assert.deepStrictEqual(getTodos(null, 'winA').todos, []);
 });
