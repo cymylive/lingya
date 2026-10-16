@@ -50,3 +50,6 @@ test/coverage.lcov
 # 源锟斤拷锟睫革拷前锟侥憋拷锟斤拷  
 *.bak-*  
 *.bak  
+ 
+# 自带 Node 运行时（构建时由 scripts/fetch-runtime.mjs 下载） 
+resources/runtime/ 

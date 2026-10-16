@@ -188,10 +188,14 @@ function createCollectorCtx(pluginName, host, runtime) {
   const { DshAgentRuntime } = require('./agent-runtime');
   const { GoalsService } = require('./goals-service');
   const { SkillsService } = require('./skills-service');
+  const { createFs } = require('./fs-service');
+  const { registerPromptSection, getPromptSections } = require('./prompt-sections');
+  const { registerBus } = require('./event-bridge');
   // 最小 agent 运行时（让依赖 agent 生命周期的插件能执行）
   const agentRuntime = new DshAgentRuntime();
   const goals = new GoalsService();
   const skills = new SkillsService();
+  const pluginDisposers = [];
   const base = {
     sessionProjections: runtime ? runtime.projections : undefined,
     // ctx.agents / ctx.goals / ctx.skills：agent 生命周期 + 目标 + 技能服务
@@ -204,6 +208,13 @@ function createCollectorCtx(pluginName, host, runtime) {
       search: (args, signal) => require('./web-service').webSearch(args, signal),
     },
     name: pluginName,
+    // ctx.fs：文件服务（相对项目目录）
+    fs: createFs(() => (host && host.getCurrentSession ? host.getCurrentSession().projectDir : null)),
+    // ctx.systemPrompt：插件注册提示词段（合并进系统提示词）
+    systemPrompt: {
+      section(sec) { const d = registerPromptSection(sec, pluginName); pluginDisposers.push(d); return d; },
+      sections() { return getPromptSections(); },
+    },
     log: (...args) => console.log('[DSHPlugin:' + pluginName + ']', ...args),
     tools: {
       register(tool) { tools.push(tool); return () => {}; },
@@ -245,10 +256,16 @@ function createCollectorCtx(pluginName, host, runtime) {
     get() { return undefined; },
     inject(_names, cb) { if (typeof cb === 'function') { try { cb(ctx); } catch (_) {} } return () => {}; },
   };
-  // 每个插件一个事件总线
+  // 每个插件一个事件总线（注册到 event-bridge，接收主进程 AI 事件）
   let bus = null;
   function getBus() {
-    if (!bus) { const { EventEmitter } = require('events'); bus = new EventEmitter(); bus.setMaxListeners(0); }
+    if (!bus) {
+      const { EventEmitter } = require('events');
+      bus = new EventEmitter();
+      bus.setMaxListeners(0);
+      // 包一层 emit（event-bridge 用 bus.emit 广播）
+      registerBus(bus);
+    }
     return bus;
   }
   const ctx = new Proxy(base, {
@@ -258,7 +275,7 @@ function createCollectorCtx(pluginName, host, runtime) {
       return makeStub('ctx.' + String(prop));
     },
   });
-  return { ctx, tools, agentRuntime, goals };
+  return { ctx, tools, agentRuntime, goals, pluginDisposers };
 }
 
 /** 从 dsh 工具参数生成 jsApi 签名，如 todo_write(todos) */

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.52] - 2026-10-16
+
+### Added
+- **自带 Node.js 运行时**：构建时下载 node v20.18.1 到 resources/runtime/，打包进 extraResources
+  - `scripts/fetch-runtime.mjs`（优先 npmmirror 镜像）
+  - installer 优先用自带 npm（`resources/runtime/<platform>/bin/npm.cmd`），回退系统 → 彻底解决"用户没装 node 就装不了插件"
+- **ctx.systemPrompt.section()**：插件注册提示词段，合并进系统提示词（`src/main/dsh/prompt-sections.js`）
+- **ctx.fs 服务**：文件服务（resolve/readText/writeText/listDir/editText），`src/main/dsh/fs-service.js`
+- **event-bridge**：把 LingYa AI 事件转成 DSH 标准事件广播给插件（`src/main/dsh/event-bridge.js`）
+
+### Notes
+- 全量测试 361/361
+- 移植自 cuckoo-code 0.8.16 的 DSH 兼容层（3 个 ctx 服务 + 自带运行时）
+- exe 体积从 78MB → ~156MB（含 node 运行时）
+
 ## [0.6.51] - 2026-10-16
 
 ### Added

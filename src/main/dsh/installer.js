@@ -44,19 +44,46 @@ function npmInDir(dir) {
   return null;
 }
 
+/** 平台标识（与 fetch-runtime.mjs 一致） */
+function runtimePlatform() {
+  const p = process.platform, a = process.arch;
+  if (p === 'win32' && a === 'x64') return 'win-x64';
+  if (p === 'darwin' && a === 'x64') return 'mac-x64';
+  if (p === 'darwin' && a === 'arm64') return 'mac-arm64';
+  return null;
+}
+
+/** 找应用自带的 npm（resources/runtime/<platform>/bin/），打包后优先用它 */
+function bundledNpm() {
+  const platform = runtimePlatform();
+  if (!platform) return null;
+  const candidates = [];
+  // 打包后：<安装目录>/resources/runtime/<platform>/bin
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'runtime', platform, 'bin'));
+  }
+  // 开发环境：项目根 resources/runtime/<platform>/bin
+  candidates.push(path.join(__dirname, '..', '..', '..', 'resources', 'runtime', platform, 'bin'));
+  for (const binDir of candidates) {
+    const npm = npmInDir(binDir);
+    if (npm) return { npm, nodeDir: binDir };
+  }
+  return null;
+}
+
 /**
  * 找 npm + node 目录。
- * @returns {{ npm: string|null, nodeDir: string|null }}
+ * @returns {{ npm: string|null, nodeDir: string|null, bundled?: boolean }}
  */
 function findNpmAndNode() {
+  // 0) 优先：应用自带 npm 运行时（不碰用户系统）
+  const bundled = bundledNpm();
+  if (bundled) return { npm: bundled.npm, nodeDir: bundled.nodeDir, bundled: true };
   // 1) 系统 PATH 直接有 npm
   const pathDirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
   for (const d of pathDirs) {
     const npm = npmInDir(d);
-    if (npm) {
-      // node 通常在同目录
-      return { npm, nodeDir: fs.existsSync(path.join(d, process.platform === 'win32' ? 'node.exe' : 'node')) ? d : d };
-    }
+    if (npm) return { npm, nodeDir: d };
   }
   // 2) 探测常见位置
   for (const d of candidateNodeDirs()) {
