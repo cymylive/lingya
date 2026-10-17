@@ -115,6 +115,16 @@ const api = {
   dshMarket: (force) => ipcRenderer.invoke('dsh-market', { force: !!force }),
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
+  // ===== 标签页 =====
+  tabList: () => ipcRenderer.invoke('lingya-tab-list'),
+  tabNew: (url) => ipcRenderer.invoke('lingya-tab-new', { url }),
+  tabSwitch: (tabId) => ipcRenderer.invoke('lingya-tab-switch', { tabId }),
+  tabClose: (tabId) => ipcRenderer.invoke('lingya-tab-close', { tabId }),
+  tabNavigate: (url, tabId) => ipcRenderer.invoke('lingya-tab-navigate', { url, tabId }),
+  tabBack: () => ipcRenderer.invoke('lingya-tab-back', {}),
+  tabForward: () => ipcRenderer.invoke('lingya-tab-forward', {}),
+  tabReload: () => ipcRenderer.invoke('lingya-tab-reload', {}),
+  onTabsUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-tabs-updated',h); return ()=>ipcRenderer.removeListener('lingya-tabs-updated',h); },
 };
 
 try {

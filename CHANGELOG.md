@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.6.63] - 2026-10-18
+
+### Fixed
+- **标签栏在浅色主题下仍是深黑色**：
+  - 根因：`html, body` 背景硬编码 `#0c0e10`（深色），标签栏用的是半透明 `--ck-bg-sub` → 浅色主题下透出深色底
+  - 新增主题实色变量：`--ck-bg-solid`（主背景不透明）/ `--ck-bg-bar`（标签栏，深色 `#14181c` 略亮于主背景、浅色 `#f1f3f5` 略暗于主背景，都形成层次）
+  - `body` / 侧栏 slot 改用 `--ck-bg-solid`；标签栏改用 `--ck-bg-bar`
+  - 地址栏输入框 focus 态背景改用 `--ck-bg-solid`（避免半透明发灰）
+
+### Notes
+- 深色/浅色主题实测截图均正确
+- 全量测试 398/398
+
+## [0.6.62] - 2026-10-18
+
+### Added
+- **浏览器多标签页**（改造自独立窗口模式）：
+  - 新增 `src/main/tab-manager.js`：每个窗口内多个 `WebContentsView`，同时只显示一个（active）
+  - 新增顶部**标签栏**：标签切换 / 新建（`+`）/ 关闭（`×`，主标签不可关）
+  - 新增**地址栏**：后退 / 前进 / 刷新 / 输入网址回车导航（自动补 `https://`）
+  - `openBrowserWindow()` 工具改为**优先在当前窗口开标签**，仅当无可用上下文时退化到独立 BrowserWindow
+  - `injectJS(windowId, code)` 语义不变，但目标是标签的 webContents
+  - 标签标题跟随网页 `page-title-updated`，URL 跟随 `did-navigate`
+
+### Changed
+- **窗口结构**：`ctx.view` 始终指向当前活动标签，Proxy 的 `webContents / loadURL / loadFile` 动态解析 → 85 处旧代码零改动
+- **布局**：顶部让出 40px（`TABBAR_HEIGHT`），侧栏下移至 y=40
+  - `layoutAIView` 遍历所有标签统一 `setBounds`
+
+### Fixed
+- 窗口标题被 `shell.html` 的 `<title>` 覆盖成「LingYa Shell」→ `page-title-updated` + `preventDefault()`
+
+### Notes
+- 全量测试 398/398（新增 11 个 tab-manager 用例）
+- 侧栏对等检查：IPC 108→116、shellAPI 88→97，missing 全空
+
 ## [0.6.61] - 2026-10-17
 
 ### Added

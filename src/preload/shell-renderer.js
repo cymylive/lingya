@@ -1582,4 +1582,97 @@
     try { window.shellAPI.onPluginsChanged(function(){ try { mountPluginViews(); } catch(_){} }); } catch(_e){}
   }
 
+  // ===== 顶部标签栏 + 地址栏 =====
+  (function initTabbar() {
+    var tabsEl = document.getElementById('lingya-tabs');
+    var newBtn = document.getElementById('lingya-tab-new');
+    var urlInput = document.getElementById('lingya-url-input');
+    var backBtn = document.getElementById('lingya-url-back');
+    var fwdBtn = document.getElementById('lingya-url-forward');
+    var reloadBtn = document.getElementById('lingya-url-reload');
+    if (!tabsEl || !window.shellAPI) return;
+
+    var lastTabs = [];
+    var lastActive = null;
+
+    function renderTabs(payload) {
+      var tabs = (payload && payload.tabs) || [];
+      var activeId = payload && payload.activeTabId;
+      lastTabs = tabs;
+      lastActive = activeId;
+      var h = '';
+      for (var i = 0; i < tabs.length; i++) {
+        var t = tabs[i];
+        var cls = 'ly-tab' + (t.active ? ' active' : '') + (t.isMain ? ' main' : '');
+        h += '<div class="' + cls + '" data-tab-id="' + attr(t.id) + '" title="' + attr(t.url || '') + '">'
+          + '<span class="ly-tab-title">' + esc(t.title || '新标签') + '</span>'
+          + '<span class="ly-tab-close" data-close-id="' + attr(t.id) + '" title="关闭">×</span>'
+          + '</div>';
+      }
+      tabsEl.innerHTML = h;
+
+      // 绑定切换 + 关闭
+      var items = tabsEl.querySelectorAll('.ly-tab');
+      for (var j = 0; j < items.length; j++) {
+        (function(el){
+          el.addEventListener('click', function(ev){
+            var closeEl = ev.target.closest('.ly-tab-close');
+            if (closeEl) {
+              ev.stopPropagation();
+              var cid = closeEl.getAttribute('data-close-id');
+              window.shellAPI.tabClose(cid).then(function(r){
+                if (r && !r.success) toast2(r.error || '关闭失败');
+              })['catch'](function(){});
+              return;
+            }
+            var id = el.getAttribute('data-tab-id');
+            if (id && id !== lastActive) {
+              window.shellAPI.tabSwitch(id)['catch'](function(){});
+            }
+          });
+        })(items[j]);
+      }
+
+      // 同步地址栏
+      var activeTab = null;
+      for (var k = 0; k < tabs.length; k++) if (tabs[k].active) { activeTab = tabs[k]; break; }
+      if (activeTab && document.activeElement !== urlInput) {
+        urlInput.value = activeTab.url || '';
+      }
+    }
+
+    // 初始加载 + 订阅变更
+    window.shellAPI.tabList().then(function(r){
+      if (r && r.success) renderTabs({ tabs: r.tabs, activeTabId: r.activeTabId });
+    })['catch'](function(){});
+    try {
+      window.shellAPI.onTabsUpdated(function(payload){ renderTabs(payload); });
+    } catch (_) {}
+
+    // 新建标签
+    if (newBtn) newBtn.addEventListener('click', function(){
+      window.shellAPI.tabNew('about:blank').then(function(r){
+        if (r && !r.success) toast2(r.error || '新建失败');
+        else if (urlInput) urlInput.focus();
+      })['catch'](function(){});
+    });
+
+    // 地址栏回车导航
+    if (urlInput) {
+      urlInput.addEventListener('keydown', function(ev){
+        if (ev.key !== 'Enter') return;
+        var u = String(urlInput.value || '').trim();
+        if (!u) return;
+        window.shellAPI.tabNavigate(u).then(function(r){
+          if (r && !r.success) toast2(r.error || '导航失败');
+        })['catch'](function(){});
+      });
+      urlInput.addEventListener('focus', function(){ urlInput.select(); });
+    }
+
+    if (backBtn) backBtn.addEventListener('click', function(){ window.shellAPI.tabBack()['catch'](function(){}); });
+    if (fwdBtn) fwdBtn.addEventListener('click', function(){ window.shellAPI.tabForward()['catch'](function(){}); });
+    if (reloadBtn) reloadBtn.addEventListener('click', function(){ window.shellAPI.tabReload()['catch'](function(){}); });
+  })();
+
 })();

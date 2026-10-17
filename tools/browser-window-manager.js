@@ -1,106 +1,135 @@
+/**
+ * 浏览器窗口/标签管理器
+ *
+ * 0.6.62 起：优先在当前窗口内开「标签页」（WebContentsView），
+ * 不再默认弹独立 BrowserWindow —— 用户体验等同浏览器多标签。
+ *
+ * 兼容：
+ *   - injectJS(id, code) / closeWindow(id) 语义不变
+ *   - 老代码传自定义 id 也照常工作
+ *
+ * 退化策略：如果当前没有可用的主窗口上下文（如启动早期），
+ * 才回退到新建独立 BrowserWindow，保证工具不失效。
+ */
 const { BrowserWindow } = require('electron');
+
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 class BrowserWindowManager {
   constructor() {
-    this.windows = new Map();
+    // id -> { kind: 'tab'|'window', windowId?, tabId?, win?, view? }
+    this.entries = new Map();
     this.nextAutoId = 1;
   }
 
+  /** 取当前活动窗口上下文 */
+  _getActiveContext() {
+    try {
+      const windowState = require('../src/main/window');
+      return windowState.getMainContext();
+    } catch (_) { return null; }
+  }
+
+  /**
+   * 打开浏览器（标签优先）
+   * @returns {string} id，后续用于 injectJS / closeWindow
+   */
   openWindow(customId, url, options = {}) {
     let id;
     if (customId) {
-      if (this.windows.has(customId)) {
-        throw new Error(`窗口 ID "${customId}" 已存在，请换一个 ID 或复用现有窗口`);
+      if (this.entries.has(customId)) {
+        throw new Error('窗口 ID "' + customId + '" 已存在，请换一个 ID 或复用现有窗口');
       }
       id = customId;
     } else {
-      do {
-        id = `win-${this.nextAutoId++}`;
-      } while (this.windows.has(id));
+      do { id = 'win-' + (this.nextAutoId++); } while (this.entries.has(id));
     }
 
+    // ---- 优先：当前窗口内开标签 ----
+    const ctx = this._getActiveContext();
+    if (ctx && ctx.tabs && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
+      try {
+        const tabManager = require('../src/main/tab-manager');
+        const tab = tabManager.createTab(ctx, {
+          url: url || 'about:blank',
+          activate: true,
+        });
+        // 自定义 id 用作可读别名
+        this.entries.set(id, { kind: 'tab', tabId: tab.id, ctx });
+        return id;
+      } catch (err) {
+        console.warn('[LingYa] 开标签失败，退化到独立窗口:', err.message);
+      }
+    }
+
+    // ---- 退化：独立 BrowserWindow ----
     const win = new BrowserWindow({
       width: options.width || 1200,
       height: options.height || 800,
-      ...options
+      ...options,
     });
-
-    // 设置与主窗口一致的 Chrome 130 普通 UA，避免暴露 Electron 标识
-    const userAgent =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
-    win.webContents.setUserAgent(userAgent);
-
-    // 忽略页面 beforeunload 拦截：工具调试窗口应能随时关闭。
-    // 否则若目标网页注册了 beforeunload（返回非空），Electron 会静默取消关闭，
-    // 表现为点右上角 X 或菜单"关闭窗口"均无反应。
-    win.webContents.on('will-prevent-unload', (event) => {
-      event.preventDefault();
-    });
-
+    win.webContents.setUserAgent(USER_AGENT);
+    win.webContents.on('will-prevent-unload', (e) => e.preventDefault());
     if (url) win.loadURL(url);
-    this.windows.set(id, win);
-    win.on('closed', () => this.windows.delete(id));
+    this.entries.set(id, { kind: 'window', win });
+    win.on('closed', () => this.entries.delete(id));
     return id;
   }
 
-  async injectJS(id, jsCode) {
-    const win = this.windows.get(id);
-    if (!win) throw new Error(`窗口 ID "${id}" 不存在`);
+  /** 解析 id -> webContents */
+  _resolveWebContents(id) {
+    const e = this.entries.get(id);
+    if (!e) throw new Error('窗口 ID "' + id + '" 不存在');
+    if (e.kind === 'tab') {
+      const tab = e.ctx.tabs.get(e.tabId);
+      if (!tab || !tab.view || tab.view.webContents.isDestroyed()) {
+        throw new Error('标签 "' + id + '" 已被关闭');
+      }
+      return tab.view.webContents;
+    }
+    if (!e.win || e.win.isDestroyed()) throw new Error('窗口 "' + id + '" 已被关闭');
+    return e.win.webContents;
+  }
 
-    // 先检查语法错误（解析阶段错误无法被 try-catch 捕获）
-    // 包裹为 async 函数体，避免 await 被误报
+  async injectJS(id, jsCode) {
+    const wc = this._resolveWebContents(id);
+
+    // 语法预检
     try {
       new Function('return (async () => {\n' + jsCode + '\n})');
     } catch (err) {
-      throw new Error(`JS 语法错误: ${err.message}`);
+      throw new Error('JS 语法错误: ' + err.message);
     }
 
     const hasReturn = /^\s*return\b/.test(jsCode);
     let wrapped;
     if (hasReturn) {
-      // 用户代码以 return 开头，保持原来的函数体包装
-      wrapped = `(async () => {
-  try {
-    const __result = await (async () => {
-${jsCode}
-    })();
-    return { ok: true, value: __result };
-  } catch (err) {
-    return { ok: false, error: err && err.message ? err.message : String(err) };
-  }
-})()`;
+      wrapped = '(async () => {\n  try {\n    const __result = await (async () => {\n' + jsCode + '\n    })();\n    return { ok: true, value: __result };\n  } catch (err) {\n    return { ok: false, error: err && err.message ? err.message : String(err) };\n  }\n})()';
     } else {
-      // 用户代码是表达式（如 IIFE），直接 await 表达式捕获返回值
-      wrapped = `(async () => {
-  try {
-    const __result = await (${jsCode});
-    return { ok: true, value: __result };
-  } catch (err) {
-    return { ok: false, error: err && err.message ? err.message : String(err) };
-  }
-})()`;
+      wrapped = '(async () => {\n  try {\n    const __result = await (' + jsCode + ');\n    return { ok: true, value: __result };\n  } catch (err) {\n    return { ok: false, error: err && err.message ? err.message : String(err) };\n  }\n})()';
     }
-    const result = await win.webContents.executeJavaScript(wrapped, true);
-    if (result && result.ok === false) {
-      throw new Error(result.error);
-    }
+    const result = await wc.executeJavaScript(wrapped, true);
+    if (result && result.ok === false) throw new Error(result.error);
     return result ? result.value : undefined;
   }
 
-  getWindow(id) {
-    const win = this.windows.get(id);
-    if (!win) throw new Error(`窗口 ID "${id}" 不存在`);
-    return win;
-  }
-
   getAllWindowIds() {
-    return Array.from(this.windows.keys());
+    return Array.from(this.entries.keys());
   }
 
   closeWindow(id) {
-    const win = this.getWindow(id);
-    win.close();
-    this.windows.delete(id);
+    const e = this.entries.get(id);
+    if (!e) throw new Error('窗口 ID "' + id + '" 不存在');
+    if (e.kind === 'tab') {
+      try {
+        const tabManager = require('../src/main/tab-manager');
+        tabManager.closeTab(e.ctx, e.tabId);
+      } catch (_) {}
+    } else if (e.win && !e.win.isDestroyed()) {
+      e.win.close();
+    }
+    this.entries.delete(id);
   }
 }
 

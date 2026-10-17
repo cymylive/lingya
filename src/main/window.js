@@ -23,7 +23,14 @@ function addWindow(win, profileId, providerId, sessionStore, view) {
   // win 可能是 Proxy（其 .webContents 被重定向到 AI view）。
   // rawWin 保存真实 BrowserWindow —— 壳页面 IPC（侧栏/文件树）需用它反查上下文。
   const rawWin = (win && win.__rawWindow) ? win.__rawWindow : win;
-  windows.set(win.id, { win, rawWin, view: view || null, profileId, providerId, sessionStore });
+  // tabs / activeTabId 由 tab-manager 维护；view 始终指向当前 active tab 的 view
+  windows.set(win.id, {
+    win, rawWin,
+    view: view || null,
+    tabs: new Map(),
+    activeTabId: null,
+    profileId, providerId, sessionStore,
+  });
   lastActiveWindowId = win.id;
   win.on('closed', () => {
     windows.delete(win.id);
@@ -62,8 +69,28 @@ function getContextByWebContents(webContents) {
     if (ctx.win && ctx.win.webContents === webContents) return ctx;
     // 3) AI 视图直接匹配
     if (ctx.view && ctx.view.webContents === webContents) return ctx;
+    // 4) 任意 tab 的视图匹配（多标签场景）
+    if (ctx.tabs && ctx.tabs.size) {
+      for (const t of ctx.tabs.values()) {
+        if (t.view && t.view.webContents === webContents) return ctx;
+      }
+    }
   }
   return null;
+}
+
+/** 按 webContents 精确定位到 tab（返回 { ctx, tab }，找不到 tab 时 tab 为 null） */
+function getTabByWebContents(webContents) {
+  if (!webContents) return { ctx: null, tab: null };
+  for (const ctx of windows.values()) {
+    if (ctx.tabs && ctx.tabs.size) {
+      for (const t of ctx.tabs.values()) {
+        if (t.view && t.view.webContents === webContents) return { ctx, tab: t };
+      }
+    }
+  }
+  const ctx = getContextByWebContents(webContents);
+  return { ctx, tab: null };
 }
 
 /** 取某上下文对应的 AI 视图（旧代码用 ctx.win.webContents 的地方改用此） */
@@ -116,6 +143,7 @@ module.exports = {
   removeWindow,
   getWindowContext,
   getContextByWebContents,
+  getTabByWebContents,
   getView,
   getViewWebContents,
   getMainWindow,

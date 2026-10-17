@@ -285,55 +285,91 @@ function createWindow(profile) {
   }
 
   const mainWindow = new BrowserWindow(winOptions);
-
-  // ===== AI 网页视图（独立 WebContentsView，与壳分离）=====
-  const aiView = new WebContentsView({
-    webPreferences: {
-      preload: path.join(__dirname, '..', '..', 'preload.js'),  // 原 AI 页面 preload（覆盖层 + 工具）
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      partition: profileData.partition,
-      backgroundThrottling: false,
-      additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
-    },
-  });
-  mainWindow.contentView.addChildView(aiView);
-  mainWindow.__aiView = aiView;
   mainWindow.__sidebarOpen = false;
 
-  // 布局：AI view 占右侧（侧栏展开时右移 280）
-  const layout = () => {
-    try {
-      const b = mainWindow.getContentBounds();
-      const sw = currentSidebarWidth(mainWindow);
-      aiView.setBounds({ x: sw, y: 0, width: Math.max(0, b.width - sw), height: b.height });
-    } catch (err) { /* ignore */ }
-  };
-  mainWindow.on('resize', layout);
-  layout();
+  // 阻止壳页面 <title> 覆盖窗口标题（Electron 默认 page-title-updated 会改窗口标题）
+  mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  // 用自定义标题
+  try { mainWindow.setTitle('LingYa Pro - ' + provider.name + ' - ' + profileData.name); } catch (_) {}
 
-  // ===== 兼容代理：让 ctx.win.webContents / loadURL 指向 AI view =====
-  // 目的：85 处旧调用（ctx.win.webContents.send/loadURL/getURL）无需改动即可作用于 AI 页面。
-  // 窗口自身操作（isDestroyed/setTitle/getBounds/on/destroy）仍落到真实 BrowserWindow。
-  const REDIRECT_TO_VIEW = new Set(['webContents', 'loadURL', 'loadFile']);
+  // ===== 兼容代理（先建，供 tab-manager 回调时用）=====
+  // webContents / loadURL / loadFile 动态指向「当前活动标签」的 view，
+  // 保证 85 处旧代码（ctx.win.webContents.send/getURL/loadURL）在多标签下仍正确。
   const winProxy = new Proxy(mainWindow, {
     get(target, prop) {
+      const ctx = windowState.getWindowContext(target.id);
+      const activeTab = ctx && ctx.tabs ? ctx.tabs.get(ctx.activeTabId) : null;
+      const activeView = activeTab ? activeTab.view : (target.__aiView || null);
       if (prop === '__rawWindow') return target;
-      if (prop === '__aiView') return aiView;
-      if (prop === 'webContents') return aiView.webContents;
-      if (prop === 'loadURL') return (url, opts) => aiView.webContents.loadURL(url, opts);
-      if (prop === 'loadFile') return (f, opts) => aiView.webContents.loadFile(f, opts);
+      if (prop === '__aiView') return activeView;
+      if (prop === 'webContents') return activeView ? activeView.webContents : null;
+      if (prop === 'loadURL') return (url, opts) => activeView ? activeView.webContents.loadURL(url, opts) : Promise.reject(new Error('无活动标签'));
+      if (prop === 'loadFile') return (f, opts) => activeView ? activeView.webContents.loadFile(f, opts) : Promise.reject(new Error('无活动标签'));
       const v = target[prop];
       return typeof v === 'function' ? v.bind(target) : v;
     },
     set(target, prop, value) { target[prop] = value; return true; },
   });
 
-  const winSession = aiView.webContents.session;
-  windowState.addWindow(winProxy, profileData.id, profileData.providerId || '', sessionStore, aiView);
-  sessionsToFlush.add(winSession);
+  // 先注册窗口上下文（此时 tabs 为空，稍后由 createTab 填充）
+  windowState.addWindow(winProxy, profileData.id, profileData.providerId || '', sessionStore, null);
   windowState.setMainWindow(winProxy);
+
+  // 布局：所有标签共享同一区域（顶部让出标签栏，只有 active 可见）
+  const layout = () => {
+    try {
+      const ctx = windowState.getWindowContext(mainWindow.id);
+      if (!ctx || !ctx.tabs) return;
+      const b = mainWindow.getContentBounds();
+      const sw = currentSidebarWidth(mainWindow);
+      const top = TABBAR_HEIGHT;
+      const w = Math.max(0, b.width - sw);
+      const h = Math.max(0, b.height - top);
+      for (const t of ctx.tabs.values()) {
+        try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
+      }
+    } catch (err) { /* ignore */ }
+  };
+  mainWindow.on('resize', layout);
+
+  // ===== 创建第一个（主）标签承载 AI 平台 =====
+  const tabManager = require('./tab-manager');
+  const ctxRef = windowState.getWindowContext(mainWindow.id);
+  ctxRef.relayout = layout;
+  ctxRef.onTabUpdated = (tabId) => {
+    try {
+      if (tabId === null) {
+        // 结构变化（关闭标签）
+      }
+      const tabs = tabManager.listTabs(ctxRef);
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('lingya-tabs-updated', { tabs, activeTabId: ctxRef.activeTabId });
+      }
+    } catch (_) {}
+  };
+
+  const mainTab = tabManager.createTab(ctxRef, {
+    url: providerChosen ? provider.homeUrl : null,
+    profileData,
+    userDataDir: app.getPath('userData'),
+    activate: true,
+  });
+  mainTab.isMain = true;
+  mainTab.title = provider.name;
+
+  // 未选平台 → 主标签加载平台选择页
+  if (!providerChosen) {
+    try {
+      mainTab.view.webContents.loadFile(path.join(__dirname, '..', 'ui', 'platform-select.html'));
+    } catch (_) {}
+  }
+
+  const aiView = mainTab.view;
+  mainWindow.__aiView = aiView;
+  layout();
+
+  const winSession = aiView.webContents.session;
+  sessionsToFlush.add(winSession);
 
   if (windowState.getAllWindows().length === 1) {
     updater.initAutoUpdater(mainWindow);
@@ -406,13 +442,7 @@ function createWindow(profile) {
   const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
   aiView.webContents.setUserAgent(userAgent);
 
-  if (providerChosen) {
-    aiView.webContents.loadURL(provider.homeUrl);
-  } else {
-    const selectPage = path.join(__dirname, '..', 'ui', 'platform-select.html');
-    aiView.webContents.loadFile(selectPage);
-  }
-
+  // 主标签的导航/会话监听（tab-manager 已负责标题/URL 同步）
   aiView.webContents.on('did-finish-load', () => {
     if (!mainWindow.isDestroyed()) {
       sessionStore.tryRestoreSessionFromUrl(winProxy);
@@ -435,10 +465,91 @@ function createWindow(profile) {
 
   mainWindow.on('closed', () => {
     sessionsToFlush.delete(winSession);
+    // 关闭所有标签的渲染进程，防止泄漏
+    try {
+      const ctx = windowState.getWindowContext(mainWindow.id);
+      if (ctx && ctx.tabs) {
+        for (const t of ctx.tabs.values()) {
+          try { t.view.webContents.close(); } catch (_) {}
+        }
+        ctx.tabs.clear();
+      }
+    } catch (_) {}
     windowState.removeWindow(mainWindow.id);
-    try { aiView.webContents.close(); } catch (_) {}
   });
 }
+
+// ========== 标签页 IPC（每个窗口独立）==========
+const tabManager = require('./tab-manager');
+
+function getCtxFromEvent(event) {
+  const ctx = windowState.getContextByWebContents(event.sender);
+  return ctx || null;
+}
+
+ipcMain.handle('lingya-tab-list', async (event) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  return { success: true, tabs: tabManager.listTabs(ctx), activeTabId: ctx.activeTabId };
+});
+
+ipcMain.handle('lingya-tab-new', async (event, { url, activate } = {}) => {
+  try {
+    const ctx = getCtxFromEvent(event);
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const tab = tabManager.createTab(ctx, {
+      url: url || 'about:blank',
+      activate: activate !== false,
+    });
+    return { success: true, tabId: tab.id };
+  } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('lingya-tab-switch', async (event, { tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  return tabManager.switchTab(ctx, tabId);
+});
+
+ipcMain.handle('lingya-tab-close', async (event, { tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  return tabManager.closeTab(ctx, tabId);
+});
+
+ipcMain.handle('lingya-tab-navigate', async (event, { url, tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  if (!url || !/^https?:\/\//i.test(url) && url !== 'about:blank') {
+    // 允许省略协议：自动补 https
+    if (url && !/^[a-z]+:/i.test(url)) url = 'https://' + url;
+  }
+  return tabManager.navigate(ctx, url, tabId);
+});
+
+ipcMain.handle('lingya-tab-back', async (event, { tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  const t = ctx.tabs.get(tabId || ctx.activeTabId);
+  if (!t) return { success: false, error: '标签不存在' };
+  try { if (t.view.webContents.canGoBack()) t.view.webContents.goBack(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('lingya-tab-forward', async (event, { tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  const t = ctx.tabs.get(tabId || ctx.activeTabId);
+  if (!t) return { success: false, error: '标签不存在' };
+  try { if (t.view.webContents.canGoForward()) t.view.webContents.goForward(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.handle('lingya-tab-reload', async (event, { tabId } = {}) => {
+  const ctx = getCtxFromEvent(event);
+  if (!ctx) return { success: false, error: '窗口不存在' };
+  const t = ctx.tabs.get(tabId || ctx.activeTabId);
+  if (!t) return { success: false, error: '标签不存在' };
+  try { t.view.webContents.reload(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
 
 // ========== 应用菜单 ==========
 function setupAppMenu() {
@@ -593,20 +704,26 @@ try {
 const { ipcMain: ipcMainForProfile } = require('electron');
 const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
 const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
+const TABBAR_HEIGHT = 40;        // 顶部标签栏高度（壳页面绘制，AI view 从其下方开始）
 
 /** 当前侧栏实际占宽：展开=自定义宽，收起=46 */
 function currentSidebarWidth(w) {
   return w.__sidebarOpen ? (w.__sidebarWidth || SIDEBAR_DEFAULT) : SIDEBAR_COLLAPSED;
 }
 
-/** 重排 AI view：侧栏展开时右移 sw，收起时归 0 */
+/** 重排所有标签的 view：顶部让出标签栏，侧栏展开时右移 sw */
 function layoutAIView(mainWindow) {
   try {
-    const aiView = mainWindow.__aiView;
-    if (!aiView) return;
+    const ctx = windowState.getWindowContext(mainWindow.id);
+    if (!ctx || !ctx.tabs || !ctx.tabs.size) return;
     const b = mainWindow.getContentBounds();
     const sw = currentSidebarWidth(mainWindow);
-    aiView.setBounds({ x: sw, y: 0, width: Math.max(0, b.width - sw), height: b.height });
+    const top = TABBAR_HEIGHT;
+    const w = Math.max(0, b.width - sw);
+    const h = Math.max(0, b.height - top);
+    for (const t of ctx.tabs.values()) {
+      try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
+    }
   } catch (_) {}
 }
 

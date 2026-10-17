@@ -2,12 +2,14 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>LingYa Shell</title>
+<title>LingYa</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0c0e10; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--ck-bg-solid, #0c0e10); }
   :root {
     --ck-bg: rgba(12,14,16,0.97);
+    --ck-bg-solid: #0c0e10;      /* 不透明主背景（标签栏/窗口底色，避免半透明透底） */
+    --ck-bg-bar: #14181c;         /* 标签栏实色，比主背景略亮一档 */
     --ck-bg-sub: rgba(0,0,0,0.25);
     --ck-surface: rgba(255,255,255,0.04);
     --ck-surface-hover: rgba(255,255,255,0.08);
@@ -22,6 +24,8 @@
   }
   html.lingya-theme-light {
     --ck-bg: rgba(252,252,253,0.98);
+    --ck-bg-solid: #fcfcfd;
+    --ck-bg-bar: #f1f3f5;         /* 浅色标签栏：比主背景略暗一档，形成层次 */
     --ck-bg-sub: rgba(0,0,0,0.03);
     --ck-surface: rgba(0,0,0,0.03);
     --ck-surface-hover: rgba(0,0,0,0.07);
@@ -36,9 +40,9 @@
 
   /* ===== 侧栏容器 ===== */
   #lingya-sidebar-slot {
-    position: absolute; top: 0; left: 0; bottom: 0; width: 0;
+    position: absolute; top: 40px; left: 0; bottom: 0; width: 0;
     overflow: visible; display: flex;
-    background: var(--ck-bg);
+    background: var(--ck-bg-solid);
     transition: width 0.18s ease;
   }
   /* 右侧渐变分隔线（美观的边） */
@@ -251,9 +255,60 @@
   .sh-pop-seg .sh-cols-btn:hover { background: var(--ck-surface-hover); }
   .sh-pop-seg .sh-cols-btn.active { background: var(--ck-primary); border-color: var(--ck-primary); color: #fff; font-weight: 700; }
   .sh-pop-hint { font-size: 10px; color: var(--ck-text-dim); margin-top: 4px; }
+
+  /* ===== 顶部标签栏 + 地址栏 ===== */
+  #lingya-tabbar {
+    position: absolute; top: 0; left: 0; right: 0; height: 40px; z-index: 100;
+    display: flex; align-items: center; gap: 6px; padding: 0 8px;
+    background: var(--ck-bg-bar); border-bottom: 1px solid var(--ck-border);
+    -webkit-app-region: drag;
+  }
+  #lingya-tabbar button, #lingya-tabbar input { -webkit-app-region: no-drag; }
+  #lingya-tabs { display: flex; align-items: center; gap: 4px; max-width: 45%; overflow-x: auto; overflow-y: hidden; }
+  #lingya-tabs::-webkit-scrollbar { height: 0; }
+  .ly-tab {
+    display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+    background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 7px;
+    font-size: 12px; color: var(--ck-text-2); cursor: pointer; white-space: nowrap;
+    max-width: 200px; flex-shrink: 0; transition: background .15s;
+  }
+  .ly-tab:hover { background: var(--ck-surface-hover); }
+  .ly-tab.active { background: var(--ck-primary-soft); border-color: var(--ck-primary); color: var(--ck-title); font-weight: 600; }
+  .ly-tab-title { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  .ly-tab-close { font-size: 14px; line-height: 1; color: var(--ck-text-dim); padding: 0 2px; border-radius: 4px; }
+  .ly-tab-close:hover { background: rgba(248,113,113,.25); color: #f87171; }
+  .ly-tab.main .ly-tab-close { display: none; }
+  #lingya-tab-new {
+    width: 26px; height: 26px; flex-shrink: 0; border: 1px solid var(--ck-border); background: var(--ck-surface);
+    color: var(--ck-text-dim); border-radius: 6px; cursor: pointer; font-size: 16px; line-height: 1;
+  }
+  #lingya-tab-new:hover { background: var(--ck-surface-hover); color: var(--ck-primary); }
+  #lingya-urlbar { flex: 1; display: flex; align-items: center; gap: 3px; min-width: 0; }
+  .ly-url-btn {
+    width: 24px; height: 24px; flex-shrink: 0; border: none; background: transparent;
+    color: var(--ck-text-dim); cursor: pointer; border-radius: 5px; font-size: 15px; line-height: 1;
+  }
+  .ly-url-btn:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  #lingya-url-input {
+    flex: 1; min-width: 0; height: 26px; padding: 0 10px;
+    background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 13px;
+    color: var(--ck-text); font-size: 12px; outline: none;
+  }
+  #lingya-url-input:focus { border-color: var(--ck-primary); background: var(--ck-bg-solid); }
 </style>
 </head>
 <body>
+  <!-- 顶部标签栏 + 地址栏（AI view 从 y=40 开始，由主进程 TABBAR_HEIGHT 对齐） -->
+  <div id="lingya-tabbar">
+    <div id="lingya-tabs"></div>
+    <button id="lingya-tab-new" title="新标签页">+</button>
+    <div id="lingya-urlbar">
+      <button class="ly-url-btn" id="lingya-url-back" title="后退">‹</button>
+      <button class="ly-url-btn" id="lingya-url-forward" title="前进">›</button>
+      <button class="ly-url-btn" id="lingya-url-reload" title="刷新">⟳</button>
+      <input id="lingya-url-input" type="text" placeholder="输入网址后回车" spellcheck="false" autocomplete="off" />
+    </div>
+  </div>
   <div id="lingya-sidebar-slot" class="collapsed">
     <div id="lingya-activitybar">
       <div id="sh-ab-grid" class="sh-ab-grid" data-cols="1">
