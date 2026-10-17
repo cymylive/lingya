@@ -746,6 +746,32 @@ function bindEvents() {
   const refreshSessionsBtn = document.getElementById('lingya-btn-refresh-sessions');
   refreshSessionsBtn?.addEventListener('click', renderSessions);
 
+  // AI 重命名按钮：让 AI 回顾完整上下文后用 nameConversation 重新命名本对话
+  const aiRenameBtn = document.getElementById('lingya-btn-ai-rename');
+  aiRenameBtn?.addEventListener('click', () => {
+    const prompt = [
+      '请回顾本次对话的**完整上下文**（包括所有历史消息与工具执行结果），提炼这次对话真正在做的核心工作，',
+      '然后**只调用一次** nameConversation(title) 工具，给本次对话起一个准确的中文标题（≤20 字）。',
+      '',
+      '要求：',
+      '1. 标题要体现对话的**实际核心内容**，不要用"你好""继续"这类开场词，也不要用最后一条消息的主题代替整体。',
+      '2. 直接调用工具，不要输出计划、不要解释、不要做任何其他操作。',
+      '3. 调用完只回复一句"已重命名为：<标题>"即可。',
+    ].join('\n');
+    if (!sendToChat(prompt, 'AI重命名', 300)) {
+      showToast('未找到输入框，请确保已打开聊天界面', 3000);
+    } else {
+      showToast('已请求 AI 重新命名本对话', 2200);
+    }
+  });
+
+  // 会话标题更新（AI 自动命名 / 手动改名）→ 实时刷新会话列表
+  try {
+    if (window.electronAPI && window.electronAPI.onSessionTitleUpdated) {
+      window.electronAPI.onSessionTitleUpdated(() => { try { renderSessions(); } catch (_) {} });
+    }
+  } catch (_) { /* ignore */ }
+
   // 保存延迟设置按钮
   const saveDelayBtn = document.getElementById('lingya-btn-save-delay');
   const delayMinInput = document.getElementById('lingya-delay-min');

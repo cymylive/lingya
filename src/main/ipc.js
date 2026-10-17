@@ -377,11 +377,19 @@ function registerIpcHandlers() {
     return { success: true, sessions };
   });
 
-  // 设置当前会话标题（AI 命名对话走 nameConversation 工具；此通道供前端手动改名）
-  ipcMain.handle('set-session-title', async (event, { title } = {}) => {
+  // 设置会话标题（AI 命名对话走 nameConversation 工具；此通道供前端手动改名）
+  // 传 sessionId 时改该会话（会话列表里重命名任意对话）；不传则改当前会话。
+  ipcMain.handle('set-session-title', async (event, { title, sessionId } = {}) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const store = ctx ? ctx.sessionStore : null;
-    if (!store || typeof store.setSessionTitle !== 'function') {
+    if (!store) return { success: false, error: '会话存储未就绪' };
+    if (sessionId) {
+      if (typeof store.setSessionTitleById !== 'function') {
+        return { success: false, error: '会话存储不支持按 ID 改名' };
+      }
+      return store.setSessionTitleById(sessionId, title);
+    }
+    if (typeof store.setSessionTitle !== 'function') {
       return { success: false, error: '会话存储未就绪' };
     }
     return store.setSessionTitle(title);

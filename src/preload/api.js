@@ -15,6 +15,14 @@ let electronAPI = {
       skipPrompt: false,
       projectDir: projectDir || null,
       isCompaction: !!isCompaction,
+    }).then((r) => {
+      // 初始化成功 → 安排一次自动重命名（等 AI 处理完初始化回复后触发）
+      try {
+        if (r && r.success) {
+          require('./dom/auto-rename').scheduleAfterInit({ projectDir, isCompaction });
+        }
+      } catch (e) { console.error('[LingYa] 安排自动重命名失败:', e.message); }
+      return r;
     });
   },
   updateProjectDir: () => {
@@ -48,6 +56,9 @@ let electronAPI = {
   },
   navigateSession: (sessionId) => {
     return ipcRenderer.invoke('navigate-session', { sessionId });
+  },
+  setSessionTitle: (title, sessionId) => {
+    return ipcRenderer.invoke('set-session-title', sessionId ? { title, sessionId } : { title });
   },
   createProfileWindow: () => {
     return ipcRenderer.invoke('create-profile-window');
@@ -181,6 +192,7 @@ let electronAPI = {
   },
   getPluginPreloads: () => ipcRenderer.invoke('plugin-preloads'),
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
+  onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
   // ========== 平台相关 API ==========
   listProviders: () => {
     return ipcRenderer.invoke('list-providers');

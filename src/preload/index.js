@@ -87,6 +87,37 @@ function init() {
 
     // 停滞监督者：独立心跳，检测到任务卡住时自动催促继续
     require('./dom/supervisor').startSupervisor();
+
+    // 会话标题更新 → 调平台 API 改名 + DOM 双写（含 MutationObserver 守护）
+    // （nameConversation / 手动改名原本只改 LingYa 本地存储，不碰网页自身 UI）
+    try {
+      if (window.electronAPI && window.electronAPI.onSessionTitleUpdated) {
+        window.electronAPI.onSessionTitleUpdated(async (payload) => {
+          try {
+            const p = payload || {};
+            const newTitle = String(p.title || '').trim();
+            const sid = String(p.sessionId || '').trim();
+            if (!newTitle || !sid) return;
+            // 标记已命名：无论来源是 AI 自动命名 / 用户手动改名 / 自动重命名，
+            // 后续 init-project 都不该再触发一次自动重命名
+            try { require('./dom/auto-rename').markRenamed(sid); } catch (_) {}
+            const sync = require('./dom/page-title-sync');
+            const r = await sync.syncSessionTitle(sid, newTitle);
+            console.log('[LingYa] 会话标题同步: ' + JSON.stringify({
+              sid, title: newTitle, api: r.api, dom: r.dom, current: r.current,
+            }));
+          } catch (e) { console.error('[LingYa] 同步会话标题失败:', e.message); }
+        });
+      }
+
+      // SPA 路由切换后重新应用标题（DeepSeek 是 pushState 导航）
+      const syncMod = require('./dom/page-title-sync');
+      window.addEventListener('popstate', () => { try { syncMod.onUrlChanged(); } catch (_) {} });
+      let lastHref = location.href;
+      setInterval(() => {
+        if (location.href !== lastHref) { lastHref = location.href; try { syncMod.onUrlChanged(); } catch (_) {} }
+      }, 800);
+    } catch (_) { /* ignore */ }
   } catch (err) {
     console.error('[LingYa] init() 出错:', err);
     // 兜底：即使出错也强制显示面板

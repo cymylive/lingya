@@ -1327,7 +1327,7 @@
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">窗口</div><button class="sh-btn" id="sh-set-newwin">新建窗口</button></div>'+
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">对话</div><button class="sh-btn" id="sh-set-compact">压缩上下文</button> <button class="sh-btn" id="sh-set-export">导出对话(.md)</button> <button class="sh-btn" id="sh-set-immersive">沉浸式交流</button> <button class="sh-btn" id="sh-set-parse">手动解析</button> <button class="sh-btn" id="sh-set-stop">停止任务</button></div>'+
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">悬浮元素</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hidefloat" /> 隐藏悬浮球与覆盖层面板</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hideplan" /> 隐藏计划悬浮卡</label></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动注入</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-autoinject" /> 新会话自动注入记忆与技能</label></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动注入</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-autoinject" /> 新会话自动注入记忆与技能</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding-top:4px;"><input type="checkbox" id="sh-set-autorename" /> 初始化项目后自动 AI 重命名</label></div>'+
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动压缩</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-acen" /> 开启自动压缩</label><div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:12px;"><span style="color:var(--ck-text-dim);">超过</span><input id="sh-set-acth" type="number" value="80" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">万 tokens</span><button class="sh-btn" id="sh-set-acsave">保存</button></div></div>'+
       '<div class="sh-card"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">发送延迟(ms)</div><div style="display:flex;gap:4px;align-items:center;font-size:12px;"><input id="sh-set-dmin" type="number" value="2000" style="width:80px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">至</span><input id="sh-set-dmax" type="number" value="4000" style="width:80px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><button class="sh-btn" id="sh-set-dsave">保存</button></div></div>');
     var ev=function(id){ return document.getElementById(id); };
@@ -1344,6 +1344,17 @@
     var pa=ev('sh-set-parse'); if(pa) pa.addEventListener('click',function(){ act('manual-parse'); });
     var st=ev('sh-set-stop'); if(st) st.addEventListener('click',function(){ act('stop'); });
     var ai=ev('sh-set-autoinject'); if(ai) ai.addEventListener('change',function(){ try{ localStorage.setItem('sh-autoinject', ai.checked?'1':'0'); }catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-inject', ai.checked); });
+    // 自动重命名开关（默认开启；只有显式设为 '0' 才关闭）
+    (function(){
+      var ar=ev('sh-set-autorename');
+      if(!ar) return;
+      try { ar.checked = localStorage.getItem('lingya-auto-rename-enabled') !== '0'; } catch(_e) { ar.checked = true; }
+      ar.addEventListener('change', function(){
+        try { localStorage.setItem('lingya-auto-rename-enabled', ar.checked ? '1' : '0'); } catch(_e) {}
+        if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-rename-enabled', ar.checked);
+        toast2(ar.checked ? '已开启自动 AI 重命名' : '已关闭自动 AI 重命名');
+      });
+    })();
     function loadFloatCb(){ try{ var hf=localStorage.getItem('lingya-hide-floating')==='1'; var hp=localStorage.getItem('lingya-hide-plan-float')==='1'; var e1=ev('sh-set-hidefloat'); if(e1) e1.checked=hf; var e2=ev('sh-set-hideplan'); if(e2) e2.checked=hp; }catch(_e){} }
     loadFloatCb();
     (function loadSettingsCb(){ try{ var v; v=localStorage.getItem('sh-delay-min'); var e1=ev('sh-set-dmin'); if(v&&e1) e1.value=v; v=localStorage.getItem('sh-delay-max'); var e2=ev('sh-set-dmax'); if(v&&e2) e2.value=v; var e3=ev('sh-set-autoinject'); if(e3) e3.checked=(localStorage.getItem('sh-autoinject')==='1'); var e4=ev('sh-set-acen'); if(e4) e4.checked=(localStorage.getItem('sh-acen')==='1'); v=localStorage.getItem('sh-acth'); var e5=ev('sh-set-acth'); if(v&&e5) e5.value=v; }catch(_e){} })();
@@ -1399,7 +1410,7 @@
 
   function renderSessionsView(el){
     el.innerHTML = panel('会话列表',
-      '<div style="display:flex;gap:4px;margin-bottom:6px;"><button class="sh-btn" id="sh-ss-refresh">刷新</button><button class="sh-btn" id="sh-ss-init">初始化项目</button></div>'+
+      '<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;"><button class="sh-btn" id="sh-ss-refresh">刷新</button><button class="sh-btn" id="sh-ss-init">初始化项目</button><button class="sh-btn" id="sh-ss-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button></div>'+
       '<div id="sh-ss-body" class="sh-empty">加载中…</div>');
     function load(){
       if(!window.shellAPI||!window.shellAPI.listSessions) return;
@@ -1415,7 +1426,7 @@
           var title=typeof it==='object'?(it.title||''):'';
           var shortId=sid.length>14?(sid.slice(0,14)+'…'):sid;
           var main=title?(esc(title)+' <span style="color:var(--ck-text-dim);font-size:10px;">('+esc(shortId)+')</span>'):esc(shortId);
-          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
+          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" data-title="'+esc(title)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-rename" title="重命名" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">改名</span><span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
         }
         box.innerHTML=h;
         var items=box.querySelectorAll('.sh-ss-item');
@@ -1423,9 +1434,28 @@
           if(!window.shellAPI.navigateSession) return;
           window.shellAPI.navigateSession(el.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
         }); })(items[j]); }
+        // 改名按钮（AI 命名后可手动修正）
+        var renames=box.querySelectorAll('.sh-ss-rename');
+        for(var k=0;k<renames.length;k++){ (function(btn){ btn.addEventListener('click',function(ev){
+          ev.stopPropagation();
+          var item=btn.closest('.sh-ss-item'); if(!item) return;
+          var sid=item.getAttribute('data-id'); if(!sid) return;
+          var cur=item.getAttribute('data-title')||'';
+          var nn=prompt('重命名对话',cur); if(nn==null) return;
+          nn=String(nn).trim(); if(!nn) return;
+          if(!window.shellAPI.setSessionTitle){ toast2('接口不可用'); return; }
+          window.shellAPI.setSessionTitle(nn,sid).then(function(r3){
+            if(r3&&r3.success){ toast2('已改名'); load(); } else toast2('改名失败');
+          })['catch'](function(){ toast2('改名失败'); });
+        }); })(renames[k]); }
       })['catch'](function(){});
     }
     var rf=document.getElementById('sh-ss-refresh'); if(rf) rf.addEventListener('click',load);
+    var airen=document.getElementById('sh-ss-ai-rename');
+    if(airen) airen.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.runAction){ toast2('接口不可用'); return; }
+      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r&&r.success?'已请求 AI 重新命名':'失败'); })['catch'](function(){ toast2('失败'); });
+    });
     var ini=document.getElementById('sh-ss-init'); if(ini) ini.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){}); });
     load();
   }

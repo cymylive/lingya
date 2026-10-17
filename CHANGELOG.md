@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.6.61] - 2026-10-17
+
+### Added
+- **初始化项目后自动 AI 重命名**（不用再手动点）：
+  - 新增 `src/preload/dom/auto-rename.js`：`init-project` 成功后等 AI 处理完初始化回复（悬浮球连续 2 次回到 idle），再自动发送重命名指令
+  - 触发点统一收口在 `api.js` 的 `initProject()`，覆盖三条路径：手动点「初始化项目」/ 新会话自动注入 / 压缩后自动初始化
+  - 去重：`localStorage['lingya-auto-renamed-sessions']` 记录已命名会话（最多保留 300 个）；**任何来源的命名都会标记**（AI 自动命名 / 用户手动改名 / 自动重命名），所以同一会话不会重复触发
+  - 超时保护：最多等 3 分钟 AI 空闲，超时放弃并打日志
+  - 开关：`localStorage['lingya-auto-rename-enabled']`，**默认开启**，显式设 '0' 关闭；侧栏「设置」→「自动注入」卡片里新增复选框
+
+### Notes
+- 全量测试 387/387（新增 8 个 auto-rename 用例）
+
+## [0.6.60] - 2026-10-17
+
+### Fixed
+- **会话重命名真正生效到 AI 网页（历史对话列表 + 页面顶部标题）**：
+  - 0.6.59 的修复不彻底：只做 DOM 猜测，且页面顶部的定位规则抓错了元素（抓到了 AI 回复里的长文本）
+  - **逆向出 DeepSeek 官方改名接口**：`POST /api/v0/chat_session/update_title`，body `{chat_session_id, title}`，鉴权 `Authorization: Bearer <localStorage.userToken.value>`；实测返回 `code: 0` 且服务端持久化（刷新后保留）
+  - 实测发现关键问题：**调 API 改了服务端，但 React 状态不更新，UI 不跟着变**；直接改 DOM 生效但不持久
+  - 最终方案 = **API 改名（持久化）+ DOM 双写（立即见效）+ MutationObserver 守护（防 React 重渲染改回）**
+  - 页面顶部标题定位规则修正为：`top 0~60px`、`left > 150`（跳过侧边栏）、字号 ≥13、排除按钮词表（开启新对话/复制/下载/思考中等）
+  - 侧边栏定位：`a[href*="/a/chat/s/<id>"]` 内的叶子 div
+  - 非当前会话：只改侧边栏对应项，不动页面标题
+  - SPA 路由切换（pushState）时重新应用标题
+
+### Added
+- `test/preload/page-title-sync.test.js`：14 个用例，覆盖 sessionId 提取、侧栏/页面标题定位、按钮词排除、旧标题精确匹配、平台识别、API+DOM 双写、非当前会话、API 失败兜底、未登录
+
+### Notes
+- 全量测试 379/379（新增 14 个）
+- 仅实现 DeepSeek 平台；其他平台走 DOM 兜底（无 API 改名）
+
+## [0.6.59] - 2026-10-17
+
+### Fixed
+- **AI 重命名/手动改名后，AI 网页顶部的会话标题不跟着变**：
+  - 根因：`nameConversation` / 手动改名只写 LingYa 自己的 `session-store`，完全不碰 AI 网页（DeepSeek/Claude/ChatGPT）自身 UI 里的标题元素，所以用户看到「已重命名为 XXX」但页面顶部还是旧标题
+  - 新增 `src/preload/dom/page-title-sync.js`：启发式定位页面顶部标题元素（优先 header 内「字号最大 + 靠上 + 叶子节点 + 短文本」，排除 button/a/input/role=button；找不到 header 时退化为「页面顶部 80px 内的最大字号短文本」）
+  - `src/preload/index.js`：订阅 `session-title-updated`，仅当 `payload.sessionId` 与当前页面 URL 提取的 sessionId 一致时才同步，避免改别的会话污染当前页面
+  - `src/main/session-store.js`：`notifyTitleUpdated` 额外同步 **Electron 窗口标题**（`rawWin.setTitle('LingYa - ' + title)`），仅作用于「当前会话就是该 sessionId」的窗口
+
+### Notes
+- 全量测试 365/365；侧栏对等检查全绿
+
+## [0.6.58] - 2026-10-17
+
+### Added
+- **会话手动重命名**（补齐 cuckoo-code 的工作区改名能力）：
+  - 覆盖层「会话」页签：每个会话项新增 **改名** 按钮
+  - 侧栏「会话列表」面板：每个会话项新增 **改名** 按钮
+  - 后端新增 sessionStore.setSessionTitleById(sessionId, title) —— 按 sessionId 改任意会话标题，不要求该会话是当前会话
+  - IPC set-session-title 扩展：传 sessionId 改指定会话，不传则改当前会话（向后兼容）
+  - session-title-updated 改为**广播给所有窗口**（AI 视图 + 壳窗口），改名后两处列表实时刷新
+- **AI 重命名按钮**（长上下文场景：几十万 token 后手动触发 AI 重新总结命名）：
+  - 覆盖层「会话」页签头部新增 **🤖 AI 重命名**
+  - 侧栏「会话列表」面板头部新增 **AI 重命名**
+  - 点击后向 AI 发送提示词：回顾完整上下文 → 提炼核心工作 → 只调一次 nameConversation(title)（≤20 字）
+  - 侧栏走 shell-run-action('ai-rename') 通道 → AI 视图的 lingya-run-action 处理器
+
+### Fixed
+- **AI 自动命名后列表不刷新**：notifyTitleUpdated 原来只发给主窗口，另一个 webContents 收不到；改为 getAllContexts() 全量广播
+
+### Notes
+- 全量测试 365/365
+
 ## [0.6.57] - 2026-10-16
 
 ### Fixed

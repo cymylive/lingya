@@ -70,13 +70,42 @@ function createSessionStore(profileId, storeDir, windowState) {
     writeSessionStore(store);
   }
 
-  /** 通知渲染进程会话标题已更新（会话列表实时刷新） */
+  /**
+   * 通知渲染进程会话标题已更新（会话列表实时刷新）。
+   * 广播给所有窗口：改名入口在壳窗口（侧栏），会话列表在 AI 视图，
+   * 只发给主窗口会漏掉另一个。
+   */
   function notifyTitleUpdated(sessionId, title) {
+    const payload = { sessionId, title };
     try {
-      const win = windowState && windowState.getMainWindow();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('session-title-updated', { sessionId, title });
+      if (windowState && typeof windowState.getAllContexts === 'function') {
+        for (const ctx of windowState.getAllContexts()) {
+          // 只处理「当前会话就是这个 sessionId」的窗口：窗口标题 + 页面标题都跟着变
+          const st = ctx.sessionStore;
+          const isCurrent = !!(st && st.state && st.state.currentSessionId === sessionId);
+          if (isCurrent) {
+            // 同步 Electron 窗口标题（rawWin 才是真实 BrowserWindow，ctx.win 可能是 Proxy）
+            try {
+              const w = ctx.rawWin || ctx.win;
+              if (w && !w.isDestroyed() && typeof w.setTitle === 'function') {
+                w.setTitle('LingYa - ' + title);
+              }
+            } catch (_) {}
+          }
+          // 广播给渲染进程（页内标题同步由 preload 处理）
+          try {
+            const wc = ctx.win && ctx.win.webContents;
+            if (wc && !wc.isDestroyed()) wc.send('session-title-updated', payload);
+          } catch (_) {}
+          try {
+            const raw = ctx.rawWin;
+            if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('session-title-updated', payload);
+          } catch (_) {}
+        }
+        return;
       }
+      const win = windowState && windowState.getMainWindow();
+      if (win && !win.isDestroyed()) win.webContents.send('session-title-updated', payload);
     } catch (_) { /* ignore */ }
   }
 
@@ -114,6 +143,20 @@ function createSessionStore(profileId, storeDir, windowState) {
     state.pendingTitle = t;
     console.log('[LingYa][' + profileId + '] 暂存对话标题，等待会话ID出现后绑定: ' + t);
     return { success: true, pending: true };
+  }
+
+  /**
+   * 按 sessionId 设置标题（用于会话列表里手动重命名任意对话，不要求该会话是当前会话）。
+   * 指定 sessionId 时直接写入该条目；未指定则退回 setSessionTitle（当前会话）。
+   */
+  function setSessionTitleById(sessionId, title) {
+    const t = String(title || '').trim();
+    if (!t) return { success: false, error: '标题为空' };
+    if (!sessionId) return setSessionTitle(t);
+    if (!updateSessionTitle(sessionId, t)) {
+      return { success: false, error: '写入会话标题失败' };
+    }
+    return { success: true, sessionId };
   }
 
   function extractSessionIdFromUrl(url) {
@@ -221,6 +264,7 @@ function createSessionStore(profileId, storeDir, windowState) {
     saveSessionDirMapping,
     updateSessionTitle,
     setSessionTitle,
+    setSessionTitleById,
     extractSessionIdFromUrl,
     handleUrlChange,
     tryRestoreSessionFromUrl,

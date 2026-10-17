@@ -86,7 +86,7 @@ const api = {
   // 会话 / 窗口 / Agent / 项目
   listSessions: () => ipcRenderer.invoke('list-sessions'),
   navigateSession: (sessionId) => ipcRenderer.invoke('navigate-session', { sessionId }),
-  setSessionTitle: (title) => ipcRenderer.invoke('set-session-title', { title }),
+  setSessionTitle: (title, sessionId) => ipcRenderer.invoke('set-session-title', sessionId ? { title, sessionId } : { title }),
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   openProfileWindow: (profileId) => ipcRenderer.invoke('open-profile-window', { profileId }),
   createProfileWindow: () => ipcRenderer.invoke('create-profile-window'),

@@ -401,6 +401,7 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     const v = payload && payload.value;
     if (!k) return;
     if (k === 'auto-inject') { localStorage.setItem('lingya-auto-inject', v ? '1' : '0'); }
+    else if (k === 'auto-rename-enabled') { localStorage.setItem('lingya-auto-rename-enabled', v ? '1' : '0'); }
     else if (k === 'send-delay-min') { localStorage.setItem('lingya-send-delay-min', String(v)); state.sendDelayMin = Number(v); }
     else if (k === 'send-delay-max') { localStorage.setItem('lingya-send-delay-max', String(v)); state.sendDelayMax = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
@@ -417,6 +418,18 @@ ipcRenderer.on('lingya-run-action', async (_event, payload) => {
       await sendToChat('根据当前项目生成一个类似 claude.md 的项目说明文件，并将文件放到当前项目 .lingyaCode/LINGYA.md', '生成文档', 300);
     } else if (a === 'immersive') {
       await sendToChat('现在你的任何疑问,或没有疑问的选择都需要和我确认 , 确认的方式是 你问一个问题我回答一个问题,然后你再问下一个问题, 最好给我选项, 也要给我个其他的选项, 谢谢 爱你哦', '沉浸式交流', 300);
+    } else if (a === 'ai-rename') {
+      // 让 AI 回顾完整上下文，用 nameConversation 给本对话重新命名
+      const prompt = [
+        '请回顾本次对话的**完整上下文**（包括所有历史消息与工具执行结果），提炼这次对话真正在做的核心工作，',
+        '然后**只调用一次** nameConversation(title) 工具，给本次对话起一个准确的中文标题（≤20 字）。',
+        '',
+        '要求：',
+        '1. 标题要体现对话的**实际核心内容**，不要用"你好""继续"这类开场词，也不要用最后一条消息的主题代替整体。',
+        '2. 直接调用工具，不要输出计划、不要解释、不要做任何其他操作。',
+        '3. 调用完只回复一句"已重命名为：<标题>"即可。',
+      ].join('\n');
+      await sendToChat(prompt, 'AI重命名', 300);
     } else if (a === 'stop') {
       const ev = require('../overlay/events'); if (ev.stopTask) await ev.stopTask(false);
     } else if (a === 'compact') {

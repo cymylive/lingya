@@ -110,3 +110,45 @@ test('handleUrlChange 恢复已保存目录', () => {
   assert.strictEqual(store.state.selectedProjectDir, 'C:/proj');
   assert.ok(sent.some(([ch]) => ch === 'project-dir-updated'), '应发送 project-dir-updated');
 });
+
+// ===== setSessionTitleById（会话列表手动重命名）=====
+
+test('setSessionTitleById 改指定会话标题并保留 projectDir', () => {
+  const store = makeStore();
+  store.writeSessionStore({
+    'sess-a': { projectDir: 'C:/proj', title: null, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+  });
+  const r = store.setSessionTitleById('sess-a', '  新标题  ');
+  assert.deepStrictEqual(r, { success: true, sessionId: 'sess-a' });
+  const e = store.readSessionStore()['sess-a'];
+  assert.strictEqual(e.title, '新标题');
+  assert.strictEqual(e.projectDir, 'C:/proj', 'projectDir 不应被破坏');
+  assert.ok(e.updatedAt, 'updatedAt 应被刷新');
+});
+
+test('setSessionTitleById 空标题返回失败', () => {
+  const store = makeStore();
+  store.writeSessionStore({ 'sess-a': { projectDir: 'C:/p', title: 'old' } });
+  const r = store.setSessionTitleById('sess-a', '   ');
+  assert.strictEqual(r.success, false);
+  assert.strictEqual(r.error, '标题为空');
+  assert.strictEqual(store.readSessionStore()['sess-a'].title, 'old', '空标题不应改动存储');
+});
+
+test('setSessionTitleById 不传 sessionId 退回 setSessionTitle（无当前会话时暂存）', () => {
+  const store = makeStore();
+  const r = store.setSessionTitleById(null, '待定');
+  assert.deepStrictEqual(r, { success: true, pending: true });
+  assert.strictEqual(store.state.pendingTitle, '待定');
+});
+
+test('setSessionTitleById 广播 session-title-updated', () => {
+  const sent = [];
+  const fakeWin = { isDestroyed: () => false, webContents: { send: (ch, data) => sent.push([ch, data]) } };
+  const store = createSessionStore('p1', tmpDir, { getMainWindow: () => fakeWin });
+  store.writeSessionStore({ 'sess-b': { projectDir: 'C:/p', title: 'old' } });
+  store.setSessionTitleById('sess-b', '新名');
+  const hit = sent.find(([ch]) => ch === 'session-title-updated');
+  assert.ok(hit, '应发送 session-title-updated');
+  assert.deepStrictEqual(hit[1], { sessionId: 'sess-b', title: '新名' });
+});

@@ -37,14 +37,23 @@ async function renderSessions() {
       const title = typeof s === 'object' ? (s.title || '') : '';
       const label = title ? (escapeHtml(title) + ' (' + escapeHtml(sid) + ')') : escapeHtml(sid);
       return `
-      <div class="lingya-session-item" data-session-id="${escapeHtml(sid)}">
+      <div class="lingya-session-item" data-session-id="${escapeHtml(sid)}" data-title="${escapeHtml(title)}">
         <span class="session-id">${label}</span>
+        <span class="session-rename" title="重命名">✎ 改名</span>
         <span class="session-action">▶ 跳转</span>
       </div>`;
     }).join('');
 
     // 绑定点击事件
     listContainer.querySelectorAll('.lingya-session-item').forEach((item) => {
+      // 改名按钮
+      const renameBtn = item.querySelector('.session-rename');
+      if (renameBtn) {
+        renameBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleRenameSession(item.dataset.sessionId, item.dataset.title || '');
+        });
+      }
       item.addEventListener('click', () => {
         const sessionId = item.dataset.sessionId;
         if (sessionId) handleNavigateSession(sessionId);
@@ -53,6 +62,32 @@ async function renderSessions() {
   } catch (err) {
     console.error('[LingYa] 渲染会话列表失败:', err);
     listContainer.innerHTML = '<div class="lingya-session-empty">加载出错</div>';
+  }
+}
+
+/**
+ * 重命名指定会话（会话列表里手动改名，AI 命名后可修正）
+ */
+async function handleRenameSession(sessionId, currentTitle) {
+  if (!sessionId) return;
+  if (!window.electronAPI || !window.electronAPI.setSessionTitle) {
+    showToast('重命名 API 不可用', 3000);
+    return;
+  }
+  const next = window.prompt('重命名对话', currentTitle || '');
+  if (next == null) return;
+  const title = String(next).trim();
+  if (!title) return;
+  try {
+    const r = await window.electronAPI.setSessionTitle(title, sessionId);
+    if (r && r.success) {
+      showToast('已重命名为：' + title, 2000);
+      renderSessions();
+    } else {
+      showToast('重命名失败: ' + ((r && r.error) || '未知错误'), 3000);
+    }
+  } catch (err) {
+    showToast('重命名失败: ' + err.message, 3000);
   }
 }
 
@@ -118,4 +153,4 @@ async function handleInitProject() {
   }
 }
 
-module.exports = { renderSessions, handleNavigateSession, handleInitProject };
+module.exports = { renderSessions, handleNavigateSession, handleInitProject, handleRenameSession };
