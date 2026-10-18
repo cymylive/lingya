@@ -545,6 +545,9 @@ function startInterceptObserver() {
         console.log('[LingYa][拦截] 检测到新对话开始，已恢复自动执行');
       }
       setFabState('generating');
+      // 补记请求起点：用户直接在页面输入框发消息时不经过 sendToChat，
+      // 这里兜底记录，保证「思考耗时」仍然可测。程序发送时 sendToChat 已设值，不覆盖。
+      if (!state.lastRequestStartAt) state.lastRequestStartAt = Date.now();
       if (generateTimeout) clearTimeout(generateTimeout);
       generateTimeout = setTimeout(() => {
         if (getFabState() === 'generating') setFabState('idle');
@@ -558,24 +561,35 @@ function startInterceptObserver() {
     try {
       const detail = ev && ev.detail;
       if (!detail || !detail.finished) return;
-      if (state.stopped) return; // 已停止：忽略本次完成事件
+      if (state.stopped) {
+        // 已停止：忽略本次完成事件，同时清掉请求起点。
+        // 否则停止后下一次回复会把「停止前的等待时长」也算进思考耗时，
+        // 导致下次发送被上限（默认 15 秒）拖住。
+        state.lastRequestStartAt = 0;
+        return;
+      }
       // 回复完成：清除「生成中」状态与兜底定时器（随后工具执行会再切到「执行中」）
       if (generateTimeout) { clearTimeout(generateTimeout); generateTimeout = null; }
       if (getFabState() === 'generating') setFabState('idle');
       // 缓存最近一次完整回复文本，供手动解析复用（不依赖 DOM）
       lastInterceptedText = detail.text || '';
+      // 计算本轮 AI 思考耗时：从请求发出 → 回复完成。
+      // 供 chat-input 的「思考耗时自适应延迟」使用（思考越久，下次等越久）。
+      if (state.lastRequestStartAt > 0) {
+        const thinkMs = Date.now() - state.lastRequestStartAt;
+        state.lastThinkMs = thinkMs;
+        state.lastRequestStartAt = 0;
+        const ratio = Number(state.thinkRatio) || 0;
+        const maxDelay = Number(state.thinkMaxDelay) || 0;
+        let adaptive = 0;
+        if (ratio > 0 && thinkMs > 0) {
+          adaptive = Math.floor(thinkMs * ratio);
+          if (maxDelay > 0) adaptive = Math.min(adaptive, maxDelay);
+        }
+        console.log('[LingYa] 本轮 AI 思考耗时 ' + thinkMs + 'ms，下次发送自适应延迟 = ' + adaptive + 'ms');
+      }
       // 保存服务端权威 token 统计（供面板显示）
       if (detail.tokenUsage) {
-        // 新对话/上下文被压缩时，服务端累计 token 会骤降（或重置为小值）。
-        // 此时需要重置 token 休眠的 band，否则再次跨过阈值就不会触发休眠。
-        const prev = state.serverTokenUsage;
-        if (prev && typeof prev.accumulatedTokens === 'number' &&
-            typeof detail.tokenUsage.accumulatedTokens === 'number' &&
-            detail.tokenUsage.accumulatedTokens < prev.accumulatedTokens) {
-          console.log('[LingYa] Token 累计回落（' + prev.accumulatedTokens + ' → ' +
-            detail.tokenUsage.accumulatedTokens + '），重置休眠 band');
-          state.tokenSleepLastBand = 0;
-        }
         state.serverTokenUsage = detail.tokenUsage;
       }
       // 保存最近一次回复的消息 id（压缩时定位摘要用）

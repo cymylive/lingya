@@ -13,18 +13,6 @@ function deepseekHookInstaller() {
   if (window[MARKER]) return;
   window[MARKER] = true;
 
-  // 思考节点延迟（毫秒）：流读取在思考段落/RESPONSE 切换处停顿，
-  // 拉长 Agent 循环间隔以规避 DeepSeek "消息发送过于频繁" 风控。
-  // 优先级：window 上已设置的值 > localStorage > 默认 2000ms；0 表示关闭。
-  try {
-    if (typeof window.__LINGYA_THINK_DELAY_MS__ !== 'number') {
-      var savedDelay = localStorage.getItem('lingya-think-node-delay');
-      window.__LINGYA_THINK_DELAY_MS__ = savedDelay !== null ? (parseInt(savedDelay, 10) || 0) : 2000;
-    }
-  } catch (e) {
-    window.__LINGYA_THINK_DELAY_MS__ = 2000;
-  }
-
   var COMPLETION_PATH = '/api/v0/chat/completion';
 
   function isCompletion(url, method) {
@@ -294,78 +282,11 @@ function deepseekHookInstaller() {
       dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted);
     }
 
-    // 思考节点延迟：读取流时若检测到思考段落（换行）或 RESPONSE 片段起始，
-    // 强制等待 window.__LINGYA_THINK_DELAY_MS__ 毫秒再读下一块，从根源拉长
-    // Agent 循环的请求间隔，避免 DeepSeek "消息发送过于频繁" 风控。
-    // 注意：延迟的是 LingYa 读取的 clone 流，网页原生渲染不受影响。
-    function getThinkDelay() {
-      // 每次实时读 localStorage，preload（隔离世界）保存后主世界立即生效；
-      // 内存变量作为兜底（同源 localStorage 不可用时）。
-      try {
-        var saved = localStorage.getItem('lingya-think-node-delay');
-        if (saved !== null) {
-          var v = parseInt(saved, 10);
-          return (v > 0) ? v : 0;
-        }
-      } catch (e) { /* ignore */ }
-      var d = window.__LINGYA_THINK_DELAY_MS__;
-      return (typeof d === 'number' && d > 0) ? d : 0;
-    }
-
-    function hasThinkNode(frames) {
-      for (var i = 0; i < frames.length; i++) {
-        var parsed = parseBlock(frames[i]);
-        if (!parsed) continue;
-        // 1) 思考内容（reasoning_content/thinking_content）含换行 → 段落节点
-        if (typeof parsed.p === 'string' &&
-            (parsed.p.indexOf('reasoning_content') !== -1 || parsed.p.indexOf('thinking_content') !== -1) &&
-            typeof parsed.v === 'string' && parsed.v.indexOf('\n') !== -1) {
-          return true;
-        }
-        // 2) 片段 APPEND 中出现 RESPONSE 类型 → 思考切换到回答的节点
-        if (parsed.o === 'APPEND' && Array.isArray(parsed.v)) {
-          for (var j = 0; j < parsed.v.length; j++) {
-            var f = parsed.v[j];
-            if (f && String(f.type || '').toUpperCase() === 'RESPONSE') return true;
-          }
-        }
-        // 3) BATCH 内部递归检查（直接检查子对象，不能转字符串再 parseBlock）
-        if (parsed.o === 'BATCH' && Array.isArray(parsed.v)) {
-          if (hasThinkNodeInObjects(parsed.v)) return true;
-        }
-      }
-      return false;
-    }
-
-    // 直接在已解析对象上检测思考节点（供 BATCH 递归使用）
-    function hasThinkNodeInObjects(arr) {
-      for (var i = 0; i < arr.length; i++) {
-        var parsed = arr[i];
-        if (!parsed || typeof parsed !== 'object') continue;
-        if (typeof parsed.p === 'string' &&
-            (parsed.p.indexOf('reasoning_content') !== -1 || parsed.p.indexOf('thinking_content') !== -1) &&
-            typeof parsed.v === 'string' && parsed.v.indexOf('\n') !== -1) {
-          return true;
-        }
-        if (parsed.o === 'APPEND' && Array.isArray(parsed.v)) {
-          for (var j = 0; j < parsed.v.length; j++) {
-            var f = parsed.v[j];
-            if (f && String(f.type || '').toUpperCase() === 'RESPONSE') return true;
-          }
-        }
-        if (parsed.o === 'BATCH' && Array.isArray(parsed.v)) {
-          if (hasThinkNodeInObjects(parsed.v)) return true;
-        }
-      }
-      return false;
-    }
-
     function pump() {
       reader.read().then(function (r) {
         if (r.done) { finalize(); return; }
         var chunk = decoder.decode(r.value, { stream: true });
         var frames = frameDecoder.push(chunk);
-        var thinkNode = hasThinkNode(frames);
         for (var i = 0; i < frames.length; i++) {
           var parsed = parseBlock(frames[i]);
           if (parsed) extractor.consume(parsed);
@@ -374,12 +295,7 @@ function deepseekHookInstaller() {
           dispatched = true;
           dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
         }
-        var delay = getThinkDelay();
-        if (thinkNode && !extractor.finished && delay > 0) {
-          setTimeout(pump, delay);
-        } else {
-          pump();
-        }
+        pump();
       }).catch(function () { finalize(); });
     }
     pump();

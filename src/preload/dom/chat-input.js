@@ -15,49 +15,47 @@ function getCurrentProvider() {
 }
 
 /**
- * 生成随机等待时间（ms），范围由 state 配置（默认 2-4 秒）
+ * 首条消息兜底延迟（ms）：尚无 AI 思考历史时使用。
+ * 后续消息一律走「思考耗时自适应延迟」。
  */
-function randomDelay() {
-  const min = typeof state.sendDelayMin === 'number' ? state.sendDelayMin : 2000;
-  const max = typeof state.sendDelayMax === 'number' ? state.sendDelayMax : 4000;
-  if (min >= max) return min;
-  return Math.floor(Math.random() * (max - min)) + min;
+function initialDelay() {
+  const d = Number(state.initialSendDelay);
+  return (Number.isFinite(d) && d >= 0) ? d : 1000;
 }
-// 全局发送时间戳：任意两条消息之间的最小间隔由 state.globalSendInterval 控制
-let globalLastSendTime = 0;
-
-// 启动时从 localStorage 恢复 Token 休眠配置（侧边栏/覆盖层保存后重启仍生效）
-(function restoreTokenSleepConfig() {
+// 启动时从 localStorage 恢复「思考耗时自适应延迟」配置
+(function restoreThinkDelayConfig() {
   try {
-    const th = localStorage.getItem('lingya-token-sleep-threshold');
-    const dur = localStorage.getItem('lingya-token-sleep-duration');
-    if (th !== null) {
-      const n = parseInt(th, 10);
-      if (Number.isFinite(n) && n >= 0) state.tokenSleepThreshold = n;
+    const init = localStorage.getItem('lingya-initial-send-delay');
+    if (init !== null) {
+      const n = parseInt(init, 10);
+      if (Number.isFinite(n) && n >= 0) state.initialSendDelay = n;
     }
-    if (dur !== null) {
-      const n = parseInt(dur, 10);
-      if (Number.isFinite(n) && n >= 0) state.tokenSleepDuration = n;
+    const r = localStorage.getItem('lingya-think-ratio');
+    const m = localStorage.getItem('lingya-think-max-delay');
+    if (r !== null) {
+      const n = parseFloat(r);
+      if (Number.isFinite(n) && n >= 0) state.thinkRatio = n;
+    }
+    if (m !== null) {
+      const n = parseInt(m, 10);
+      if (Number.isFinite(n) && n >= 0) state.thinkMaxDelay = n;
     }
   } catch (_) { /* ignore */ }
 })();
 
 /**
- * 计算 Token 休眠需要额外增加的延迟（毫秒）。
- * 规则：floor(累计token / 阈值) 表示当前所在 band；若比上次触发过的 band 大，
- * 则触发一次休眠（返回 sleepDuration），否则返回 0。
- * 副作用：命中时更新 state.tokenSleepLastBand，保证同一 band 只触发一次。
+ * 计算「思考耗时自适应延迟」（毫秒）。
+ * 规则：延迟 = min(上次思考耗时 × thinkRatio, thinkMaxDelay)。
+ * 思考越久说明负载越重，下一条就等越久，从根源避开频率风控。
+ * 无历史（首次发送）时返回 0，由调用方回落到随机基础延迟。
  */
-function computeTokenSleepDelay() {
-  const threshold = Number(state.tokenSleepThreshold) || 0;
-  const duration = Number(state.tokenSleepDuration) || 0;
-  if (threshold <= 0 || duration <= 0) return 0;
-  const usage = state.serverTokenUsage;
-  if (!usage || typeof usage.accumulatedTokens !== 'number') return 0;
-  const band = Math.floor(usage.accumulatedTokens / threshold);
-  if (band <= (state.tokenSleepLastBand || 0)) return 0;
-  state.tokenSleepLastBand = band;
-  return duration;
+function computeThinkAdaptiveDelay() {
+  const ratio = Number(state.thinkRatio) || 0;
+  const maxDelay = Number(state.thinkMaxDelay) || 0;
+  const thinkMs = Number(state.lastThinkMs) || 0;
+  if (ratio <= 0 || thinkMs <= 0) return 0;
+  const d = Math.floor(thinkMs * ratio);
+  return maxDelay > 0 ? Math.min(d, maxDelay) : d;
 }
 
 /**
@@ -112,7 +110,7 @@ async function setInputContent(input, msg) {
  * 将消息填入当前可见输入框并按指定延迟触发发送
  * @param {string} msg - 要发送的消息
  * @param {string} [tag] - 日志标记
- * @param {number} [fixedDelay] - 固定延迟毫秒数；缺省时使用 randomDelay()
+ * @param {number} [fixedDelay] - 固定延迟毫秒数；缺省时使用 initialDelay()
  * @param {Function} [afterSent] - 发送后回调
  * @returns {boolean} 是否成功
  */
@@ -157,22 +155,16 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
   if (!(await setInputContent(input, msg))) {
     return false;
   }
-  const baseDelay = fixedDelay !== undefined ? fixedDelay : randomDelay();
-  // 全局发送间隔锁：即使 Agent 循环再快，任意两条消息发出的间隔也不小于此值，
-  // 防止多条路径（工具回传/续跑/兜底）在同一秒内连发，触发服务端频率风控。
-  const MIN_GLOBAL_SEND_INTERVAL = state.globalSendInterval || 5000;
-  const sinceLast = Date.now() - globalLastSendTime;
-  let sendDelay = Math.max(baseDelay, MIN_GLOBAL_SEND_INTERVAL - sinceLast);
-
-  // Token 休眠：对话累计 token 每跨越一个阈值（默认 20 万），强制多睡 tokenSleepDuration。
-  // 每跨越一个 band 只触发一次，避免同一区间反复叠加。
-  const tokenSleepDelay = computeTokenSleepDelay();
-  if (tokenSleepDelay > 0) {
-    sendDelay += tokenSleepDelay;
-    console.log('[LingYa] Token 休眠触发：额外等待 ' + tokenSleepDelay + 'ms（累计 ' +
-      (state.serverTokenUsage && state.serverTokenUsage.accumulatedTokens) + ' tokens）');
+  // 思考耗时自适应延迟：上次 AI 思考越久，这次等越久（比例与上限可配）。
+  // 首次发送无历史 → 返回 0，回落到固定兜底延迟。
+  const adaptiveDelay = computeThinkAdaptiveDelay();
+  const fallbackDelay = fixedDelay !== undefined ? fixedDelay : initialDelay();
+  const sendDelay = Math.max(fallbackDelay, adaptiveDelay);
+  if (adaptiveDelay > fallbackDelay) {
+    console.log('[LingYa] 思考自适应延迟生效：上次思考 ' + state.lastThinkMs + 'ms × ' +
+      state.thinkRatio + ' = ' + adaptiveDelay + 'ms（上限 ' + state.thinkMaxDelay + 'ms）');
   }
-  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（基础 ' + baseDelay + '，全局锁 ' + MIN_GLOBAL_SEND_INTERVAL + '，距上次 ' + sinceLast + 'ms）...');
+  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay + '）...');
   setTimeout(function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
@@ -181,7 +173,8 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     }
     console.log('[LingYa] 等待结束，开始触发发送');
     triggerSend(input);
-    globalLastSendTime = Date.now();
+    // 记录本次请求发出时刻，供 intercept-observer 计算思考耗时
+    state.lastRequestStartAt = Date.now();
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();
@@ -345,8 +338,8 @@ async function sendInitialPromptToInput() {
     return false;
   }
 
-  const sendDelay = randomDelay();
-  console.log('[LingYa] 初始提示已填入，随机等待 ' + sendDelay + 'ms 后发送...');
+  const sendDelay = initialDelay();
+  console.log('[LingYa] 初始提示已填入，等待 ' + sendDelay + 'ms 后发送...');
   setTimeout(function() {
     if (state.stopped) {
       console.log('[LingYa] 已停止，取消初始提示发送');
@@ -454,10 +447,9 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     if (!k) return;
     if (k === 'auto-inject') { localStorage.setItem('lingya-auto-inject', v ? '1' : '0'); }
     else if (k === 'auto-rename-enabled') { localStorage.setItem('lingya-auto-rename-enabled', v ? '1' : '0'); }
-    else if (k === 'send-delay-min') { localStorage.setItem('lingya-send-delay-min', String(v)); state.sendDelayMin = Number(v); }
-    else if (k === 'send-delay-max') { localStorage.setItem('lingya-send-delay-max', String(v)); state.sendDelayMax = Number(v); }
-    else if (k === 'token-sleep-threshold') { localStorage.setItem('lingya-token-sleep-threshold', String(v)); state.tokenSleepThreshold = Number(v); }
-    else if (k === 'token-sleep-duration') { localStorage.setItem('lingya-token-sleep-duration', String(v)); state.tokenSleepDuration = Number(v); }
+    else if (k === 'initial-send-delay') { localStorage.setItem('lingya-initial-send-delay', String(v)); state.initialSendDelay = Number(v); }
+    else if (k === 'think-ratio') { localStorage.setItem('lingya-think-ratio', String(v)); state.thinkRatio = Number(v); }
+    else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
     else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
@@ -543,7 +535,7 @@ ipcRenderer.on('initial-prompt', (_event, content) => {
 
 
 module.exports = {
-  randomDelay,
+  initialDelay,
   setInputContent,
   sendToChat,
   sendMessageToChat,

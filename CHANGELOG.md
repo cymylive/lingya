@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.6.78] - 2026-10-19
+
+### Changed
+- **防频率风控方案重构：思考耗时自适应延迟**（替换 v0.6.75 的三层休眠）
+  - 新逻辑：`延迟 = max(兜底延迟, min(上次 AI 思考耗时 × 比例, 上限))`
+  - 默认：兜底 1000ms、比例 0.2、上限 15000ms
+  - 思考 10 秒 → 等 2 秒；思考 30 秒 → 等 6 秒；思考 100 秒 → 15 秒（上限截断）
+  - 原理：AI 思考越久说明服务端负载越重，下一条就等越久，天然跟随实际负载
+
+### Removed
+- **删除 v0.6.75 的三层休眠方案**（实测无效）
+  - 思考节点延迟：`deepseek.js` 的 SSE 流读取节流（服务端看请求频率，不看客户端消费速度）
+  - 全局发送间隔锁：`chat-input.js` 的 `globalLastSendTime` 下限（AI 思考本就 10-30 秒，5 秒下限不起作用）
+  - Token 阈值休眠：每 20 万 token 强制休眠 3 秒（粒度粗，依赖服务端 token 回报）
+- **删除发送延迟设置**（随机 2000-4000ms）：与自适应延迟概念重叠，统一为一套
+  - 涉及 `state.js` 的 `sendDelayMin/Max`、`chat-input.js` 的 `randomDelay()`、覆盖层与侧边栏的 UI
+
+### Fixed
+- **停止后下次发送被拖满上限**（严重）：用户点「停止」时未重置 `lastRequestStartAt`，导致停止前累积的等待时长被算进下次思考耗时，触发上限截断（默认 15 秒）
+- **用户手动发消息时思考耗时测不到**：用户直接在网页输入框发消息不经过 `sendToChat`，`lastRequestStartAt` 保持 0。改为在 `lingya-ai-start` 事件里兜底记录起点
+- **日志计算与真实逻辑不一致**：`maxDelay = 0` 时日志返回 0 但实际逻辑不截断，改为与 `computeThinkAdaptiveDelay()` 完全一致
+- **`initialSendDelay` 重启丢失**：IPC 能设置但启动时无恢复，已补 localStorage 读取
+- **`state.js` 注释随实现漂移**：删除「不低于随机基础延迟」等过时描述
+
+### Added
+- `state.js` 新字段：`initialSendDelay`（1000ms 兜底）、`lastThinkMs`、`lastRequestStartAt`、`thinkRatio`（0.2）、`thinkMaxDelay`（15000）
+- `chat-input.js` 新函数：`initialDelay()`、`computeThinkAdaptiveDelay()`
+- 两处 UI 配置：侧边栏「设置 → 思考耗时自适应延迟」、覆盖层「主页 → 思考耗时自适应延迟」
+
+### Notes
+- 全量测试 421/421
+- **升级提醒**：安装 0.6.78 前请先完全退出旧版进程；本次 `unpackDirName` 为 `LingYa-runtime-0.6.78`，不会复用旧解压目录
+
 ## [0.6.76] - 2026-10-19
 
 ### Fixed

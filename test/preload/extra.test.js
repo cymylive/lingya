@@ -2,12 +2,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-test('randomDelay 返回 2000-3999ms', () => {
-  const { randomDelay } = require('../../src/preload/dom/chat-input');
-  for (let i = 0; i < 10; i++) {
-    const d = randomDelay();
-    assert.ok(d >= 2000 && d <= 3999);
-  }
+test('initialDelay 返回首条消息兜底延迟', () => {
+  const { initialDelay } = require('../../src/preload/dom/chat-input');
+  const d = initialDelay();
+  assert.ok(typeof d === 'number' && d >= 0);
 });
 
 test('updateProjectDirDisplay 更新显示', () => {

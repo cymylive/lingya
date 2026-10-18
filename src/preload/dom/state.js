@@ -8,18 +8,19 @@ module.exports = {
   pendingInitialPrompt: false,
   // 待执行的工具调用
   pendingToolCall: null,
-  // 发送延迟配置（毫秒）
-  sendDelayMin: 2000,
-  sendDelayMax: 4000,
-  // 全局发送间隔锁（毫秒）：任意两条消息的最小发出间隔，防止多路径连发触发风控
-  globalSendInterval: 5000,
-  // 思考节点延迟（毫秒）：主世界流读取在思考段落/RESPONSE 切换处停顿，拉长 Agent 循环间隔
-  thinkNodeDelay: 2000,
-  // Token 休眠：每跨越一个 threshold 倍数（默认 20 万 token）时强制休眠 duration 毫秒
-  tokenSleepThreshold: 200000,
-  tokenSleepDuration: 3000,
-  // 已触发过的 band 索引（floor(当前token / threshold)），避免同一区间重复触发
-  tokenSleepLastBand: 0,
+  // 首条消息兜底延迟（毫秒）：尚无思考历史时使用
+  initialSendDelay: 1000,
+  // ===== AI 思考耗时自适应延迟 =====
+  // 思路：AI 思考越久说明负载越重，下一条消息就等越久再发，从根源避开频率风控。
+  // 延迟 = max(兜底延迟, min(上次思考耗时 × thinkRatio, thinkMaxDelay))。
+  // 上次思考耗时（毫秒）：从"用户/AI 消息发出"到"AI 回复完成"的时长
+  lastThinkMs: 0,
+  // 上次请求发出时刻（毫秒时间戳）；0 表示无进行中的请求
+  lastRequestStartAt: 0,
+  // 延迟比例：思考 10 秒 → 等 2 秒 = 0.2
+  thinkRatio: 0.2,
+  // 延迟上限（毫秒）：防止思考很久时等得过长
+  thinkMaxDelay: 15000,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
   // 服务端返回的权威 token 统计（{ accumulatedTokens, insertedAt, updatedAt, modelType }）
