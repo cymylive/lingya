@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.76] - 2026-10-19
+
+### Fixed
+- **便携版升级后仍运行旧版本**（严重）
+  - 根因：`package.json` 的 `build.portable.unpackDirName` 写死为 `LingYa-runtime-0.6.74`，升版本时未同步
+  - 便携版 exe 启动时检查 `%TEMP%\LingYa-runtime-0.6.74\.lingya-ready`，存在则**跳过解压**直接运行旧目录里的程序
+  - 表现：装上 v0.6.75，关于页显示 0.6.74，新功能（三层防频繁风控）全部看不到
+  - 修复：`unpackDirName` 改为 `LingYa-runtime-0.6.76`
+
+### Changed
+- **`scripts/sync-version.js` 自动同步 `unpackDirName`**
+  - 从 tag 提取版本号后，一并更新 `build.portable.unpackDirName` 为 `LingYa-runtime-<version>`
+  - 打印变更日志，避免以后升版本再次漏改
+
+### Notes
+- 全量测试 421/421
+- **升级提醒**：安装 0.6.76 前请先完全退出旧版进程，并删除 `%TEMP%\LingYa-runtime-0.6.7{2,3,4,5}` 旧解压目录
+
 ## [0.6.75] - 2026-10-19
 
 ### Added

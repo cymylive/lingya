@@ -25,6 +25,18 @@ function readJson(p) {
 const pkgPath = path.join(root, 'package.json');
 const pkg = readJson(pkgPath);
 pkg.version = version;
+
+// 同步 portable.unpackDirName —— 便携版解压目录名。
+// 不同步会导致新版 exe 复用旧版 %TEMP% 解压目录，跳过解压直接跑旧代码。
+// （v0.6.75 实测踩过：unpackDirName 停在 0.6.74，新版启动后实际运行的是旧程序）
+if (pkg.build && pkg.build.portable && typeof pkg.build.portable.unpackDirName === 'string') {
+  const next = 'LingYa-runtime-' + version;
+  if (pkg.build.portable.unpackDirName !== next) {
+    console.log('[sync-version] unpackDirName: ' + pkg.build.portable.unpackDirName + ' -> ' + next);
+    pkg.build.portable.unpackDirName = next;
+  }
+}
+
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 console.log('[sync-version] package.json -> ' + version);
 
