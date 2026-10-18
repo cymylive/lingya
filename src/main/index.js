@@ -276,6 +276,9 @@ function createWindow(profile) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 多窗口隔离：壳页面的 localStorage（收藏/主题/侧栏设置等）按 profile 独立，
+      // 否则所有窗口共用默认 partition，收藏列表会跨窗口串台。
+      partition: profileData.partition,
       additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
     },
   };

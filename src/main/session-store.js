@@ -248,10 +248,22 @@ function createSessionStore(profileId, storeDir, windowState) {
   /**
    * 把会话标题同步到顶部主标签（LingYa 对话那个）。
    * 切换会话时调用 —— 之前只在「改名」时同步，切会话标题一直是初始值。
+   *
+   * @param {string} title 新标题
+   * @param {object} [targetWin] 目标窗口（Proxy 或 BrowserWindow）。
+   *   必须传入，否则会用全局「最近活跃窗口」，导致多窗口时改错窗口的标签。
    */
-  function syncMainTabTitle(title) {
+  function syncMainTabTitle(title, targetWin) {
     try {
-      const ctx = windowState && windowState.getMainContext ? windowState.getMainContext() : null;
+      let ctx = null;
+      if (targetWin && windowState && typeof windowState.getWindowContext === 'function') {
+        // 优先按目标窗口反查上下文（多窗口隔离）
+        try { ctx = windowState.getWindowContext(targetWin.id); } catch (_) {}
+      }
+      // 兜底：没传或不匹配时用主上下文
+      if (!ctx && windowState && typeof windowState.getMainContext === 'function') {
+        ctx = windowState.getMainContext();
+      }
       if (!ctx) return;
       const tm = require('./tab-manager');
       if (tm && typeof tm.setMainTabTitle === 'function') {
@@ -309,7 +321,7 @@ function createSessionStore(profileId, storeDir, windowState) {
 
       // 同步主标签标题：切到该会话时显示它自己的标题（无标题则显示短 sessionId）
       const restoredTitle = getSessionTitleById(sessionId);
-      syncMainTabTitle(restoredTitle || ('会话 ' + String(sessionId).slice(0, 8)));
+      syncMainTabTitle(restoredTitle || ('会话 ' + String(sessionId).slice(0, 8)), win);
     } else {
       // 提取不到会话 ID（如 ChatGPT 首页 https://chatgpt.com/）：
       // 若有暂存目录（刚初始化但还没绑定会话），保留目录；否则清空（恢复原行为）。
@@ -321,7 +333,7 @@ function createSessionStore(profileId, storeDir, windowState) {
         }
       }
       // 新会话（还没生成 URL）→ 主标签显示「新对话」
-      syncMainTabTitle('新对话');
+      syncMainTabTitle('新对话', win);
     }
   }
 

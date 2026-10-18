@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.6.74] - 2026-10-18
+
+### Fixed
+- **工具调用被当成普通文本渲染**：AI 偶尔输出 `<lingya>...</lingya>` XML 标签而非三反引号围栏
+  - `js-detector.js` 新增 `extractLingyaTags()`：兼容闭合标签、未闭合标签（取到消息结尾）、大小写不敏感
+  - `extractJsToolBlocks()` 合并围栏与标签两种结果并去重
+  - 新增 7 个单元测试
+- **覆盖层出现一行 `/* ===== */` 裸文本**（`template.js` 的 `OVERLAY_HTML` 数组末尾误留了一行 CSS 注释）
+- **AI 调用 openBrowserWindow 抢焦点**：AI 抓网页/注入 JS 时会强制切到新标签
+  - `tools/browser-window-manager.js` 的 `activate: true` → `false`
+- **主标签标题跨窗口串台**：A 窗口的标题会改到 B 窗口
+  - `session-store.syncMainTabTitle(title, targetWin)` 新增 `targetWin` 参数，按窗口反查 ctx 而非用全局「最近活跃窗口」
+- **收藏列表 / 主题 / 侧栏设置跨窗口共享**：壳窗口的 `webPreferences` 缺 `partition`，所有窗口共用默认 localStorage
+  - 加 `partition: profileData.partition`，按 profile 隔离
+
+### Added
+- **标签数量徽章**：`▾` 按钮内显示当前非主标签数量（主标签不计入），0 个时半透明
+
+### Changed
+- **下拉列表常驻**：删除标签 / 收藏增删后不再关闭，实时刷新
+  - `KEEP_OPEN_ACTIONS` 白名单 + `updateData(新列表)` 回调
+
+### 代码审计修复
+- **P1-1** `archiver.stop()` 漏清理：补 `_timer` / click 监听器 / `_bound` / 跨模块标志
+- **P1-2** `dropdown-window.close()` 不重置 `_blurGuardUntil`
+- **P1-3** `doExport` / `doDelete` 加 `AbortController` 超时（60s / 30s）
+- **P2-1** 收藏增删缺 `p.currentList` 时从 localStorage 兜底读
+- **P2-2** `_pendingCtx` 加序号，快速右键不再插错菜单项
+- **P3-1** `dropdown-window.js` 重复注释
+- **TDZ 崩溃**：`_currentType` / `_currentTheme` 声明移到文件顶部
+- **blur 误关**：加 800ms `_blurGuardUntil` 保护期
+
+### Notes
+- 全量测试 421/421
+
 ## [0.6.73] - 2026-10-18
 
 ### Added

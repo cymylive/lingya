@@ -448,8 +448,6 @@ const OVERLAY_HTML = [
 '  </div>',
 '  <div id="lingya-plan-float-list" class="lingya-plan-float-list"></div>',
 '</div>',
-
-'/* ============================================================',
 ].join('\n');
 
 const OVERLAY_CSS = [
