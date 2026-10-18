@@ -59,9 +59,10 @@ function createTab(ctx, opts) {
     view.webContents.on('will-prevent-unload', (e) => e.preventDefault());
   } catch (_) {}
 
-  // 标题跟随网页 title
+  // 标题跟随网页 title（主标签除外：主标签用 LingYa 对话名，由 session-store 驱动）
   view.webContents.on('page-title-updated', (_e, title) => {
     try {
+      if (tab.isMain) return;
       tab.title = String(title || '').slice(0, 60) || '未命名';
       if (ctx.onTabUpdated) ctx.onTabUpdated(tabId);
     } catch (_) {}
@@ -76,6 +77,33 @@ function createTab(ctx, opts) {
   };
   view.webContents.on('did-navigate', onNav);
   view.webContents.on('did-navigate-in-page', onNav);
+
+  // ===== 拦截 window.open / target=_blank → 转为当前窗口的新标签 =====
+  // 不拦的话 Electron 默认会弹独立 BrowserWindow（如百度「更多」点出来的是新窗口）
+  try {
+    view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+      try {
+        if (!targetUrl || targetUrl === 'about:blank') {
+          // 有些站点先 window.open('') 再 document.write，这种没法转标签，直接拒绝
+          console.log('[LingYa Tab] 拒绝 about:blank 弹窗');
+          return { action: 'deny' };
+        }
+        console.log('[LingYa Tab] window.open 拦截 → 开新标签: ' + targetUrl);
+        // 在当前窗口开新标签（复用同一个 ctx / profileData）
+        createTab(ctx, {
+          url: targetUrl,
+          profileData: o.profileData,
+          userDataDir: o.userDataDir,
+          activate: true,
+        });
+      } catch (e) {
+        console.error('[LingYa Tab] 转新标签失败:', e && e.message);
+      }
+      return { action: 'deny' };  // 阻止 Electron 弹独立窗口
+    });
+  } catch (e) {
+    console.error('[LingYa Tab] setWindowOpenHandler 注册失败:', e && e.message);
+  }
 
   // 加载
   if (o.url) {
@@ -154,4 +182,16 @@ function navigate(ctx, url, tabId) {
   }
 }
 
-module.exports = { createTab, switchTab, closeTab, listTabs, navigate };
+/** 设置主标签标题（LingYa 对话名） */
+function setMainTabTitle(ctx, title) {
+  if (!ctx || !ctx.tabs) return;
+  for (const t of ctx.tabs.values()) {
+    if (t.isMain) {
+      t.title = String(title || 'LingYa').slice(0, 60);
+      if (ctx.onTabUpdated) ctx.onTabUpdated(t.id);
+      return;
+    }
+  }
+}
+
+module.exports = { createTab, switchTab, closeTab, listTabs, navigate, setMainTabTitle };

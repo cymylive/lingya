@@ -41,12 +41,15 @@ if (useIntercept) {
   }
 }
 
-// 注册主进程消息监听（与原 preload.js 顶层注册时机一致）
-chatInput.registerIpcListeners();
+// 以下仅对 AI 平台页面生效；非 AI 平台（AI 开的普通网页标签）不注册，避免无谓开销
+if (currentProvider) {
+  // 注册主进程消息监听（与原 preload.js 顶层注册时机一致）
+  chatInput.registerIpcListeners();
 
-// 工具名集合：拉取一次 + 监听主进程广播（插件启用/禁用后刷新白名单）
-toolNames.refreshToolNames().catch(() => {});
-toolNames.setupToolNamesListener();
+  // 工具名集合：拉取一次 + 监听主进程广播（插件启用/禁用后刷新白名单）
+  toolNames.refreshToolNames().catch(() => {});
+  toolNames.setupToolNamesListener();
+}
 
 // ========== 初始化 ==========
 
@@ -55,6 +58,14 @@ toolNames.setupToolNamesListener();
  * 注入样式、覆盖层 HTML，绑定事件，启动回复监听（拦截或 DOM 观察）
  */
 function init() {
+  // ===== 非 AI 平台页面（如 AI 开的百度标签、任意网页）=====
+  // 不注入任何 LingYa UI（悬浮球 / 覆盖层面板 / 计划卡），保持网页原样。
+  // 仍保留 electronAPI（供 injectJS 等工具使用）与 IPC 监听（无害）。
+  if (!currentProvider) {
+    console.log('[LingYa] 当前页面不是 AI 平台（' + location.href + '），跳过覆盖层注入');
+    return;
+  }
+
   try {
     ui.injectCSS();
     ui.injectOverlay();

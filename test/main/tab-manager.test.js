@@ -14,6 +14,7 @@ class FakeWC {
   loadFile(f) { this._url = 'file://' + f; return Promise.resolve(); }
   on(ev, fn) { (this._listeners[ev] = this._listeners[ev] || []).push(fn); }
   emit(ev, ...a) { (this._listeners[ev] || []).forEach(fn => fn({}, ...a)); }
+  setWindowOpenHandler(fn) { this._windowOpenHandler = fn; }
   canGoBack() { return true; }
   canGoForward() { return true; }
   goBack() {}
@@ -136,11 +137,35 @@ test('navigate 加载 URL', () => {
   assert.strictEqual(t.view.webContents._url, 'https://new.com');
 });
 
-test('page-title-updated 更新 tab.title', () => {
+test('page-title-updated 更新普通标签 tab.title', () => {
   const ctx = makeCtx();
   const t = tm.createTab(ctx, { url: 'https://a.com' });
   t.view.webContents.emit('page-title-updated', '新标题');
   assert.strictEqual(t.title, '新标题');
+});
+
+test('主标签不跟随 page-title-updated', () => {
+  const ctx = makeCtx();
+  const t = tm.createTab(ctx, { url: 'https://a.com' });
+  t.isMain = true;
+  t.title = 'LingYa · DeepSeek';
+  t.view.webContents.emit('page-title-updated', '网站标题');
+  assert.strictEqual(t.title, 'LingYa · DeepSeek', '主标签标题不应被网页标题覆盖');
+});
+
+test('setMainTabTitle 更新主标签标题', () => {
+  const ctx = makeCtx();
+  const t1 = tm.createTab(ctx, { url: 'https://a.com' });
+  t1.isMain = true;
+  tm.createTab(ctx, { url: 'https://b.com' });
+  tm.setMainTabTitle(ctx, '我的对话名');
+  assert.strictEqual(t1.title, '我的对话名');
+});
+
+test('setMainTabTitle 无主标签时不报错', () => {
+  const ctx = makeCtx();
+  tm.createTab(ctx, { url: 'https://a.com' });
+  assert.doesNotThrow(() => tm.setMainTabTitle(ctx, 'x'));
 });
 
 test('did-navigate 更新 tab.url', () => {
@@ -149,3 +174,34 @@ test('did-navigate 更新 tab.url', () => {
   t.view.webContents.emit('did-navigate', 'https://b.com/x');
   assert.strictEqual(t.url, 'https://b.com/x');
 });
+
+// ===== 拦截 window.open / target=_blank =====
+
+test('createTab 注册 setWindowOpenHandler', () => {
+  const ctx = makeCtx();
+  const tab = tm.createTab(ctx, { url: 'https://a.com' });
+  assert.ok(typeof tab.view.webContents._windowOpenHandler === 'function', 'setWindowOpenHandler 应被调用');
+});
+
+test('setWindowOpenHandler 对普通 URL 返回 deny 并开新标签', () => {
+  const ctx = makeCtx();
+  const t1 = tm.createTab(ctx, { url: 'https://a.com' });
+  const before = ctx.tabs.size;
+  const handler = t1.view.webContents._windowOpenHandler;
+  assert.ok(handler, 'handler 已注册');
+  const r = handler({ url: 'https://b.com/page' });
+  assert.strictEqual(r.action, 'deny', '应拒绝 Electron 弹独立窗口');
+  assert.strictEqual(ctx.tabs.size, before + 1, '应在当前窗口新开一个标签');
+  const urls = Array.from(ctx.tabs.values()).map((x) => x.url);
+  assert.ok(urls.indexOf('https://b.com/page') >= 0, '新标签 URL 正确');
+});
+
+test('setWindowOpenHandler 对 about:blank 只 deny 不开标签', () => {
+  const ctx = makeCtx();
+  const t1 = tm.createTab(ctx, { url: 'https://a.com' });
+  const before = ctx.tabs.size;
+  const r = t1.view.webContents._windowOpenHandler({ url: 'about:blank' });
+  assert.strictEqual(r.action, 'deny');
+  assert.strictEqual(ctx.tabs.size, before, 'about:blank 不应开新标签');
+});
+

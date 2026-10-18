@@ -115,6 +115,12 @@ const api = {
   dshMarket: (force) => ipcRenderer.invoke('dsh-market', { force: !!force }),
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
+  // ===== 下拉浮层（标签列表 / 收藏夹）=====
+  // 必须走主进程独立窗口：AI 网页是 WebContentsView，会盖住壳页面的 DOM
+  openDropdown: (payload) => ipcRenderer.invoke('lingya-dropdown-open', payload || {}),
+  closeDropdown: () => ipcRenderer.invoke('lingya-dropdown-close'),
+  onBookmarkAdd: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-bookmark-add',h); return ()=>ipcRenderer.removeListener('lingya-bookmark-add',h); },
+  onBookmarkRemove: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-bookmark-remove',h); return ()=>ipcRenderer.removeListener('lingya-bookmark-remove',h); },
   // ===== 标签页 =====
   tabList: () => ipcRenderer.invoke('lingya-tab-list'),
   tabNew: (url) => ipcRenderer.invoke('lingya-tab-new', { url }),

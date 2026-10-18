@@ -91,6 +91,11 @@ function createSessionStore(profileId, storeDir, windowState) {
                 w.setTitle('LingYa - ' + title);
               }
             } catch (_) {}
+            // 同步顶部主标签标题（横向只显示主标签 = LingYa 对话名）
+            try {
+              const tm = require('./tab-manager');
+              if (tm && tm.setMainTabTitle) tm.setMainTabTitle(ctx, title);
+            } catch (_) {}
           }
           // 广播给渲染进程（页内标题同步由 preload 处理）
           try {
@@ -190,6 +195,31 @@ function createSessionStore(profileId, storeDir, windowState) {
     } catch (_) { /* ignore */ }
   }
 
+  /** 读取某会话的标题（无则返回 null） */
+  function getSessionTitleById(sessionId) {
+    if (!sessionId) return null;
+    try {
+      const store = readSessionStore();
+      const e = normalizeEntry(store[sessionId]);
+      return (e && e.title) ? e.title : null;
+    } catch (_) { return null; }
+  }
+
+  /**
+   * 把会话标题同步到顶部主标签（LingYa 对话那个）。
+   * 切换会话时调用 —— 之前只在「改名」时同步，切会话标题一直是初始值。
+   */
+  function syncMainTabTitle(title) {
+    try {
+      const ctx = windowState && windowState.getMainContext ? windowState.getMainContext() : null;
+      if (!ctx) return;
+      const tm = require('./tab-manager');
+      if (tm && typeof tm.setMainTabTitle === 'function') {
+        tm.setMainTabTitle(ctx, title || ('LingYa · ' + profileId));
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   function handleUrlChange(url, targetWindow) {
     const sessionId = extractSessionIdFromUrl(url);
     const win = targetWindow || (windowState && windowState.getMainWindow());
@@ -236,6 +266,10 @@ function createSessionStore(profileId, storeDir, windowState) {
           win.webContents.send('project-dir-updated', null);
         }
       }
+
+      // 同步主标签标题：切到该会话时显示它自己的标题（无标题则显示短 sessionId）
+      const restoredTitle = getSessionTitleById(sessionId);
+      syncMainTabTitle(restoredTitle || ('会话 ' + String(sessionId).slice(0, 8)));
     } else {
       // 提取不到会话 ID（如 ChatGPT 首页 https://chatgpt.com/）：
       // 若有暂存目录（刚初始化但还没绑定会话），保留目录；否则清空（恢复原行为）。
@@ -246,6 +280,8 @@ function createSessionStore(profileId, storeDir, windowState) {
           win.webContents.send('project-dir-updated', null);
         }
       }
+      // 新会话（还没生成 URL）→ 主标签显示「新对话」
+      syncMainTabTitle('新对话');
     }
   }
 
@@ -265,6 +301,8 @@ function createSessionStore(profileId, storeDir, windowState) {
     updateSessionTitle,
     setSessionTitle,
     setSessionTitleById,
+    getSessionTitleById,
+    syncMainTabTitle,
     extractSessionIdFromUrl,
     handleUrlChange,
     tryRestoreSessionFromUrl,

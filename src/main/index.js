@@ -239,9 +239,16 @@ const sessionsToFlush = new Set();
 async function flushAllSessions() {
   const promises = [];
   for (const ses of sessionsToFlush) {
-    promises.push(ses.flushStorageData().catch(err => {
-      console.error('[LingYa] 刷新 session 失败:', err.message);
-    }));
+    if (!ses || typeof ses.flushStorageData !== 'function') continue;
+    try {
+      // 注意：Electron 33 的 flushStorageData() 返回 undefined（不是 Promise），
+      // 直接 .catch 会抛 TypeError。用 Promise.resolve 包一层兜住两种返回。
+      promises.push(Promise.resolve(ses.flushStorageData()).catch(err => {
+        console.error('[LingYa] 刷新 session 失败:', err && err.message);
+      }));
+    } catch (err) {
+      console.error('[LingYa] 刷新 session 异常:', err && err.message);
+    }
   }
   await Promise.all(promises);
   console.log('[LingYa] 全部 session 数据已刷新到磁盘');
@@ -355,7 +362,19 @@ function createWindow(profile) {
     activate: true,
   });
   mainTab.isMain = true;
-  mainTab.title = provider.name;
+  // 主标签标题：优先用已有会话标题，否则用「LingYa · <平台名>」
+  (function initMainTitle() {
+    let t = null;
+    try {
+      const sid = sessionStore.state && sessionStore.state.currentSessionId;
+      if (sid) {
+        const all = sessionStore.readSessionStore();
+        const e = sessionStore.normalizeEntry ? sessionStore.normalizeEntry(all[sid]) : all[sid];
+        if (e && e.title) t = e.title;
+      }
+    } catch (_) {}
+    mainTab.title = t || ('LingYa · ' + provider.name);
+  })();
 
   // 未选平台 → 主标签加载平台选择页
   if (!providerChosen) {
@@ -549,6 +568,94 @@ ipcMain.handle('lingya-tab-reload', async (event, { tabId } = {}) => {
   const t = ctx.tabs.get(tabId || ctx.activeTabId);
   if (!t) return { success: false, error: '标签不存在' };
   try { t.view.webContents.reload(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
+
+// ========== 下拉浮层（标签列表 / 收藏夹）==========
+// 为什么走独立窗口：AI 网页是 WebContentsView（原生层），会盖住壳页面的 HTML，
+// 壳页面里的下拉面板落在 AI view 区域就完全看不见。
+const dropdownWin = require('./dropdown-window');
+
+ipcMain.handle('lingya-dropdown-open', async (event, payload = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const ownerWin = ctx.rawWin || ctx.win;
+    if (!ownerWin || ownerWin.isDestroyed()) return { success: false, error: '窗口已销毁' };
+
+    const type = payload.type || 'tabs';
+
+    // 壳页面传上来的是「页面内坐标」（getBoundingClientRect），
+    // 独立下拉窗口需要「屏幕坐标」→ 加上主窗口内容区左上角的屏幕位置。
+    const rawAnchor = payload.anchor || { x: 100, y: 60, w: 26, h: 26 };
+    let baseX = 0, baseY = 0;
+    try {
+      const cb = ownerWin.getContentBounds();
+      baseX = cb.x;
+      baseY = cb.y;
+    } catch (_) {}
+    const anchor = {
+      x: baseX + Math.round(rawAnchor.x || 0),
+      y: baseY + Math.round(rawAnchor.y || 0),
+      w: Math.round(rawAnchor.w || 26),
+      h: Math.round(rawAnchor.h || 26),
+    };
+    console.log('[LingYa Dropdown] 定位 base=(' + baseX + ',' + baseY + ') page=(' +
+      rawAnchor.x + ',' + rawAnchor.y + ') → screen=(' + anchor.x + ',' + anchor.y + ')');
+
+    let data = [];
+    if (type === 'tabs') {
+      // 下拉只列其他网站的标签；主标签（LingYa 对话）固定在顶部横向
+      data = tabManager.listTabs(ctx).filter(function (t) { return !t.isMain; });
+    } else {
+      data = Array.isArray(payload.bookmarks) ? payload.bookmarks : [];
+    }
+
+    dropdownWin.open(ownerWin, {
+      type,
+      anchor,
+      data,
+      theme: payload.theme || 'dark',
+      onAction: (name, p) => {
+        try {
+          if (name === 'tab-switch' && p.tabId) {
+            tabManager.switchTab(ctx, p.tabId);
+          } else if (name === 'tab-close' && p.tabId) {
+            tabManager.closeTab(ctx, p.tabId);
+          } else if (name === 'bookmark-open' && p.url) {
+            tabManager.navigate(ctx, p.url);
+          } else if (name === 'bookmark-add' && p.url) {
+            // 回传壳页面（收藏存在壳页面的 localStorage）
+            try {
+              const sc = ownerWin.webContents;
+              if (sc && !sc.isDestroyed()) sc.send('lingya-bookmark-add', { url: p.url, title: p.title });
+            } catch (_) {}
+          } else if (name === 'bookmark-remove' && p.url) {
+            try {
+              const sc = ownerWin.webContents;
+              if (sc && !sc.isDestroyed()) sc.send('lingya-bookmark-remove', { url: p.url });
+            } catch (_) {}
+          }
+        } catch (e) {
+          console.error('[LingYa Dropdown] 动作处理失败:', e.message);
+        }
+      },
+    });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('lingya-dropdown-close', async () => {
+  try { dropdownWin.close(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
+
+// 下拉窗口内动作 → 统一入口
+ipcMain.on('lingya-dropdown-action', (event, msg = {}) => {
+  try { dropdownWin.emitAction(msg.name, msg.payload); } catch (e) { console.error('[LingYa Dropdown] 转发失败:', e.message); }
+});
+ipcMain.on('lingya-dropdown-close', () => {
+  try { dropdownWin.close(); } catch (_) {}
 });
 
 // ========== 应用菜单 ==========

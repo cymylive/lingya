@@ -1,5 +1,85 @@
 # Changelog
 
+## [0.6.68] - 2026-10-18
+
+### Fixed
+- **切换对话时顶部主标签标题不跟着变**（一直停留在最开始那个标题）：
+  - 根因：`session-store.handleUrlChange` 切会话时只恢复了项目目录，**从不更新主标签标题**；`setMainTabTitle` 只在「改名」时被调用
+  - 新增 `session-store.getSessionTitleById(sessionId)`：读某会话的标题
+  - 新增 `session-store.syncMainTabTitle(title)`：取主上下文 → 调 `tabManager.setMainTabTitle`
+  - `handleUrlChange` 两个分支都接上：
+    - 有 sessionId → 用该会话标题；无标题则显示 `会话 <前8位>`
+    - 无 sessionId（新会话首页）→ 显示 `新对话`
+
+### Notes
+- 新增 4 个单元测试（有标题会话 / 无标题会话 / 新会话首页 / getSessionTitleById）
+- 实测 4 个切换场景全部正确，壳页面横向标签同步刷新
+- 全量测试 408/408
+
+## [0.6.67] - 2026-10-18
+
+### Added
+- **顶部横向标签栏恢复，但只显示主标签**（LingYa 对话）：标题用会话名（`nameConversation` 写入的那个），不跟随网页 `<title>`；点击可切回主标签
+- **标签列表下拉**（`▾` 按钮）：垂直展开在按钮正下方，**只列其他网站的标签**（主标签已排除）；可切换/关闭
+- **收藏夹下拉**（`★` 按钮）：同一套下拉窗口，支持输入网址+名称添加收藏、点击打开、× 删除；数据存 localStorage `lingya-bookmarks`，重启保留
+
+### Changed
+- **主标签标题不再跟随网页标题**：`tab-manager` 里 `page-title-updated` 对 `isMain` 标签直接 return；新增 `setMainTabTitle(ctx, title)`，由 `session-store.notifyTitleUpdated` 在会话改名时调用
+- **下拉数据过滤**：主进程 `lingya-dropdown-open` 里 `listTabs(ctx).filter(t => !t.isMain)`
+
+### Fixed
+- **下拉面板被 AI 网页遮住**（关键）：AI 网页是 `WebContentsView`（原生层），永远盖在壳页面 HTML 之上，所以在壳页面里画下拉无论怎么调 z-index 都看不见
+  - 改为**独立 BrowserWindow 浮层**（`src/main/dropdown-window.js` + `src/ui/dropdown.html` + `src/preload/dropdown-preload.js`）：无边框、透明、置顶、parent 绑定主窗口、失焦自动关闭
+  - 按按钮屏幕坐标定位到正下方，超出屏幕边缘自动翻转/贴边
+  - 主进程通过 IPC `lingya-dropdown-open/close/action` 协调；收藏增删回传壳页面写 localStorage
+- **下拉位置偏上/错位**：壳页面 `getBoundingClientRect()` 返回的是**页面内坐标**，独立窗口需要**屏幕坐标**
+  - 修复：主进程 `lingya-dropdown-open` 里加上 `ownerWin.getContentBounds()` 的 x/y 偏移
+  - 实测：标签列表 期望 y=134 实际 y=133，收藏夹 期望 y=134 实际 y=133（偏差 1px）
+
+### Notes
+- 全量测试 401/401
+
+## [0.6.66] - 2026-10-18
+
+### Fixed
+- **点网页里的 target=_blank / window.open 仍弹独立窗口**（如百度「更多」）：
+  - 根因：`tab-manager.createTab` 只创建了 `WebContentsView`，**没有注册 `setWindowOpenHandler`** → Electron 走默认行为弹独立 `BrowserWindow`
+  - 修复：每个标签创建时注册 `webContents.setWindowOpenHandler`，把 `window.open` / `target=_blank` 统一转成**当前窗口的新标签**，并返回 `{ action: 'deny' }` 阻止 Electron 弹窗
+  - `about:blank` 弹窗（有些站点先 open 空窗口再 document.write）无法转标签，直接 deny
+
+### Notes
+- 实测百度：触发前后 `tabs 3→4`、`windows 1→1`，新内容全部落在标签页
+- 单元测试 14/14（新增 3 个 window.open 拦截用例）
+- 全量测试 401/401
+
+## [0.6.65] - 2026-10-18
+
+### Fixed
+- **非 AI 平台标签页残留 agent 机制**（0.6.64 只挡了 UI，继续排查并全部隔离）：
+  - `init()` 的 `if (!currentProvider) return` 守卫覆盖了全部 agent 逻辑：覆盖层注入、`updateHomeMode` 轮询、`intercept-observer`、`auto-inject`、`feishu-bridge`、`schedule-bridge`、**`supervisor`（监督续跑）**、会话标题同步与 SPA 轮询、`conversation-log`、`overlay-watcher`、用户名轮询
+  - 顶层 `chatInput.registerIpcListeners()`（`lingya-set-setting` / `lingya-run-action` / `lingya-insert-to-chat` / `initial-prompt`）与 `toolNames` 也已收进 `if (currentProvider)`
+  - 实测百度标签页：`hasLingyaRoot=false`、`lingyaClassCount=0`、`injectedStyleCount=0`、`hasShellAPI=false`、`fetchIsNative=true` → 纯网页
+  - `electronAPI` 保留（`injectJS` 等工具需要）
+- **退出时报 `Cannot read properties of undefined (reading 'catch')`**：
+  - 根因：Electron 33 的 `session.flushStorageData()` 返回 `undefined` 而非 Promise，直接 `.catch` 抛 TypeError
+  - 修复：`Promise.resolve(ses.flushStorageData())` 包一层 + 方法存在性检查 + try/catch
+
+### Notes
+- 全量测试 398/398
+
+## [0.6.64] - 2026-10-18
+
+### Fixed
+- **非 AI 平台标签页（如百度）也显示悬浮球/覆盖层/计划卡**：
+  - 根因：`src/preload/index.js` 的 `init()` 无条件执行 `ui.injectCSS()` + `ui.injectOverlay()` + `ui.forceShowOverlay()`，不管当前页面是不是 AI 平台
+  - 修复：`init()` 开头加守卫 —— `getProviderByUrl(location.href)` 返回 null（非内置/自定义 AI 平台）时直接 return，不注入任何 UI
+  - 同时把 `chatInput.registerIpcListeners()` / `toolNames.refreshToolNames()` 也收进 `if (currentProvider)` 分支，非 AI 页不做无谓注册
+  - `electronAPI` 仍照常暴露（`injectJS` 等工具在普通网页标签上继续可用）
+
+### Notes
+- 实测：打开百度标签后 `document.getElementById('lingya-root')` 为 null，页面保持原样
+- 全量测试 398/398
+
 ## [0.6.63] - 2026-10-18
 
 ### Fixed

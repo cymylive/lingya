@@ -1584,6 +1584,7 @@
 
   // ===== 顶部标签栏 + 地址栏 =====
   (function initTabbar() {
+    // 横向标签列表已改为下拉列表，这里不再获取 tabsEl（保留变量仅为安全防护）
     var tabsEl = document.getElementById('lingya-tabs');
     var newBtn = document.getElementById('lingya-tab-new');
     var urlInput = document.getElementById('lingya-url-input');
@@ -1609,28 +1610,29 @@
           + '<span class="ly-tab-close" data-close-id="' + attr(t.id) + '" title="关闭">×</span>'
           + '</div>';
       }
-      tabsEl.innerHTML = h;
-
-      // 绑定切换 + 关闭
-      var items = tabsEl.querySelectorAll('.ly-tab');
-      for (var j = 0; j < items.length; j++) {
-        (function(el){
-          el.addEventListener('click', function(ev){
-            var closeEl = ev.target.closest('.ly-tab-close');
-            if (closeEl) {
-              ev.stopPropagation();
-              var cid = closeEl.getAttribute('data-close-id');
-              window.shellAPI.tabClose(cid).then(function(r){
-                if (r && !r.success) toast2(r.error || '关闭失败');
-              })['catch'](function(){});
-              return;
-            }
-            var id = el.getAttribute('data-tab-id');
-            if (id && id !== lastActive) {
-              window.shellAPI.tabSwitch(id)['catch'](function(){});
-            }
-          });
-        })(items[j]);
+      // ===== 顶部横向：只渲染主标签（LingYa 对话）=====
+      if (tabsEl) {
+        var mainTab = null;
+        for (var mi = 0; mi < tabs.length; mi++) {
+          if (tabs[mi].isMain) { mainTab = tabs[mi]; break; }
+        }
+        if (mainTab) {
+          tabsEl.innerHTML = '<div class="ly-tab main" data-tab-id="' + attr(mainTab.id) + '" title="' + attr(mainTab.url || '') + '">'
+            + '<span class="ly-tab-ico">💬</span>'
+            + '<span class="ly-tab-title">' + esc(mainTab.title || 'LingYa') + '</span>'
+            + '</div>';
+          var mel = tabsEl.querySelector('.ly-tab.main');
+          if (mel) {
+            mel.addEventListener('click', function(){
+              if (mainTab.id && mainTab.id !== lastActive) {
+                window.shellAPI.tabSwitch(mainTab.id)['catch'](function(){});
+              }
+            });
+          }
+          tabsEl.style.display = 'flex';
+        } else {
+          tabsEl.innerHTML = '';
+        }
       }
 
       // 同步地址栏
@@ -1639,6 +1641,14 @@
       if (activeTab && document.activeElement !== urlInput) {
         urlInput.value = activeTab.url || '';
       }
+
+      // 标签列表下拉开着时实时刷新
+      try {
+        var _dd = document.getElementById('lingya-tabs-dropdown');
+        if (_dd && _dd.style.display !== 'none' && typeof window.__lyRenderTabsDropdown === 'function') {
+          window.__lyRenderTabsDropdown();
+        }
+      } catch (_) {}
     }
 
     // 初始加载 + 订阅变更
@@ -1673,6 +1683,249 @@
     if (backBtn) backBtn.addEventListener('click', function(){ window.shellAPI.tabBack()['catch'](function(){}); });
     if (fwdBtn) fwdBtn.addEventListener('click', function(){ window.shellAPI.tabForward()['catch'](function(){}); });
     if (reloadBtn) reloadBtn.addEventListener('click', function(){ window.shellAPI.tabReload()['catch'](function(){}); });
+
+    // ===== 标签列表下拉 =====
+    var tabsMenuBtn = document.getElementById('lingya-tabs-menu');
+    var tabsDd = document.getElementById('lingya-tabs-dropdown');
+    var tabsDdBody = document.getElementById('lingya-tabs-dd-body');
+    var tabsDdCount = document.getElementById('lingya-tabs-count');
+    var tabsDdClose = document.getElementById('lingya-tabs-dd-close');
+    var bmBtn = document.getElementById('lingya-bookmark-btn');
+    var bmDd = document.getElementById('lingya-bookmarks-dropdown');
+    var bmDdBody = document.getElementById('lingya-bm-dd-body');
+    var bmDdClose = document.getElementById('lingya-bm-dd-close');
+    var bmAddUrl = document.getElementById('lingya-bm-add-url');
+    var bmAddName = document.getElementById('lingya-bm-add-name');
+    var bmAddBtn = document.getElementById('lingya-bm-add-btn');
+
+    function closeAllDropdowns() {
+      if (tabsDd) tabsDd.style.display = 'none';
+      if (bmDd) bmDd.style.display = 'none';
+      if (tabsMenuBtn) tabsMenuBtn.classList.remove('active');
+      if (bmBtn) bmBtn.classList.remove('active');
+    }
+
+    // 点击面板外部关闭
+    document.addEventListener('mousedown', function(ev){
+      if (!tabsDd || !bmDd) return;
+      var inTabs = tabsDd.contains(ev.target) || (tabsMenuBtn && tabsMenuBtn.contains(ev.target));
+      var inBm = bmDd.contains(ev.target) || (bmBtn && bmBtn.contains(ev.target));
+      if (!inTabs && !inBm) closeAllDropdowns();
+    });
+
+    function renderTabsDropdown() {
+      if (!tabsDdBody) return;
+      // 下拉只列其他网站的标签（主标签 LingYa 对话固定在顶部横向）
+      var allTabs = lastTabs || [];
+      var tabs = [];
+      for (var ai = 0; ai < allTabs.length; ai++) {
+        if (!allTabs[ai].isMain) tabs.push(allTabs[ai]);
+      }
+      if (tabsDdCount) tabsDdCount.textContent = String(tabs.length);
+      if (!tabs.length) {
+        tabsDdBody.innerHTML = '<div class="ly-dd-empty">暂无其他标签<br/><span style="font-size:10px;opacity:.7;">点 + 新建或让 AI 打开网址</span></div>';
+        return;
+      }
+      var h = '';
+      for (var i = 0; i < tabs.length; i++) {
+        var t = tabs[i];
+        var cls = 'ly-dd-item' + (t.active ? ' active' : '');
+        h += '<div class="' + cls + '" data-tab-id="' + attr(t.id) + '">'
+          + '<span class="ly-dd-item-icon">🌐</span>'
+          + '<span class="ly-dd-item-main">'
+          +   '<span class="ly-dd-item-title">' + esc(t.title || '新标签') + '</span>'
+          +   '<span class="ly-dd-item-url">' + esc(t.url || 'about:blank') + '</span>'
+          + '</span>'
+          + '<span class="ly-dd-item-act" data-close-id="' + attr(t.id) + '" title="关闭标签">×</span>'
+          + '</div>';
+      }
+      tabsDdBody.innerHTML = h;
+      var items = tabsDdBody.querySelectorAll('.ly-dd-item');
+      for (var j = 0; j < items.length; j++) {
+        (function(el){
+          el.addEventListener('click', function(ev){
+            var closeEl = ev.target.closest('.ly-dd-item-act');
+            if (closeEl) {
+              ev.stopPropagation();
+              var cid = closeEl.getAttribute('data-close-id');
+              window.shellAPI.tabClose(cid)['catch'](function(){});
+              return;
+            }
+            var id = el.getAttribute('data-tab-id');
+            if (id) {
+              window.shellAPI.tabSwitch(id).then(function(){
+                closeAllDropdowns();
+              })['catch'](function(){});
+            }
+          });
+        })(items[j]);
+      }
+    }
+
+    /** 把下拉面板定位到按钮正下方（垂直展开，左边缘与按钮对齐） */
+    function positionDropdown(panel, btn) {
+      if (!panel || !btn) return;
+      var rect = btn.getBoundingClientRect();
+      panel.style.top = (rect.bottom + 4) + 'px';
+      // 左边缘对齐按钮；若右侧超出视口，则贴右边
+      var maxLeft = window.innerWidth - panel.offsetWidth - 8;
+      var left = Math.min(Math.max(8, rect.left), Math.max(8, maxLeft));
+      panel.style.left = left + 'px';
+    }
+
+    /** 取按钮的屏幕坐标（主进程用它定位独立下拉窗口） */
+    function screenRect(btn) {
+      var r = btn.getBoundingClientRect();
+      return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+    }
+    /** 当前主题（供下拉窗口跟随） */
+    function currentTheme() {
+      try { return document.documentElement.classList.contains('lingya-theme-light') ? 'light' : 'dark'; } catch (_) { return 'dark'; }
+    }
+
+    if (tabsMenuBtn && window.shellAPI && window.shellAPI.openDropdown) {
+      tabsMenuBtn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        closeAllDropdowns();
+        window.shellAPI.openDropdown({
+          type: 'tabs',
+          anchor: screenRect(tabsMenuBtn),
+          theme: currentTheme(),
+        }).then(function(r){
+          if (r && !r.success) toast2(r.error || '打开标签列表失败');
+        })['catch'](function(){});
+      });
+    }
+
+    // ===== 收藏夹 =====
+    var BM_KEY = 'lingya-bookmarks';
+    function readBookmarks() {
+      try {
+        var raw = localStorage.getItem(BM_KEY);
+        if (!raw) return [];
+        var arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+      } catch (_) { return []; }
+    }
+    function writeBookmarks(list) {
+      try { localStorage.setItem(BM_KEY, JSON.stringify(list)); } catch (_) {}
+    }
+    function normalizeUrl(u) {
+      var s = String(u || '').trim();
+      if (!s) return '';
+      if (/^[a-z]+:\/\//i.test(s)) return s;
+      return 'https://' + s;
+    }
+    function domainOf(u) {
+      try { return new URL(u).hostname.replace(/^www\./, ''); } catch (_) { return u; }
+    }
+
+    function renderBookmarksDropdown() {
+      if (!bmDdBody) return;
+      var list = readBookmarks();
+      if (!list.length) {
+        bmDdBody.innerHTML = '<div class="ly-dd-empty">暂无收藏<br/>在上方输入网址点「添加」</div>';
+        return;
+      }
+      var h = '';
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        h += '<div class="ly-dd-item" data-url="' + attr(b.url) + '">'
+          + '<span class="ly-dd-item-icon">★</span>'
+          + '<span class="ly-dd-item-main">'
+          +   '<span class="ly-dd-item-title">' + esc(b.title || domainOf(b.url)) + '</span>'
+          +   '<span class="ly-dd-item-url">' + esc(b.url) + '</span>'
+          + '</span>'
+          + '<span class="ly-dd-item-act" data-del-url="' + attr(b.url) + '" title="删除收藏">×</span>'
+          + '</div>';
+      }
+      bmDdBody.innerHTML = h;
+      var items = bmDdBody.querySelectorAll('.ly-dd-item');
+      for (var j = 0; j < items.length; j++) {
+        (function(el){
+          el.addEventListener('click', function(ev){
+            var delEl = ev.target.closest('.ly-dd-item-act');
+            if (delEl) {
+              ev.stopPropagation();
+              var du = delEl.getAttribute('data-del-url');
+              var nl = readBookmarks().filter(function(x){ return x.url !== du; });
+              writeBookmarks(nl);
+              renderBookmarksDropdown();
+              return;
+            }
+            var url = el.getAttribute('data-url');
+            if (url) {
+              // 当前标签导航过去（若当前是主标签也允许，用户主动操作）
+              window.shellAPI.tabNavigate(url).then(function(r){
+                if (r && !r.success) toast2(r.error || '打开失败');
+                closeAllDropdowns();
+              })['catch'](function(){});
+            }
+          });
+        })(items[j]);
+      }
+    }
+
+    if (bmBtn && window.shellAPI && window.shellAPI.openDropdown) {
+      bmBtn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        closeAllDropdowns();
+        window.shellAPI.openDropdown({
+          type: 'bookmarks',
+          anchor: screenRect(bmBtn),
+          bookmarks: readBookmarks(),
+          theme: currentTheme(),
+        }).then(function(r){
+          if (r && !r.success) toast2(r.error || '打开收藏夹失败');
+        })['catch'](function(){});
+      });
+    }
+
+    // 主进程下拉窗口回来的收藏增删 → 写 localStorage
+    try {
+      if (window.shellAPI.onBookmarkAdd) {
+        window.shellAPI.onBookmarkAdd(function(p){
+          var url = String((p && p.url) || '').trim();
+          if (!url) return;
+          var title = String((p && p.title) || '').trim() || domainOf(url);
+          var list = readBookmarks();
+          if (list.some(function(x){ return x.url === url; })) { toast2('已收藏过'); return; }
+          list.unshift({ url: url, title: title, addedAt: Date.now() });
+          writeBookmarks(list);
+          toast2('已添加收藏：' + title);
+        });
+      }
+      if (window.shellAPI.onBookmarkRemove) {
+        window.shellAPI.onBookmarkRemove(function(p){
+          var url = String((p && p.url) || '').trim();
+          if (!url) return;
+          var list = readBookmarks().filter(function(x){ return x.url !== url; });
+          writeBookmarks(list);
+          toast2('已删除收藏');
+        });
+      }
+    } catch (_) {}
+
+    function addBookmark() {
+      var rawUrl = (bmAddUrl && bmAddUrl.value) || '';
+      var url = normalizeUrl(rawUrl);
+      if (!url || url === 'https://') { toast2('请输入网址'); return; }
+      var name = (bmAddName && bmAddName.value || '').trim() || domainOf(url);
+      var list = readBookmarks();
+      if (list.some(function(x){ return x.url === url; })) { toast2('已收藏过'); return; }
+      list.unshift({ url: url, title: name, addedAt: Date.now() });
+      writeBookmarks(list);
+      if (bmAddUrl) bmAddUrl.value = '';
+      if (bmAddName) bmAddName.value = '';
+      renderBookmarksDropdown();
+      toast2('已添加收藏：' + name);
+    }
+    if (bmAddBtn) bmAddBtn.addEventListener('click', addBookmark);
+    if (bmAddUrl) bmAddUrl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') { ev.preventDefault(); addBookmark(); } });
+    if (bmAddName) bmAddName.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') { ev.preventDefault(); addBookmark(); } });
+
+    // 供 renderTabs 内部回调刷新下拉（避免覆写函数声明）
+    window.__lyRenderTabsDropdown = renderTabsDropdown;
   })();
 
 })();

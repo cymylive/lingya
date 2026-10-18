@@ -264,20 +264,20 @@
     -webkit-app-region: drag;
   }
   #lingya-tabbar button, #lingya-tabbar input { -webkit-app-region: no-drag; }
-  #lingya-tabs { display: flex; align-items: center; gap: 4px; max-width: 45%; overflow-x: auto; overflow-y: hidden; }
-  #lingya-tabs::-webkit-scrollbar { height: 0; }
+  /* 顶部横向：只显示主标签（LingYa 对话），其他网站走 ▾ 下拉 */
+  #lingya-tabs { display: flex; align-items: center; gap: 4px; max-width: 260px; overflow: hidden; flex-shrink: 0; }
   .ly-tab {
     display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
     background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 7px;
-    font-size: 12px; color: var(--ck-text-2); cursor: pointer; white-space: nowrap;
-    max-width: 200px; flex-shrink: 0; transition: background .15s;
+    font-size: 12px; color: var(--ck-text-2); white-space: nowrap;
+    max-width: 240px; flex-shrink: 0; transition: background .15s;
   }
-  .ly-tab:hover { background: var(--ck-surface-hover); }
-  .ly-tab.active { background: var(--ck-primary-soft); border-color: var(--ck-primary); color: var(--ck-title); font-weight: 600; }
-  .ly-tab-title { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
-  .ly-tab-close { font-size: 14px; line-height: 1; color: var(--ck-text-dim); padding: 0 2px; border-radius: 4px; }
-  .ly-tab-close:hover { background: rgba(248,113,113,.25); color: #f87171; }
-  .ly-tab.main .ly-tab-close { display: none; }
+  .ly-tab.main {
+    background: var(--ck-primary-soft); border-color: var(--ck-primary);
+    color: var(--ck-title); font-weight: 600;
+  }
+  .ly-tab-title { overflow: hidden; text-overflow: ellipsis; max-width: 210px; }
+  .ly-tab-ico { font-size: 12px; flex-shrink: 0; }
   #lingya-tab-new {
     width: 26px; height: 26px; flex-shrink: 0; border: 1px solid var(--ck-border); background: var(--ck-surface);
     color: var(--ck-text-dim); border-radius: 6px; cursor: pointer; font-size: 16px; line-height: 1;
@@ -295,13 +295,85 @@
     color: var(--ck-text); font-size: 12px; outline: none;
   }
   #lingya-url-input:focus { border-color: var(--ck-primary); background: var(--ck-bg-solid); }
+
+  /* ===== 标签栏右侧小按钮（标签列表 / 收藏）===== */
+  .ly-tb-btn {
+    width: 26px; height: 26px; flex-shrink: 0; border: 1px solid var(--ck-border);
+    background: var(--ck-surface); color: var(--ck-text-dim); border-radius: 6px;
+    cursor: pointer; font-size: 13px; line-height: 1; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+  }
+  .ly-tb-btn:hover { background: var(--ck-surface-hover); color: var(--ck-primary); }
+  .ly-tb-btn.active { background: var(--ck-primary-soft); border-color: var(--ck-primary); color: var(--ck-primary); }
+
+  /* ===== 下拉面板（标签列表 / 收藏夹共用）===== */
+  /* 下拉面板：position fixed，由 JS 按按钮位置定位到正下方，垂直展开 */
+  .ly-dropdown {
+    position: fixed; z-index: 2147483000;
+    width: 320px; max-height: 480px; display: flex; flex-direction: column;
+    background: var(--ck-bg-solid); border: 1px solid var(--ck-border);
+    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,0.45);
+    overflow: hidden;
+  }
+  .ly-dd-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; border-bottom: 1px solid var(--ck-border); flex-shrink: 0;
+  }
+  .ly-dd-title { font-size: 12px; font-weight: 700; color: var(--ck-title); }
+  .ly-dd-count {
+    display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px;
+    background: var(--ck-primary-soft); color: var(--ck-primary);
+    border-radius: 8px; font-size: 10px; text-align: center; line-height: 16px;
+  }
+  .ly-dd-close {
+    width: 22px; height: 22px; border: none; background: transparent; cursor: pointer;
+    color: var(--ck-text-dim); border-radius: 5px; font-size: 14px; line-height: 1;
+  }
+  .ly-dd-close:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  .ly-dd-body { flex: 1; overflow-y: auto; padding: 4px; }
+  .ly-dd-body::-webkit-scrollbar { width: 6px; }
+  .ly-dd-body::-webkit-scrollbar-thumb { background: var(--ck-border); border-radius: 3px; }
+
+  .ly-dd-item {
+    display: flex; align-items: center; gap: 6px; padding: 7px 8px;
+    border-radius: 7px; cursor: pointer; font-size: 12px; color: var(--ck-text-2);
+    transition: background .12s;
+  }
+  .ly-dd-item:hover { background: var(--ck-surface-hover); }
+  .ly-dd-item.active { background: var(--ck-primary-soft); color: var(--ck-title); font-weight: 600; }
+  .ly-dd-item-icon { flex-shrink: 0; font-size: 12px; color: var(--ck-text-dim); }
+  .ly-dd-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .ly-dd-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ly-dd-item-url { font-size: 10px; color: var(--ck-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ly-dd-item-act {
+    flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; color: var(--ck-text-dim); font-size: 12px; opacity: 0.7;
+  }
+  .ly-dd-item-act:hover { background: rgba(248,113,113,.2); color: #f87171; opacity: 1; }
+  .ly-dd-empty { padding: 14px 10px; text-align: center; color: var(--ck-text-dim); font-size: 11.5px; }
+
+  .ly-dd-addrow { padding: 6px 8px; display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--ck-border); flex-shrink: 0; }
+  .ly-dd-input {
+    flex: 1; min-width: 90px; height: 24px; padding: 0 7px;
+    background: var(--ck-surface); border: 1px solid var(--ck-border); border-radius: 6px;
+    color: var(--ck-text); font-size: 11.5px; outline: none;
+  }
+  .ly-dd-input:focus { border-color: var(--ck-primary); }
+  .ly-dd-addbtn {
+    height: 24px; padding: 0 9px; border: 1px solid var(--ck-primary); background: var(--ck-primary-soft);
+    color: var(--ck-primary); border-radius: 6px; cursor: pointer; font-size: 11.5px; font-weight: 600;
+  }
+  .ly-dd-addbtn:hover { background: var(--ck-primary); color: #fff; }
 </style>
 </head>
 <body>
   <!-- 顶部标签栏 + 地址栏（AI view 从 y=40 开始，由主进程 TABBAR_HEIGHT 对齐） -->
   <div id="lingya-tabbar">
     <div id="lingya-tabs"></div>
+    <button id="lingya-tabs-menu" class="ly-tb-btn" title="其他标签列表">▾</button>
     <button id="lingya-tab-new" title="新标签页">+</button>
+    <button id="lingya-bookmark-btn" class="ly-tb-btn" title="收藏夹">★</button>
     <div id="lingya-urlbar">
       <button class="ly-url-btn" id="lingya-url-back" title="后退">‹</button>
       <button class="ly-url-btn" id="lingya-url-forward" title="前进">›</button>
@@ -309,6 +381,29 @@
       <input id="lingya-url-input" type="text" placeholder="输入网址后回车" spellcheck="false" autocomplete="off" />
     </div>
   </div>
+  <!-- 标签列表下拉 -->
+  <div id="lingya-tabs-dropdown" class="ly-dropdown" style="display:none;">
+    <div class="ly-dd-head">
+      <span class="ly-dd-title">所有标签 <span id="lingya-tabs-count" class="ly-dd-count">0</span></span>
+      <button class="ly-dd-close" id="lingya-tabs-dd-close" title="关闭">×</button>
+    </div>
+    <div id="lingya-tabs-dd-body" class="ly-dd-body"></div>
+  </div>
+
+  <!-- 收藏夹下拉 -->
+  <div id="lingya-bookmarks-dropdown" class="ly-dropdown" style="display:none;">
+    <div class="ly-dd-head">
+      <span class="ly-dd-title">收藏夹</span>
+      <button class="ly-dd-close" id="lingya-bm-dd-close" title="关闭">×</button>
+    </div>
+    <div class="ly-dd-addrow">
+      <input id="lingya-bm-add-url" class="ly-dd-input" type="text" placeholder="网址，如 baidu.com" spellcheck="false" autocomplete="off" />
+      <input id="lingya-bm-add-name" class="ly-dd-input" type="text" placeholder="名称（可选）" spellcheck="false" autocomplete="off" />
+      <button id="lingya-bm-add-btn" class="ly-dd-addbtn" title="添加收藏">+ 添加</button>
+    </div>
+    <div id="lingya-bm-dd-body" class="ly-dd-body"></div>
+  </div>
+
   <div id="lingya-sidebar-slot" class="collapsed">
     <div id="lingya-activitybar">
       <div id="sh-ab-grid" class="sh-ab-grid" data-cols="1">

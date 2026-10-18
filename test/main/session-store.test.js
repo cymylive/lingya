@@ -152,3 +152,54 @@ test('setSessionTitleById 广播 session-title-updated', () => {
   assert.ok(hit, '应发送 session-title-updated');
   assert.deepStrictEqual(hit[1], { sessionId: 'sess-b', title: '新名' });
 });
+
+// ===== 主标签标题跟随会话切换 =====
+
+function makeStoreWithMainTab() {
+  const tabs = new Map();
+  const mainTab = { id: 'tab-main', isMain: true, title: 'LingYa · DeepSeek', url: '', view: null };
+  tabs.set('tab-main', mainTab);
+  const mainCtx = { tabs, onTabUpdated: () => {}, sessionStore: null };
+  const fakeWin = { isDestroyed: () => false, webContents: { send: () => {} } };
+  const mockWindowState = {
+    getMainWindow: () => fakeWin,
+    getMainContext: () => mainCtx,
+    getAllContexts: () => [mainCtx],
+  };
+  const store = createSessionStore('p1', tmpDir, mockWindowState);
+  mainCtx.sessionStore = store;
+  return { store, mainTab, fakeWin };
+}
+
+test('handleUrlChange 切到有标题的会话 → 主标签标题跟随', () => {
+  const { store, mainTab, fakeWin } = makeStoreWithMainTab();
+  store.writeSessionStore({
+    'abc12345-0000-1111-2222-333344445555': { projectDir: 'C:/proj', title: '我的项目对话' },
+  });
+  store.handleUrlChange('https://chat.deepseek.com/a/chat/s/abc12345-0000-1111-2222-333344445555', fakeWin);
+  assert.strictEqual(store.state.currentSessionId, 'abc12345-0000-1111-2222-333344445555');
+  assert.strictEqual(mainTab.title, '我的项目对话');
+});
+
+test('handleUrlChange 切到无标题会话 → 用短 sessionId', () => {
+  const { store, mainTab, fakeWin } = makeStoreWithMainTab();
+  store.handleUrlChange('https://chat.deepseek.com/a/chat/s/abcdef12-3456-7890-abcd-ef1234567890', fakeWin);
+  assert.strictEqual(mainTab.title, '会话 abcdef12');
+});
+
+test('handleUrlChange 切到新会话首页 → 主标签显示「新对话」', () => {
+  const { store, mainTab, fakeWin } = makeStoreWithMainTab();
+  store.handleUrlChange('https://chat.deepseek.com/', fakeWin);
+  assert.strictEqual(mainTab.title, '新对话');
+});
+
+test('getSessionTitleById 能取到标题', () => {
+  const store = makeStore();
+  store.writeSessionStore({
+    'sid-1': { projectDir: 'C:/p', title: '标题一' },
+  });
+  assert.strictEqual(store.getSessionTitleById('sid-1'), '标题一');
+  assert.strictEqual(store.getSessionTitleById('missing'), null);
+  assert.strictEqual(store.getSessionTitleById(null), null);
+});
+

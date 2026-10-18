@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  :root {
+    --bg:#14181c; --surface:rgba(255,255,255,0.05); --hover:rgba(255,255,255,0.10);
+    --border:rgba(255,255,255,0.10); --text:#e2e8f0; --text2:#cbd5e1; --dim:#7c8798;
+    --primary:#2dd4bf; --primary-soft:rgba(45,212,191,0.16); --title:#ccfbf1;
+  }
+  html.light {
+    --bg:#ffffff; --surface:rgba(0,0,0,0.03); --hover:rgba(0,0,0,0.07);
+    --border:rgba(0,0,0,0.12); --text:#1e293b; --text2:#334155; --dim:#64748b;
+    --primary:#0d9488; --primary-soft:rgba(13,148,136,0.14); --title:#0f766e;
+  }
+  #panel {
+    width:100%; height:100%; display:flex; flex-direction:column;
+    background:var(--bg); border:1px solid var(--border); border-radius:10px;
+    box-shadow:0 12px 40px rgba(0,0,0,0.5); overflow:hidden;
+  }
+  .head { display:flex; align-items:center; justify-content:space-between;
+    padding:8px 10px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .title { font-size:12px; font-weight:700; color:var(--title); }
+  .count { display:inline-block; min-width:18px; padding:0 5px; margin-left:5px;
+    background:var(--primary-soft); color:var(--primary); border-radius:8px;
+    font-size:10px; text-align:center; line-height:16px; }
+  .close { width:22px; height:22px; border:none; background:transparent; cursor:pointer;
+    color:var(--dim); border-radius:5px; font-size:14px; line-height:1; }
+  .close:hover { background:var(--hover); color:var(--text); }
+  .body { flex:1; overflow-y:auto; padding:4px; }
+  .body::-webkit-scrollbar { width:6px; }
+  .body::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  .item { display:flex; align-items:center; gap:7px; padding:8px 9px; border-radius:7px;
+    cursor:pointer; font-size:12.5px; color:var(--text2); transition:background .12s; }
+  .item:hover { background:var(--hover); }
+  .item.active { background:var(--primary-soft); color:var(--title); font-weight:600; }
+  .item-ico { flex-shrink:0; font-size:12px; color:var(--dim); }
+  .item-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+  .item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item-url { font-size:10.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item-act { flex-shrink:0; width:20px; height:20px; display:flex; align-items:center;
+    justify-content:center; border-radius:4px; color:var(--dim); font-size:13px; }
+  .item-act:hover { background:rgba(248,113,113,.2); color:#f87171; }
+  .empty { padding:18px 10px; text-align:center; color:var(--dim); font-size:12px; line-height:1.7; }
+  .addrow { padding:7px 9px; display:flex; gap:4px; flex-wrap:wrap;
+    border-bottom:1px solid var(--border); flex-shrink:0; }
+  .inp { flex:1; min-width:88px; height:25px; padding:0 8px; background:var(--surface);
+    border:1px solid var(--border); border-radius:6px; color:var(--text);
+    font-size:11.5px; outline:none; }
+  .inp:focus { border-color:var(--primary); }
+  .addbtn { height:25px; padding:0 10px; border:1px solid var(--primary);
+    background:var(--primary-soft); color:var(--primary); border-radius:6px;
+    cursor:pointer; font-size:11.5px; font-weight:600; }
+  .addbtn:hover { background:var(--primary); color:#fff; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="head">
+    <span class="title" id="ttl">标签列表<span class="count" id="cnt">0</span></span>
+    <button class="close" id="btn-close" title="关闭">×</button>
+  </div>
+  <div id="addrow" class="addrow" style="display:none;">
+    <input id="in-url" class="inp" type="text" placeholder="网址，如 baidu.com" spellcheck="false" autocomplete="off" />
+    <input id="in-name" class="inp" type="text" placeholder="名称（可选）" spellcheck="false" autocomplete="off" />
+    <button id="btn-add" class="addbtn">+ 添加</button>
+  </div>
+  <div id="body" class="body"></div>
+</div>
+<script>
+  var currentType = "tabs";
+  var currentData = [];
+
+  function esc(t) {
+    return String(t == null ? "" : t).replace(/[&<>"']/g, function(c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[c];
+    });
+  }
+  function attr(t) { return esc(t); }
+  function domainOf(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (_) { return u; } }
+  function normalizeUrl(u) {
+    var s = String(u || "").trim();
+    if (!s) return "";
+    if (/^[a-z]+:\/\//i.test(s)) return s;
+    return "https://" + s;
+  }
+
+  function renderTabs() {
+    var tabs = currentData || [];
+    document.getElementById("ttl").innerHTML = '标签列表<span class="count" id="cnt">' + tabs.length + '</span>';
+    document.getElementById("addrow").style.display = "none";
+    var b = document.getElementById("body");
+    if (!tabs.length) { b.innerHTML = '<div class="empty">暂无标签</div>'; return; }
+    var h = "";
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i];
+      var cls = "item" + (t.active ? " active" : "");
+      var ico = t.isMain ? "💬" : "🌐";
+      h += '<div class="' + cls + '" data-tab-id="' + attr(t.id) + '">'
+        + '<span class="item-ico">' + ico + '</span>'
+        + '<span class="item-main"><span class="item-title">' + esc(t.title || "新标签") + '</span>'
+        + '<span class="item-url">' + esc(t.url || "about:blank") + '</span></span>'
+        + (t.isMain ? "" : '<span class="item-act" data-close-id="' + attr(t.id) + '" title="关闭">×</span>')
+        + '</div>';
+    }
+    b.innerHTML = h;
+    var items = b.querySelectorAll(".item");
+    for (var j = 0; j < items.length; j++) {
+      (function(el) {
+        el.addEventListener("click", function(ev) {
+          var closeEl = ev.target.closest(".item-act");
+          if (closeEl) {
+            ev.stopPropagation();
+            window.dropdownAPI.action("tab-close", { tabId: closeEl.getAttribute("data-close-id") });
+            return;
+          }
+          var id = el.getAttribute("data-tab-id");
+          if (id) window.dropdownAPI.action("tab-switch", { tabId: id });
+        });
+      })(items[j]);
+    }
+  }
+
+  function renderBookmarks() {
+    var list = currentData || [];
+    document.getElementById("ttl").innerHTML = '收藏夹<span class="count" id="cnt">' + list.length + '</span>';
+    document.getElementById("addrow").style.display = "flex";
+    var b = document.getElementById("body");
+    if (!list.length) { b.innerHTML = '<div class="empty">暂无收藏<br/>在上方输入网址点「添加」</div>'; return; }
+    var h = "";
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      h += '<div class="item" data-url="' + attr(it.url) + '">'
+        + '<span class="item-ico">★</span>'
+        + '<span class="item-main"><span class="item-title">' + esc(it.title || domainOf(it.url)) + '</span>'
+        + '<span class="item-url">' + esc(it.url) + '</span></span>'
+        + '<span class="item-act" data-del-url="' + attr(it.url) + '" title="删除">×</span>'
+        + '</div>';
+    }
+    b.innerHTML = h;
+    var items = b.querySelectorAll(".item");
+    for (var j = 0; j < items.length; j++) {
+      (function(el) {
+        el.addEventListener("click", function(ev) {
+          var delEl = ev.target.closest(".item-act");
+          if (delEl) {
+            ev.stopPropagation();
+            window.dropdownAPI.action("bookmark-remove", { url: delEl.getAttribute("data-del-url") });
+            return;
+          }
+          var url = el.getAttribute("data-url");
+          if (url) window.dropdownAPI.action("bookmark-open", { url: url });
+        });
+      })(items[j]);
+    }
+  }
+
+  function render() {
+    if (currentType === "tabs") renderTabs();
+    else renderBookmarks();
+  }
+
+  window.dropdownAPI.onInit(function(payload) {
+    currentType = (payload && payload.type) || "tabs";
+    currentData = (payload && payload.data) || [];
+    var theme = (payload && payload.theme) || "dark";
+    if (theme === "light") document.documentElement.classList.add("light");
+    render();
+    if (currentType === "bookmarks") {
+      setTimeout(function() { try { document.getElementById("in-url").focus(); } catch (_) {} }, 30);
+    }
+  });
+
+  document.getElementById("btn-close").addEventListener("click", function() { window.dropdownAPI.close(); });
+
+  function addBookmark() {
+    var url = normalizeUrl(document.getElementById("in-url").value);
+    if (!url || url === "https://") return;
+    var name = (document.getElementById("in-name").value || "").trim() || domainOf(url);
+    window.dropdownAPI.action("bookmark-add", { url: url, title: name });
+  }
+  document.getElementById("btn-add").addEventListener("click", addBookmark);
+  document.getElementById("in-url").addEventListener("keydown", function(e) { if (e.key === "Enter") { e.preventDefault(); addBookmark(); } });
+  document.getElementById("in-name").addEventListener("keydown", function(e) { if (e.key === "Enter") { e.preventDefault(); addBookmark(); } });
+
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") window.dropdownAPI.close();
+  });
+</script>
+</body>
+</html>
