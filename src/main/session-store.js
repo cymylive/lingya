@@ -35,15 +35,17 @@ function createSessionStore(profileId, storeDir, windowState) {
     }
   }
 
-  /** 兼容旧数据：把 store[id] 归一化为对象 { projectDir, title, createdAt, updatedAt } */
+  /** 兼容旧数据：把 store[id] 归一化为对象 { projectDir, title, createdAt, updatedAt, archivedAt } */
   function normalizeEntry(entry) {
     if (entry == null) return null;
-    if (typeof entry === 'string') return { projectDir: entry, title: null, createdAt: null, updatedAt: null };
+    if (typeof entry === 'string') return { projectDir: entry, title: null, createdAt: null, updatedAt: null, archivedAt: null };
     if (typeof entry === 'object') return {
       projectDir: entry.projectDir != null ? entry.projectDir : null,
       title: entry.title || null,
       createdAt: entry.createdAt || null,
       updatedAt: entry.updatedAt || null,
+      // 归档时间戳（ISO 字符串）；null/undefined = 未归档
+      archivedAt: entry.archivedAt || null,
     };
     return null;
   }
@@ -195,6 +197,44 @@ function createSessionStore(profileId, storeDir, windowState) {
     } catch (_) { /* ignore */ }
   }
 
+  /**
+   * 归档 / 取消归档某个会话。
+   * @param {string} sessionId
+   * @param {boolean} archived true = 归档，false = 取消归档
+   * @returns {{success:boolean, error?:string, archivedAt?:string|null}}
+   */
+  function setSessionArchived(sessionId, archived) {
+    if (!sessionId) return { success: false, error: '缺少 sessionId' };
+    const store = readSessionStore();
+    const old = normalizeEntry(store[sessionId]);
+    if (!old) return { success: false, error: '会话不存在' };
+    const now = new Date().toISOString();
+    old.archivedAt = archived ? now : null;
+    store[sessionId] = old;
+    writeSessionStore(store);
+    notifyArchivedUpdated(sessionId, old.archivedAt);
+    return { success: true, archivedAt: old.archivedAt };
+  }
+
+  /** 广播归档状态变化（所有窗口的会话列表都要刷新） */
+  function notifyArchivedUpdated(sessionId, archivedAt) {
+    const payload = { sessionId, archivedAt };
+    try {
+      if (windowState && typeof windowState.getAllContexts === 'function') {
+        for (const ctx of windowState.getAllContexts()) {
+          try {
+            const wc = ctx.win && ctx.win.webContents;
+            if (wc && !wc.isDestroyed()) wc.send('session-archived-updated', payload);
+          } catch (_) {}
+          try {
+            const raw = ctx.rawWin;
+            if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('session-archived-updated', payload);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
   /** 读取某会话的标题（无则返回 null） */
   function getSessionTitleById(sessionId) {
     if (!sessionId) return null;
@@ -301,6 +341,7 @@ function createSessionStore(profileId, storeDir, windowState) {
     updateSessionTitle,
     setSessionTitle,
     setSessionTitleById,
+    setSessionArchived,
     getSessionTitleById,
     syncMainTabTitle,
     extractSessionIdFromUrl,

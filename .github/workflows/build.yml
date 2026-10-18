@@ -17,6 +17,8 @@ jobs:
         with:
           node-version: 18
       - run: npm install
+      - name: Fetch bundled Node runtime
+        run: node scripts/fetch-runtime.mjs
       - run: npm run build:win
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}

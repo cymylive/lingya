@@ -99,6 +99,69 @@ function init() {
     // 停滞监督者：独立心跳，检测到任务卡住时自动催促继续
     require('./dom/supervisor').startSupervisor();
 
+    // ===== 执行插件注册的 preload 脚本 =====
+    // 插件通过 ctx.registerPreload(scriptText) 注册脚本，主进程收集后经 IPC 返回，
+    // 这里在页面渲染进程里执行（可挂钩 DOM / 网络）。
+    try {
+      if (window.electronAPI && window.electronAPI.getPluginPreloads) {
+        // 延迟到下一个宏任务再执行，避免同步阻塞 init 主流程（否则会影响 supervisor 的 setInterval 精度）
+        setTimeout(function () {
+          window.electronAPI.getPluginPreloads().then(function (r) {
+            if (!r || !r.success) return;
+            var list = r.scripts || [];
+            // 每个脚本再单独用 setTimeout 包裹，保证任一插件卡住也不会拖累其他插件和主流程
+            list.forEach(function (item) {
+              setTimeout(function () {
+                try {
+                  new Function(item.script)();
+                  console.log('[LingYa] 插件 preload 已执行: ' + item.pluginId);
+                } catch (e) {
+                  console.error('[LingYa] 插件 preload 执行失败 (' + item.pluginId + '):', e && e.message);
+                }
+              }, 0);
+            });
+          })['catch'](function (e) {
+            console.error('[LingYa] 获取插件 preload 失败:', e && e.message);
+          });
+        }, 0);
+      }
+    } catch (_) {}
+
+    // DeepSeek 侧栏「对话归档」注入（仅 DeepSeek 平台）
+    // 优先走插件（plugins/deepseek-archive）；插件未启用时才用内置版本，避免重复注入。
+    try {
+      if (currentProvider && currentProvider.id === 'deepseek') {
+        var __needBuiltinArchiver = true;
+        try {
+          if (window.electronAPI && window.electronAPI.pluginList) {
+            window.electronAPI.pluginList().then(function (pr) {
+              var plugins = (pr && pr.success && pr.plugins) || [];
+              var archPlugin = null;
+              for (var i = 0; i < plugins.length; i++) {
+                if (plugins[i].id === 'deepseek-archive') { archPlugin = plugins[i]; break; }
+              }
+              if (archPlugin && archPlugin.enabled) {
+                console.log('[LingYa] 归档由插件提供，跳过内置版本');
+                return;
+              }
+              // 插件未启用 → 用内置
+              try { require('./dom/deepseek-history-archiver').start(); } catch (e) {
+                console.error('[LingYa] 启动内置归档失败:', e && e.message);
+              }
+            })['catch'](function () {
+              try { require('./dom/deepseek-history-archiver').start(); } catch (_) {}
+            });
+            __needBuiltinArchiver = false;
+          }
+        } catch (_) {}
+        if (__needBuiltinArchiver) {
+          require('./dom/deepseek-history-archiver').start();
+        }
+      }
+    } catch (e) {
+      console.error('[LingYa] 启动 DeepSeek 归档注入失败:', e.message);
+    }
+
     // 会话标题更新 → 调平台 API 改名 + DOM 双写（含 MutationObserver 守护）
     // （nameConversation / 手动改名原本只改 LingYa 本地存储，不碰网页自身 UI）
     try {

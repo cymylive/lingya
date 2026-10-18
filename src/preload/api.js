@@ -60,6 +60,9 @@ let electronAPI = {
   setSessionTitle: (title, sessionId) => {
     return ipcRenderer.invoke('set-session-title', sessionId ? { title, sessionId } : { title });
   },
+  setSessionArchived: (sessionId, archived) => {
+    return ipcRenderer.invoke('set-session-archived', { sessionId, archived: !!archived });
+  },
   createProfileWindow: () => {
     return ipcRenderer.invoke('create-profile-window');
   },
@@ -193,6 +196,7 @@ let electronAPI = {
   getPluginPreloads: () => ipcRenderer.invoke('plugin-preloads'),
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
+  onSessionArchivedUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-archived-updated',h); return ()=>ipcRenderer.removeListener('session-archived-updated',h); },
   // ========== 平台相关 API ==========
   listProviders: () => {
     return ipcRenderer.invoke('list-providers');

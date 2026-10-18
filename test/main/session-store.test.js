@@ -203,3 +203,57 @@ test('getSessionTitleById 能取到标题', () => {
   assert.strictEqual(store.getSessionTitleById(null), null);
 });
 
+// ===== 归档功能 =====
+
+test('normalizeEntry 保留 archivedAt', () => {
+  const store = makeStore();
+  store.writeSessionStore({
+    'sid-1': { projectDir: 'C:/p', title: 'T', archivedAt: '2026-01-01T00:00:00Z' },
+  });
+  const e = store.normalizeEntry(store.readSessionStore()['sid-1']);
+  assert.strictEqual(e.archivedAt, '2026-01-01T00:00:00Z');
+});
+
+test('normalizeEntry 旧数据无 archivedAt → null', () => {
+  const store = makeStore();
+  store.writeSessionStore({ 'sid-1': { projectDir: 'C:/p', title: 'T' } });
+  const e = store.normalizeEntry(store.readSessionStore()['sid-1']);
+  assert.strictEqual(e.archivedAt, null);
+});
+
+test('setSessionArchived 归档并写入时间戳', () => {
+  const store = makeStore();
+  store.writeSessionStore({ 'sid-1': { projectDir: 'C:/p', title: 'T', archivedAt: null } });
+  const r = store.setSessionArchived('sid-1', true);
+  assert.strictEqual(r.success, true);
+  assert.ok(r.archivedAt, '应返回时间戳');
+  const saved = store.readSessionStore()['sid-1'];
+  assert.ok(saved.archivedAt, '存储里应有 archivedAt');
+  assert.strictEqual(saved.title, 'T', '标题不应被破坏');
+  assert.strictEqual(saved.projectDir, 'C:/p', 'projectDir 不应被破坏');
+});
+
+test('setSessionArchived 取消归档 → null', () => {
+  const store = makeStore();
+  store.writeSessionStore({ 'sid-1': { projectDir: 'C:/p', title: 'T', archivedAt: '2026-01-01T00:00:00Z' } });
+  const r = store.setSessionArchived('sid-1', false);
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.archivedAt, null);
+  assert.strictEqual(store.readSessionStore()['sid-1'].archivedAt, null);
+});
+
+test('setSessionArchived 会话不存在返回失败', () => {
+  const store = makeStore();
+  store.writeSessionStore({});
+  const r = store.setSessionArchived('nope', true);
+  assert.strictEqual(r.success, false);
+  assert.ok(r.error.indexOf('不存在') >= 0);
+});
+
+test('setSessionArchived 缺 sessionId 返回失败', () => {
+  const store = makeStore();
+  const r = store.setSessionArchived(null, true);
+  assert.strictEqual(r.success, false);
+  assert.ok(r.error.indexOf('缺少') >= 0);
+});
+

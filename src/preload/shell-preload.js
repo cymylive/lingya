@@ -87,6 +87,8 @@ const api = {
   listSessions: () => ipcRenderer.invoke('list-sessions'),
   navigateSession: (sessionId) => ipcRenderer.invoke('navigate-session', { sessionId }),
   setSessionTitle: (title, sessionId) => ipcRenderer.invoke('set-session-title', sessionId ? { title, sessionId } : { title }),
+  setSessionArchived: (sessionId, archived) => ipcRenderer.invoke('set-session-archived', { sessionId, archived: !!archived }),
+  onSessionArchivedUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-archived-updated',h); return ()=>ipcRenderer.removeListener('session-archived-updated',h); },
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   openProfileWindow: (profileId) => ipcRenderer.invoke('open-profile-window', { profileId }),
   createProfileWindow: () => ipcRenderer.invoke('create-profile-window'),

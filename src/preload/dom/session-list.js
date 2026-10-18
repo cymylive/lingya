@@ -25,33 +25,95 @@ async function renderSessions() {
       return;
     }
 
-    const sessions = result.sessions || [];
-    if (sessions.length === 0) {
+    const allSessions = result.sessions || [];
+    if (allSessions.length === 0) {
       listContainer.innerHTML = '<div class="lingya-session-empty">暂无会话</div>';
       return;
     }
 
-    listContainer.innerHTML = sessions.map((s) => {
-      // 兼容旧格式（纯字符串）与新格式（{ sessionId, title }）
+    // 分组：未归档 / 已归档
+    const active = [];
+    const archived = [];
+    for (const s of allSessions) {
+      const isArch = !!(typeof s === 'object' && s.archivedAt);
+      (isArch ? archived : active).push(s);
+    }
+
+    function renderItem(s, isArchived) {
       const sid = typeof s === 'string' ? s : (s.sessionId || '');
       const title = typeof s === 'object' ? (s.title || '') : '';
       const label = title ? (escapeHtml(title) + ' (' + escapeHtml(sid) + ')') : escapeHtml(sid);
+      const archBtn = isArchived
+        ? '<span class="session-unarchive" title="取消归档">↩ 取消归档</span>'
+        : '<span class="session-archive" title="归档（从列表隐藏）">📦 归档</span>';
       return `
-      <div class="lingya-session-item" data-session-id="${escapeHtml(sid)}" data-title="${escapeHtml(title)}">
+      <div class="lingya-session-item${isArchived ? ' archived' : ''}" data-session-id="${escapeHtml(sid)}" data-title="${escapeHtml(title)}" data-archived="${isArchived ? '1' : '0'}">
         <span class="session-id">${label}</span>
         <span class="session-rename" title="重命名">✎ 改名</span>
+        ${archBtn}
         <span class="session-action">▶ 跳转</span>
       </div>`;
-    }).join('');
+    }
 
-    // 绑定点击事件
+    let html = '';
+    if (active.length === 0) {
+      html += '<div class="lingya-session-empty">暂无进行中的会话</div>';
+    } else {
+      html += active.map((s) => renderItem(s, false)).join('');
+    }
+    if (archived.length > 0) {
+      html += `
+      <div class="lingya-archived-header" data-toggle-archived="1">
+        <span class="lingya-archived-caret">▸</span>
+        <span>📦 已归档 (${archived.length})</span>
+      </div>
+      <div class="lingya-archived-list" style="display:none;">
+        ${archived.map((s) => renderItem(s, true)).join('')}
+      </div>`;
+    }
+    listContainer.innerHTML = html;
+
+    // 已归档折叠区展开/收起
+    const archHeader = listContainer.querySelector('.lingya-archived-header');
+    const archList = listContainer.querySelector('.lingya-archived-list');
+    if (archHeader && archList) {
+      const KEY = 'lingya-archived-open';
+      let open = false;
+      try { open = localStorage.getItem(KEY) === '1'; } catch (_) {}
+      const apply = (v) => {
+        archList.style.display = v ? 'flex' : 'none';
+        const caret = archHeader.querySelector('.lingya-archived-caret');
+        if (caret) caret.textContent = v ? '▾' : '▸';
+        try { localStorage.setItem(KEY, v ? '1' : '0'); } catch (_) {}
+      };
+      apply(open);
+      archHeader.addEventListener('click', () => {
+        const nowOpen = archList.style.display === 'none';
+        apply(nowOpen);
+      });
+    }
+
+    // 绑定每项事件（含归档区里的项）
     listContainer.querySelectorAll('.lingya-session-item').forEach((item) => {
-      // 改名按钮
       const renameBtn = item.querySelector('.session-rename');
       if (renameBtn) {
         renameBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           handleRenameSession(item.dataset.sessionId, item.dataset.title || '');
+        });
+      }
+      const archBtn = item.querySelector('.session-archive');
+      if (archBtn) {
+        archBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleArchiveSession(item.dataset.sessionId, true);
+        });
+      }
+      const unarchBtn = item.querySelector('.session-unarchive');
+      if (unarchBtn) {
+        unarchBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleArchiveSession(item.dataset.sessionId, false);
         });
       }
       item.addEventListener('click', () => {
@@ -62,6 +124,28 @@ async function renderSessions() {
   } catch (err) {
     console.error('[LingYa] 渲染会话列表失败:', err);
     listContainer.innerHTML = '<div class="lingya-session-empty">加载出错</div>';
+  }
+}
+
+/**
+ * 归档 / 取消归档会话
+ */
+async function handleArchiveSession(sessionId, archived) {
+  if (!sessionId) return;
+  if (!window.electronAPI || !window.electronAPI.setSessionArchived) {
+    showToast('归档 API 不可用', 3000);
+    return;
+  }
+  try {
+    const r = await window.electronAPI.setSessionArchived(sessionId, archived);
+    if (r && r.success) {
+      showToast(archived ? '已归档' : '已取消归档', 1800);
+      renderSessions();
+    } else {
+      showToast('操作失败: ' + ((r && r.error) || '未知错误'), 3000);
+    }
+  } catch (err) {
+    showToast('操作失败: ' + err.message, 3000);
   }
 }
 
@@ -153,4 +237,4 @@ async function handleInitProject() {
   }
 }
 
-module.exports = { renderSessions, handleNavigateSession, handleInitProject, handleRenameSession };
+module.exports = { renderSessions, handleNavigateSession, handleInitProject, handleRenameSession, handleArchiveSession };

@@ -38,12 +38,23 @@
     --ck-title: #0f766e;
   }
 
+  /* ===== 全局表单控件：防止 flex 布局把 checkbox 压成 0 宽 ===== */
+  input[type="checkbox"], input[type="radio"] {
+    flex-shrink: 0 !important;
+    min-width: 13px;
+    min-height: 13px;
+  }
+  input[type="number"], input[type="text"], input[type="color"] {
+    flex-shrink: 0;
+  }
+
   /* ===== 侧栏容器 ===== */
   #lingya-sidebar-slot {
     position: absolute; top: 40px; left: 0; bottom: 0; width: 0;
     overflow: visible; display: flex;
     background: var(--ck-bg-solid);
-    transition: width 0.18s ease;
+    /* 注意：不做 width transition —— 主进程用 setBounds 瞬时重排 AI view（原生层），
+       CSS 动画 180ms 会和原生层不同步，导致中间帧侧栏与网页错位/撕裂。 */
   }
   /* 右侧渐变分隔线（美观的边） */
   #lingya-sidebar-slot::after {
@@ -51,8 +62,8 @@
     background: linear-gradient(180deg, transparent, var(--ck-primary) 12%, var(--ck-border) 50%, var(--ck-primary) 88%, transparent);
     opacity: 0.55; pointer-events: none; z-index: 40;
   }
-  /* 右缘柔光高光 */
-  #lingya-sidebar-slot::before {
+  /* 右缘柔光高光（仅展开态显示，收起时隐藏，避免盖到 AI view 造成重影） */
+  #lingya-sidebar-slot.open::before {
     content: ""; position: absolute; top: 0; right: -12px; bottom: 0; width: 12px;
     background: linear-gradient(90deg, rgba(0,0,0,0.22), transparent);
     pointer-events: none; z-index: 39;
@@ -70,6 +81,9 @@
     align-items: center; padding: 12px 0; gap: 2px; background: var(--ck-bg-sub);
     position: relative;
     overflow-y: auto; overflow-x: hidden;
+    /* 稳定滚动条占位，避免图标进入/离开溢出区时反复重排（撕裂感） */
+    scrollbar-gutter: stable;
+    contain: layout paint;
   }
   #lingya-activitybar::-webkit-scrollbar { width: 0; }
   #sh-ab-grid { flex-shrink: 0; }
@@ -91,6 +105,10 @@
     background: transparent; cursor: pointer; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 1px; font-size: 16px; line-height: 1; position: relative;
     transition: background 0.18s; box-sizing: border-box;
+    flex-shrink: 0;
+    /* 把每个按钮提到独立合成层，避免父级宽度变化时的重绘撕裂 */
+    will-change: background;
+    transform: translateZ(0);
   }
   .sh-ab-ico { height: 20px; display: flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
   .sh-ab-label { font-size: 9px; line-height: 1; color: var(--ck-text-dim); white-space: nowrap; }

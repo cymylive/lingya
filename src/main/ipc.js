@@ -371,7 +371,12 @@ function registerIpcHandlers() {
     for (const id of Object.keys(all)) {
       const e = norm(all[id]);
       if (e && e.projectDir === store.state.selectedProjectDir) {
-        sessions.push({ sessionId: id, title: (e && e.title) || null, updatedAt: (e && e.updatedAt) || null });
+        sessions.push({
+          sessionId: id,
+          title: (e && e.title) || null,
+          updatedAt: (e && e.updatedAt) || null,
+          archivedAt: (e && e.archivedAt) || null,
+        });
       }
     }
     return { success: true, sessions };
@@ -393,6 +398,16 @@ function registerIpcHandlers() {
       return { success: false, error: '会话存储未就绪' };
     }
     return store.setSessionTitle(title);
+  });
+
+  // 归档 / 取消归档会话
+  ipcMain.handle('set-session-archived', async (event, { sessionId, archived } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.setSessionArchived !== 'function') {
+      return { success: false, error: '会话存储未就绪' };
+    }
+    return store.setSessionArchived(sessionId, !!archived);
   });
 
   // 导航到会话

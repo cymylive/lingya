@@ -772,6 +772,13 @@ function bindEvents() {
     }
   } catch (_) { /* ignore */ }
 
+  // 会话归档状态更新 → 实时刷新会话列表
+  try {
+    if (window.electronAPI && window.electronAPI.onSessionArchivedUpdated) {
+      window.electronAPI.onSessionArchivedUpdated(() => { try { renderSessions(); } catch (_) {} });
+    }
+  } catch (_) { /* ignore */ }
+
   // 保存延迟设置按钮
   const saveDelayBtn = document.getElementById('lingya-btn-save-delay');
   const delayMinInput = document.getElementById('lingya-delay-min');

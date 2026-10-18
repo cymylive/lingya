@@ -1418,15 +1418,33 @@
         var box=document.getElementById('sh-ss-body'); if(!box) return;
         var list=(r&&r.success&&r.sessions)||[];
         if(!list.length){ box.innerHTML='<div class="sh-empty">暂无会话（先选择项目目录）</div>'; return; }
-        var h='';
-        for(var i=0;i<list.length;i++){
-          var it=list[i];
-          // 兼容旧格式（纯字符串）
+        // 分组：未归档 / 已归档
+        var active=[], archived=[];
+        for(var z=0;z<list.length;z++){
+          var zz=list[z];
+          if(typeof zz==='object' && zz.archivedAt) archived.push(zz); else active.push(zz);
+        }
+        function renderOne(it, isArch){
           var sid=String(typeof it==='string'?it:(it.sessionId||''));
           var title=typeof it==='object'?(it.title||''):'';
           var shortId=sid.length>14?(sid.slice(0,14)+'…'):sid;
           var main=title?(esc(title)+' <span style="color:var(--ck-text-dim);font-size:10px;">('+esc(shortId)+')</span>'):esc(shortId);
-          h+='<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" data-title="'+esc(title)+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-rename" title="重命名" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">改名</span><span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
+          var archBtn = isArch
+            ? '<span class="sh-ss-unarchive" title="取消归档" style="font-size:11px;color:var(--ck-primary);cursor:pointer;">取消归档</span>'
+            : '<span class="sh-ss-archive" title="归档（从列表隐藏）" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">归档</span>';
+          var op = isArch ? '0.62' : '1';
+          return '<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" data-title="'+esc(title)+'" data-arch="'+(isArch?'1':'0')+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;opacity:'+op+';"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-rename" title="重命名" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">改名</span>'+archBtn+'<span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
+        }
+        var h='';
+        if(!active.length) h+='<div class="sh-empty" style="padding:6px 0;">暂无进行中的会话</div>';
+        else for(var i=0;i<active.length;i++) h+=renderOne(active[i], false);
+        if(archived.length){
+          var KEY='lingya-shell-archived-open';
+          var opened=false; try{ opened=(localStorage.getItem(KEY)==='1'); }catch(_e){}
+          h+='<div class="sh-ss-archhead" data-open="'+(opened?'1':'0')+'" style="display:flex;align-items:center;gap:6px;padding:6px 4px;margin-top:6px;font-size:11.5px;color:var(--ck-text-dim);cursor:pointer;border-radius:6px;background:rgba(255,255,255,0.03);"><span class="sh-ss-archcaret">'+(opened?'▾':'▸')+'</span><span>📦 已归档 ('+archived.length+')</span></div>';
+          h+='<div class="sh-ss-archlist" style="display:'+(opened?'flex':'none')+';flex-direction:column;gap:4px;margin-top:4px;">';
+          for(var m=0;m<archived.length;m++) h+=renderOne(archived[m], true);
+          h+='</div>';
         }
         box.innerHTML=h;
         var items=box.querySelectorAll('.sh-ss-item');
@@ -1434,7 +1452,7 @@
           if(!window.shellAPI.navigateSession) return;
           window.shellAPI.navigateSession(el.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
         }); })(items[j]); }
-        // 改名按钮（AI 命名后可手动修正）
+        // 改名按钮
         var renames=box.querySelectorAll('.sh-ss-rename');
         for(var k=0;k<renames.length;k++){ (function(btn){ btn.addEventListener('click',function(ev){
           ev.stopPropagation();
@@ -1448,6 +1466,41 @@
             if(r3&&r3.success){ toast2('已改名'); load(); } else toast2('改名失败');
           })['catch'](function(){ toast2('改名失败'); });
         }); })(renames[k]); }
+        // 归档按钮
+        var archs=box.querySelectorAll('.sh-ss-archive');
+        for(var a1=0;a1<archs.length;a1++){ (function(btn){ btn.addEventListener('click',function(ev){
+          ev.stopPropagation();
+          var item=btn.closest('.sh-ss-item'); if(!item) return;
+          var sid=item.getAttribute('data-id'); if(!sid) return;
+          if(!window.shellAPI.setSessionArchived){ toast2('接口不可用'); return; }
+          window.shellAPI.setSessionArchived(sid, true).then(function(rr){
+            if(rr&&rr.success){ toast2('已归档'); load(); } else toast2('归档失败');
+          })['catch'](function(){ toast2('归档失败'); });
+        }); })(archs[a1]); }
+        // 取消归档按钮
+        var unarchs=box.querySelectorAll('.sh-ss-unarchive');
+        for(var a2=0;a2<unarchs.length;a2++){ (function(btn){ btn.addEventListener('click',function(ev){
+          ev.stopPropagation();
+          var item=btn.closest('.sh-ss-item'); if(!item) return;
+          var sid=item.getAttribute('data-id'); if(!sid) return;
+          if(!window.shellAPI.setSessionArchived){ toast2('接口不可用'); return; }
+          window.shellAPI.setSessionArchived(sid, false).then(function(rr){
+            if(rr&&rr.success){ toast2('已取消归档'); load(); } else toast2('操作失败');
+          })['catch'](function(){ toast2('操作失败'); });
+        }); })(unarchs[a2]); }
+        // 折叠头
+        var ach=box.querySelector('.sh-ss-archhead');
+        var acl=box.querySelector('.sh-ss-archlist');
+        if(ach && acl){
+          ach.addEventListener('click', function(ev){
+            ev.stopPropagation();
+            var nowOpen = acl.style.display === 'none';
+            acl.style.display = nowOpen ? 'flex' : 'none';
+            var caret = ach.querySelector('.sh-ss-archcaret');
+            if(caret) caret.textContent = nowOpen ? '▾' : '▸';
+            try { localStorage.setItem('lingya-shell-archived-open', nowOpen ? '1' : '0'); } catch(_e){}
+          });
+        }
       })['catch'](function(){});
     }
     var rf=document.getElementById('sh-ss-refresh'); if(rf) rf.addEventListener('click',load);
@@ -1573,6 +1626,9 @@
   // 会话标题更新 → 若正停在会话面板则刷新（AI 命名对话后实时更新列表）
   if (window.shellAPI && window.shellAPI.onSessionTitleUpdated) {
     try { window.shellAPI.onSessionTitleUpdated(function(){ try { if(rendered['sessions']){ rendered['sessions']=false; renderView('sessions'); } } catch(_){} }); } catch(_){}
+  if (window.shellAPI && window.shellAPI.onSessionArchivedUpdated) {
+    try { window.shellAPI.onSessionArchivedUpdated(function(){ try { if(rendered['sessions']){ rendered['sessions']=false; renderView('sessions'); } } catch(_){} }); } catch(_){}
+  }
   }
 
   // ===== 插件视图挂载（阶段2）=====

@@ -1,0 +1,8 @@
+{
+  "id": "deepseek-archive",
+  "name": "DeepSeek 对话归档",
+  "version": "1.0.0",
+  "description": "在 DeepSeek 侧栏注入「归档」菜单项和已归档分组，支持导出/删除/取消归档。安装后即可使用。",
+  "icon": "📦",
+  "entry": "index.js"
+}

@@ -1,5 +1,128 @@
 # Changelog
 
+## [0.6.73] - 2026-10-18
+
+### Added
+- **插件系统补齐 preload 执行链**（此前 `ctx.registerPreload()` 只注册不执行）：
+  - `src/preload/index.js` 调用 `getPluginPreloads()` → `new Function(script)()` 执行插件脚本
+  - **异步执行**：外层 + 每个脚本各一层 `setTimeout(0)`，不阻塞主线程（不影响 supervisor 的 30s 心跳）
+  - 单个插件抛错不影响其他插件与主流程
+- **`deepseek-archive` 插件**（`plugins/deepseek-archive/`）：
+  - DeepSeek 侧栏归档功能打包为可独立安装/卸载的插件
+  - 分发版：`deepseek-archive-1.0.0.lingya-plugin.zip`（23.8 KB）
+  - 内置版本改为「插件优先」：插件已启用则跳过内置，避免重复注入
+
+### Fixed
+- **侧栏视觉撕裂 / 图标闪烁 / checkbox 消失**（5 处根因）：
+  1. **checkbox 被 flex 压成 0 宽**：13 处缺 `flex-shrink: 0` → 加全局 `input[type=checkbox]{flex-shrink:0!important;min-width/height:13px}`
+  2. **侧栏与 AI view 错位**：`width` transition 180ms 与主进程 `setBounds`（瞬时）不同步 → 移除 transition
+  3. **活动栏图标反复重排**：`scrollbar-gutter: stable` + `contain: layout paint`
+  4. **子像素重绘锯齿**：`.sh-ab-item` 加 `will-change: background` + `translateZ(0)` + `flex-shrink: 0`
+  5. **柔光高光盖到 AI view**：`#lingya-sidebar-slot::before` 改为仅 `.open` 态显示
+- **归档模块跨模块重复注入**：`start()` 增加 `window.__lingyaDeepseekArchiveStarted` 检查
+
+### Notes
+- 全量测试 414/414
+  - 已验证：插件 preload 执行成功、归档菜单注入正常、监督者心跳未受影响
+
+## [0.6.72] - 2026-10-18
+
+### Fixed
+- **归档一个置顶会话后，整组置顶会话全部消失**（严重 bug）：
+  - 根因：隐藏时用 `anchor.parentElement.style.display = 'none'`，但 `parentElement` 可能是**包含多个会话的置顶组容器**
+  - 修复：新增 `findRowElement()` —— 从 anchor 往上走，遇到「包含多个会话的父级」就停，说明上一个才是行容器
+  - 改用 `data-lingya-archived-row` 属性 + CSS 隐藏，不再直接改内联样式
+
+### Added
+- **归档项「导出对话」按钮**（📥）：
+  - 实测 API：`GET /api/v0/chat/history_messages?chat_session_id=<sid>`
+  - 解析 `chat_messages[]`：`USER` → `REQUEST`，`ASSISTANT` → `THINK`（折叠）+ `RESPONSE`
+  - 生成 Markdown：标题 / 会话 ID / 更新时间 / 消息数 → 每条消息分节，思考过程用 `<details>` 折叠
+  - 文件名用**真实会话标题**（不再拼接 sessionId 后缀）
+- **归档项「删除对话」按钮**（🗑）：
+  - 实测 API：`POST /api/v0/chat_session/delete`，body `{ chat_session_ids: [sid] }`
+  - 二次确认（原生 confirm）+ 提示不可恢复
+  - 删除成功后：从归档存储移除 + 从 DOM 移除该行
+
+### Changed
+- 移除归档区搜索框（用户不需要）
+
+### 过程修复的变量名笔误
+- `think.trim()` → `thinks.trim()`
+- `resp.trim()` → `resps.trim()`（`resp` 是 fetch 的 Response 对象，不是字符串）
+
+### Notes
+- 全量测试 414/414
+- CDP 实测：导出 2,087,061 字符 Markdown 成功，文件名 `CTF任务待命.md`
+- CDP 实测：删除 API 返回 `biz_code: 0`
+
+## [0.6.71] - 2026-10-18
+
+### Added
+- **DeepSeek 原生菜单「归档」项**（真正可用版）：
+  - 逆向出真实触发方式：**点会话行的「...」按钮**（不是右键——右键事件虽触发但 React 不响应）
+  - 菜单结构：`.ds-floating-position-wrapper > .ds-dropdown-menu[role="menu"] > .ds-dropdown-menu-option`
+  - 克隆「分享」项做模板，改 label 为「📦 归档」/「↩ 取消归档」，插入到「删除」之前
+  - 实测菜单项：`[重命名, 取消置顶, 分享, 多选, 归档, 删除]`
+- **归档区搜索框**：
+  - 展开「📦 已归档」后显示搜索输入框
+  - 实时过滤（input 事件），匹配标题 + sessionId，大小写不敏感
+  - 无匹配时显示「没有匹配的归档会话」
+  - 重渲染时保留搜索关键词；展开时自动聚焦
+
+### Changed
+- 归档注入模块从「拦截右键 + 自绘菜单」改为「监听 ... 按钮 + 往原生菜单追加项」
+  - 好处：复用原生样式，视觉完全一致
+
+### Technical Notes
+- 用 CDP（Chrome DevTools Protocol）做全自动验证：`Input.dispatchMouseEvent` 点击 ... 按钮 → 检查菜单项 → 点击归档 → 验证结果
+- DeepSeek 的 React 只响应真实用户手势（`isTrusted=true`），右键无法触发菜单；但 `...` 按钮的点击可以
+- 原生搜索（侧栏放大镜）搜消息正文，不含已归档会话（符合归档语义）；归档区搜索搜标题，互补
+
+### Notes
+- 全量测试 414/414
+
+## [0.6.70] - 2026-10-18
+
+### Added
+- **DeepSeek 网页侧栏「对话归档」注入**（对齐 deepseek-pp 的效果）：
+  - 新增 `src/preload/dom/deepseek-history-archiver.js`，仅在 DeepSeek 平台启用
+  - 在 DeepSeek **自己的侧栏历史列表上方**注入「📦 已归档 (N)」分组（可折叠，折叠状态持久化）
+  - **在任意会话行上右键**弹出菜单：「📦 归档此对话」/「↩ 取消归档」
+  - 归档的会话从 DeepSeek 原生列表隐藏（`display:none`），不影响服务端数据
+  - 归档区里的条目点击可直接跳转到该会话；点「↩」取消归档
+  - 数据存在 `localStorage['lingya-ds-archived-sessions']`（`{ [sessionId]: {title, archivedAt} }`）
+  - `MutationObserver` 监听 DOM 变化，DeepSeek 列表刷新时自动重新应用隐藏状态
+
+### 技术说明
+- **不能复用 DeepSeek 原生右键菜单**：其菜单由 React 控制，合成 `contextmenu` 事件不触发（需要真实用户手势），所以自己绘制浮动菜单
+- DOM 锚点：`a[href*="/a/chat/s/"]` → 行容器 → 列表共同父级，注入点精确
+- 与 0.6.69 的「LingYa 本地会话归档」相互独立：那个管 LingYa 自己的会话列表，这个管 DeepSeek 网页侧栏
+
+### Notes
+- 全量测试 414/414
+
+## [0.6.69] - 2026-10-18
+
+### Added
+- **会话归档功能**：
+  - `session-store` 条目新增 `archivedAt` 字段（ISO 时间戳；null = 未归档）
+  - 新增 `setSessionArchived(sessionId, archived)` + `session-archived-updated` 全窗口广播
+  - 新增 IPC `set-session-archived`；`list-sessions` 返回值增加 `archivedAt`
+  - 覆盖层「会话」页签 + 侧栏「会话列表」每个会话项新增 **📦 归档** 按钮
+  - 已归档会话收进 **📦 已归档 (N)** 折叠区，展开后每项有 **↩ 取消归档** 按钮
+  - 折叠状态记在 `localStorage`（覆盖层 `lingya-archived-open` / 侧栏 `lingya-shell-archived-open`）
+  - 已归档项视觉降透明度（0.62）以区分
+
+### 设计说明
+- 归档只影响 **LingYa 本地会话列表的可见性**，不影响 DeepSeek 网站上的会话（对方没有归档概念）
+- 归档不阻止跳转/继续使用；归档的会话仍可通过「已归档」区展开后点「跳转」进入
+- 不与现有 `projectDir` 分组冲突：先按当前项目目录过滤，再在结果内分「进行中 / 已归档」两组
+
+### Notes
+- 新增 6 个单元测试（normalizeEntry 保留 archivedAt / 旧数据兼容 / 归档写时间戳 / 取消归档置 null / 会话不存在 / 缺 sessionId）
+- 全量测试 414/414
+
 ## [0.6.68] - 2026-10-18
 
 ### Fixed
