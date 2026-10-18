@@ -615,25 +615,74 @@ ipcMain.handle('lingya-dropdown-open', async (event, payload = {}) => {
       anchor,
       data,
       theme: payload.theme || 'dark',
-      onAction: (name, p) => {
+      onAction: (name, p, updateData) => {
         try {
           if (name === 'tab-switch' && p.tabId) {
             tabManager.switchTab(ctx, p.tabId);
           } else if (name === 'tab-close' && p.tabId) {
             tabManager.closeTab(ctx, p.tabId);
+            // 关闭后保持下拉常驻：推送最新标签列表
+            try {
+              if (typeof updateData === 'function') {
+                updateData(tabManager.listTabs(ctx).filter(function (t) { return !t.isMain; }));
+              }
+            } catch (_) {}
           } else if (name === 'bookmark-open' && p.url) {
             tabManager.navigate(ctx, p.url);
           } else if (name === 'bookmark-add' && p.url) {
             // 回传壳页面（收藏存在壳页面的 localStorage）
+            let added = false;
             try {
               const sc = ownerWin.webContents;
-              if (sc && !sc.isDestroyed()) sc.send('lingya-bookmark-add', { url: p.url, title: p.title });
+              if (sc && !sc.isDestroyed()) {
+                sc.send('lingya-bookmark-add', { url: p.url, title: p.title });
+                added = true;
+              }
             } catch (_) {}
+            // 刷新下拉：优先用前端传来的 currentList；缺失时异步从壳页面 localStorage 兜底读
+            if (typeof updateData === 'function' && added) {
+              if (Array.isArray(p.currentList)) {
+                const cur = p.currentList.slice();
+                if (!cur.some(x => x.url === p.url)) cur.unshift({ url: p.url, title: p.title || p.url });
+                updateData(cur);
+              } else {
+                // 兜底：等壳页面写完 localStorage 后再读（add 是先 send 再读，给 100ms 缓冲）
+                setTimeout(() => {
+                  try {
+                    const sc = ownerWin.webContents;
+                    if (!sc || sc.isDestroyed()) return;
+                    sc.executeJavaScript("JSON.parse(localStorage.getItem('lingya-bookmarks')||'[]')")
+                      .then((list) => {
+                        if (Array.isArray(list)) updateData(list);
+                      })
+                      .catch(() => {});
+                  } catch (_) {}
+                }, 100);
+              }
+            }
           } else if (name === 'bookmark-remove' && p.url) {
             try {
               const sc = ownerWin.webContents;
               if (sc && !sc.isDestroyed()) sc.send('lingya-bookmark-remove', { url: p.url });
             } catch (_) {}
+            // 刷新下拉：同样优先用 currentList，缺失时从 localStorage 兜底
+            if (typeof updateData === 'function') {
+              if (Array.isArray(p.currentList)) {
+                updateData(p.currentList.filter(x => x.url !== p.url));
+              } else {
+                setTimeout(() => {
+                  try {
+                    const sc = ownerWin.webContents;
+                    if (!sc || sc.isDestroyed()) return;
+                    sc.executeJavaScript("JSON.parse(localStorage.getItem('lingya-bookmarks')||'[]')")
+                      .then((list) => {
+                        if (Array.isArray(list)) updateData(list);
+                      })
+                      .catch(() => {});
+                  } catch (_) {}
+                }, 100);
+              }
+            }
           }
         } catch (e) {
           console.error('[LingYa Dropdown] 动作处理失败:', e.message);

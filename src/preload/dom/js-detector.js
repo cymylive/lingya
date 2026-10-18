@@ -98,6 +98,48 @@ function extractJsToolBlocks(text) {
     buf.push(line.replace(String.fromCharCode(13), ''));
   }
   if (inBlock) flush();
+
+  // ============ 2. <lingya>...</lingya> 标签（AI 偶尔误用 XML 格式）============
+  // 根因：system prompt 要求用 ```lingya 围栏，但模型有时会输出 <lingya> 标签，
+  // 导致内容被当普通文本显示而不执行。这里做容错兼容。
+  for (const code of extractLingyaTags(text)) {
+    if (code && !blocks.includes(code)) blocks.push(code);
+  }
+
+  return blocks;
+}
+
+/**
+ * 从文本中提取 <lingya>...</lingya> 标签包裹的工具脚本
+ * 兼容 AI 偶尔误用 XML 格式的情况（system prompt 已要求用 ```lingya 围栏）
+ * 支持两种情况：
+ *   1. 闭合标签：<lingya>代码</lingya>
+ *   2. 未闭合：<lingya> 之后的内容（取到消息结束）
+ */
+function extractLingyaTags(text) {
+  const blocks = [];
+  if (!text || typeof text !== 'string') return blocks;
+
+  // 1) 标准闭合 <lingya>...</lingya>（大小写不敏感、非贪婪）
+  const closedRe = /<lingya>([\s\S]*?)<\/lingya>/gi;
+  let m;
+  let hasClosed = false;
+  while ((m = closedRe.exec(text)) !== null) {
+    hasClosed = true;
+    const code = m[1].trim();
+    if (code) blocks.push(code);
+  }
+  if (hasClosed) return blocks;
+
+  // 2) 未闭合：<lingya> 之后全部内容
+  const openRe = /<lingya>([\s\S]*)$/i;
+  const m2 = openRe.exec(text);
+  if (m2) {
+    let code = m2[1].trim();
+    // 保险：去掉尾部可能的闭合标签
+    code = code.replace(/<\/lingya>\s*$/i, '').trim();
+    if (code) blocks.push(code);
+  }
   return blocks;
 }
 
@@ -109,4 +151,5 @@ module.exports = {
   looksLikeToolScript,
   hasOnlyFences,
   extractJsToolBlocks,
+  extractLingyaTags,
 };

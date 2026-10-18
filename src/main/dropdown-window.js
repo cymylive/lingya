@@ -12,6 +12,11 @@ const { BrowserWindow, screen } = require('electron');
 let _win = null;
 let _owner = null;
 let _onAction = null;
+// 当前下拉的类型和主题（供 updateData 刷新时复用）
+let _currentType = 'tabs';
+let _currentTheme = 'dark';
+// keepOpen 后的短暂保护期：期内忽略 blur，避免点 X 时误关
+let _blurGuardUntil = 0;
 
 const DROPDOWN_PRELOAD = path.join(__dirname, '..', 'preload', 'dropdown-preload.js');
 const DROPDOWN_HTML = path.join(__dirname, '..', 'ui', 'dropdown.html');
@@ -70,8 +75,15 @@ function open(ownerWin, opts) {
   try { _win.setAlwaysOnTop(true, 'pop-up-menu'); } catch (_) { _win.setAlwaysOnTop(true); }
 
   // 失焦自动关闭
-  _win.on('blur', () => { close(); });
+  _win.on('blur', () => {
+    // keepOpen 动作后会有个短保护期，期间忽略 blur（避免点 X / 加收藏时误关）
+    if (Date.now() < _blurGuardUntil) return;
+    close();
+  });
   _win.on('closed', () => { _win = null; });
+
+  _currentType = o.type || 'tabs';
+  _currentTheme = o.theme || 'dark';
 
   _win.loadFile(DROPDOWN_HTML);
   _win.webContents.once('did-finish-load', () => {
@@ -96,12 +108,32 @@ function close() {
   _win = null;
   _onAction = null;
   _owner = null;
+  // 重置 blur 保护期：否则下次打开时会被上一次的旧值挡住，导致点别处关不掉
+  _blurGuardUntil = 0;
 }
+
+// 这些动作执行后不关闭下拉，保持常驻，并把新数据推回窗口刷新
+const KEEP_OPEN_ACTIONS = new Set(['tab-close', 'bookmark-add', 'bookmark-remove']);
 
 function emitAction(action, payload) {
   const cb = _onAction;
-  close();
-  try { cb && cb(action, payload || {}); } catch (e) { console.error('[LingYa Dropdown] action 回调异常:', e.message); }
+  const keepOpen = KEEP_OPEN_ACTIONS.has(action);
+  if (!keepOpen) close();
+  // 给回调传一个「更新数据」函数，用于删除后刷新列表
+  const updateData = (newData) => {
+    if (!_win || _win.isDestroyed()) return;
+    // 开启 800ms 保护期，避免 DOM 重渲染导致短暂失焦被误判为 blur
+    _blurGuardUntil = Date.now() + 800;
+    try {
+      _win.webContents.send('lingya-dropdown-init', {
+        type: _currentType,
+        data: newData || [],
+        theme: _currentTheme,
+      });
+      try { _win.focus(); } catch (_) {}
+    } catch (_) {}
+  };
+  try { cb && cb(action, payload || {}, updateData); } catch (e) { console.error('[LingYa Dropdown] action 回调异常:', e.message); }
 }
 
 function isOpen() {

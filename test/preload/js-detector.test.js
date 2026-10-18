@@ -66,3 +66,67 @@ test('extractJsToolBlocks 空输入', () => {
   assert.deepStrictEqual(extractJsToolBlocks(''), []);
   assert.deepStrictEqual(extractJsToolBlocks(null), []);
 });
+
+
+// ===== <lingya> XML 标签兼容（AI 偶尔误用 XML 格式） =====
+
+test('extractLingyaTags: 标准闭合 <lingya>...</lingya>', () => {
+  const { extractLingyaTags } = require('../../src/preload/dom/js-detector');
+  const NL = String.fromCharCode(10);
+  const text = '这是说明' + NL + '<lingya>await write("a.txt", "hi");</lingya>' + NL + '后续说明';
+  const blocks = extractLingyaTags(text);
+  assert.strictEqual(blocks.length, 1);
+  assert.strictEqual(blocks[0], 'await write("a.txt", "hi");');
+});
+
+test('extractLingyaTags: 未闭合 <lingya> 取到结尾', () => {
+  const { extractLingyaTags } = require('../../src/preload/dom/js-detector');
+  const NL = String.fromCharCode(10);
+  const text = '<lingya> await todoWrite([{content:"x"}]);' + NL + 'const t = await bash("ls");';
+  const blocks = extractLingyaTags(text);
+  assert.strictEqual(blocks.length, 1);
+  assert.ok(blocks[0].indexOf('await todoWrite') >= 0);
+  assert.ok(blocks[0].indexOf('await bash') >= 0);
+});
+
+test('extractLingyaTags: 多个闭合标签', () => {
+  const { extractLingyaTags } = require('../../src/preload/dom/js-detector');
+  const text = '<lingya>await write("a",1);</lingya> 中间 <lingya>await read("b");</lingya>';
+  const blocks = extractLingyaTags(text);
+  assert.strictEqual(blocks.length, 2);
+  assert.ok(blocks[0].indexOf('write') >= 0);
+  assert.ok(blocks[1].indexOf('read') >= 0);
+});
+
+test('extractLingyaTags: 大小写不敏感', () => {
+  const { extractLingyaTags } = require('../../src/preload/dom/js-detector');
+  const text = '<LINGYA>await write("a",1);</LINGYA>';
+  const blocks = extractLingyaTags(text);
+  assert.strictEqual(blocks.length, 1);
+});
+
+test('extractLingyaTags: 无标签返回空', () => {
+  const { extractLingyaTags } = require('../../src/preload/dom/js-detector');
+  assert.deepStrictEqual(extractLingyaTags('普通文本，没有标签'), []);
+});
+
+test('extractJsToolBlocks: 兼容 <lingya> 标签（模拟截图场景）', () => {
+  const { extractJsToolBlocks } = require('../../src/preload/dom/js-detector');
+  const NL = String.fromCharCode(10);
+  const text = '<lingya> await todoWrite([ { content: "升版本", status: "completed" } ]);' + NL + 'const t = await bash("npm test");';
+  const blocks = extractJsToolBlocks(text);
+  assert.strictEqual(blocks.length, 1);
+  assert.ok(blocks[0].indexOf('todoWrite') >= 0);
+});
+
+test('extractJsToolBlocks: 三反引号围栏与 <lingya> 标签共存', () => {
+  const { extractJsToolBlocks } = require('../../src/preload/dom/js-detector');
+  const NL = String.fromCharCode(10);
+  const BT = String.fromCharCode(96);
+  const FENCE = BT + BT + BT;
+  const text = '说明' + NL + FENCE + 'lingya' + NL + 'await write("a",1);' + NL + FENCE + NL + '然后' + NL + '<lingya>await read("b");</lingya>';
+  const blocks = extractJsToolBlocks(text);
+  assert.strictEqual(blocks.length, 2);
+  assert.ok(blocks[0].indexOf('write') >= 0);
+  assert.ok(blocks[1].indexOf('read') >= 0);
+});

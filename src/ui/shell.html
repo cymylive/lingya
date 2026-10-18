@@ -324,6 +324,14 @@
   }
   .ly-tb-btn:hover { background: var(--ck-surface-hover); color: var(--ck-primary); }
   .ly-tb-btn.active { background: var(--ck-primary-soft); border-color: var(--ck-primary); color: var(--ck-primary); }
+  /* 标签数量徽章：跟在 ▾ 右边，主标签不计入 */
+  .ly-tb-count {
+    display: inline-block; min-width: 14px; padding: 0 3px; margin-left: 2px;
+    font-size: 9.5px; line-height: 13px; text-align: center;
+    background: var(--ck-primary-soft); color: var(--ck-primary);
+    border-radius: 7px; font-weight: 700;
+  }
+  .ly-tb-count.empty { opacity: 0.45; background: transparent; }
 
   /* ===== 下拉面板（标签列表 / 收藏夹共用）===== */
   /* 下拉面板：position fixed，由 JS 按按钮位置定位到正下方，垂直展开 */
@@ -389,7 +397,7 @@
   <!-- 顶部标签栏 + 地址栏（AI view 从 y=40 开始，由主进程 TABBAR_HEIGHT 对齐） -->
   <div id="lingya-tabbar">
     <div id="lingya-tabs"></div>
-    <button id="lingya-tabs-menu" class="ly-tb-btn" title="其他标签列表">▾</button>
+    <button id="lingya-tabs-menu" class="ly-tb-btn" title="其他标签列表">▾<span id="lingya-tabs-count" class="ly-tb-count">0</span></button>
     <button id="lingya-tab-new" title="新标签页">+</button>
     <button id="lingya-bookmark-btn" class="ly-tb-btn" title="收藏夹">★</button>
     <div id="lingya-urlbar">

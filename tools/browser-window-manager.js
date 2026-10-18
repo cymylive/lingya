@@ -53,7 +53,9 @@ class BrowserWindowManager {
         const tabManager = require('../src/main/tab-manager');
         const tab = tabManager.createTab(ctx, {
           url: url || 'about:blank',
-          activate: true,
+          // 不在前台打开：AI 调 openBrowserWindow 通常是为了抓取/注入，
+          // 抢焦点会让用户被迫手动点回主标签，体验很差。
+          activate: false,
         });
         // 自定义 id 用作可读别名
         this.entries.set(id, { kind: 'tab', tabId: tab.id, ctx });

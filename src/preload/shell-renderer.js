@@ -1666,6 +1666,17 @@
           + '<span class="ly-tab-close" data-close-id="' + attr(t.id) + '" title="关闭">×</span>'
           + '</div>';
       }
+      // ===== 更新标签数量徽章（不含主标签）=====
+      try {
+        var cntEl = document.getElementById('lingya-tabs-count');
+        if (cntEl) {
+          var otherCount = 0;
+          for (var ci = 0; ci < tabs.length; ci++) { if (!tabs[ci].isMain) otherCount++; }
+          cntEl.textContent = String(otherCount);
+          cntEl.classList.toggle('empty', otherCount === 0);
+        }
+      } catch (_) {}
+
       // ===== 顶部横向：只渲染主标签（LingYa 对话）=====
       if (tabsEl) {
         var mainTab = null;

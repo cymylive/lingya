@@ -148,7 +148,10 @@
           var delEl = ev.target.closest(".item-act");
           if (delEl) {
             ev.stopPropagation();
-            window.dropdownAPI.action("bookmark-remove", { url: delEl.getAttribute("data-del-url") });
+            window.dropdownAPI.action("bookmark-remove", {
+              url: delEl.getAttribute("data-del-url"),
+              currentList: currentData,
+            });
             return;
           }
           var url = el.getAttribute("data-url");
@@ -180,7 +183,7 @@
     var url = normalizeUrl(document.getElementById("in-url").value);
     if (!url || url === "https://") return;
     var name = (document.getElementById("in-name").value || "").trim() || domainOf(url);
-    window.dropdownAPI.action("bookmark-add", { url: url, title: name });
+    window.dropdownAPI.action("bookmark-add", { url: url, title: name, currentList: currentData });
   }
   document.getElementById("btn-add").addEventListener("click", addBookmark);
   document.getElementById("in-url").addEventListener("keydown", function(e) { if (e.key === "Enter") { e.preventDefault(); addBookmark(); } });

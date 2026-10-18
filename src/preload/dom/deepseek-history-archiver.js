@@ -24,7 +24,8 @@ const STORAGE_KEY = 'lingya-ds-archived-sessions';
 let _observer = null;
 let _timer = null;
 let _started = false;
-let _pendingCtx = null;   // { sid, title }
+let _pendingCtx = null;   // { sid, title, seq }
+let _pendingSeq = 0;      // 自增序号：快速连点时，旧轮询自动失效
 let _pollTimer = null;
 
 // ---------- 存储 ----------
@@ -186,12 +187,20 @@ async function doDelete(sessionId, title) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
-    const resp = await fetch('/api/v0/chat_session/delete', {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: JSON.stringify({ chat_session_ids: [sessionId] }),
-    });
+    const ac = new AbortController();
+    const to = setTimeout(() => { try { ac.abort(); } catch (_) {} }, 30000);
+    let resp;
+    try {
+      resp = await fetch('/api/v0/chat_session/delete', {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ chat_session_ids: [sessionId] }),
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(to);
+    }
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const json = await resp.json();
     const code = json && json.data && json.data.biz_code;
@@ -241,7 +250,14 @@ async function doExport(sessionId, titleHint) {
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
     const url = '/api/v0/chat/history_messages?chat_session_id=' + encodeURIComponent(sessionId);
-    const resp = await fetch(url, { headers, credentials: 'include' });
+    const ac = new AbortController();
+    const to = setTimeout(() => { try { ac.abort(); } catch (_) {} }, 60000);   // 会话可能很大，60s
+    let resp;
+    try {
+      resp = await fetch(url, { headers, credentials: 'include', signal: ac.signal });
+    } finally {
+      clearTimeout(to);
+    }
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const json = await resp.json();
     const bd = json && json.data && json.data.biz_data;
@@ -481,9 +497,11 @@ function injectMenuItem(menu, sessionId, title) {
 }
 
 /** 轮询等菜单出现后插入 */
-function pollForMenu(attempt) {
+function pollForMenu(attempt, seq) {
   if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
   if (!_pendingCtx) return;
+  // 序号不匹配 → 说明已被更新的右键请求取代，放弃本次（防止插错菜单项）
+  if (typeof seq === 'number' && seq !== _pendingCtx.seq) return;
   if (attempt > 25) { _pendingCtx = null; return; }
   const menu = findDropdownMenu();
   if (menu) {
@@ -491,30 +509,34 @@ function pollForMenu(attempt) {
     _pendingCtx = null;
     return;
   }
-  _pollTimer = setTimeout(() => pollForMenu(attempt + 1), 60);
+  const s = _pendingCtx.seq;
+  _pollTimer = setTimeout(() => pollForMenu(attempt + 1, s), 60);
 }
 
 // ---------- 事件绑定 ----------
 let _bound = false;
+// 命名监听器，便于 stop() 时精确移除
+function _onDocClickForMenu(e) {
+  let btn = null;
+  try { btn = e.target && e.target.closest ? e.target.closest('a[href*="/a/chat/s/"] [role="button"], a[href*="/chat/s/"] [role="button"]') : null; } catch (_) {}
+  if (!btn) return;
+  const a = btn.closest('a[href*="/a/chat/s/"], a[href*="/chat/s/"]');
+  if (!a || a.closest('#' + ROOT_ID)) return;
+  // 「...」按钮通常是行内最后一个 role=button
+  const btns = a.querySelectorAll('[role="button"]');
+  if (!btns.length || btn !== btns[btns.length - 1]) return;
+  const sid = sessionIdFromHref(a.getAttribute('href'));
+  if (!sid) return;
+  _pendingSeq += 1;
+  _pendingCtx = { sid, title: (a.textContent || '').trim().slice(0, 80), seq: _pendingSeq };
+  pollForMenu(0, _pendingSeq);
+}
+
 function bindEvents() {
   if (_bound) return;
   _bound = true;
-
   // 点击「...」按钮 → 记录上下文 → 等菜单出现后插项
-  document.addEventListener('click', (e) => {
-    let btn = null;
-    try { btn = e.target && e.target.closest ? e.target.closest('a[href*="/a/chat/s/"] [role="button"], a[href*="/chat/s/"] [role="button"]') : null; } catch (_) {}
-    if (!btn) return;
-    const a = btn.closest('a[href*="/a/chat/s/"], a[href*="/chat/s/"]');
-    if (!a || a.closest('#' + ROOT_ID)) return;
-    // 「...」按钮通常是行内最后一个 role=button
-    const btns = a.querySelectorAll('[role="button"]');
-    if (!btns.length || btn !== btns[btns.length - 1]) return;
-    const sid = sessionIdFromHref(a.getAttribute('href'));
-    if (!sid) return;
-    _pendingCtx = { sid, title: (a.textContent || '').trim().slice(0, 80) };
-    pollForMenu(0);
-  }, true);
+  document.addEventListener('click', _onDocClickForMenu, true);
 }
 
 // ---------- 刷新调度 ----------
@@ -552,12 +574,19 @@ function start() {
 
 function stop() {
   _started = false;
+  // 清理刷新防抖定时器（否则 stop 后 250ms 内还会执行一次 refresh）
+  if (_timer) { try { clearTimeout(_timer); } catch (_) {} _timer = null; }
+  // 移除 document click 监听器
+  try { document.removeEventListener('click', _onDocClickForMenu, true); } catch (_) {}
+  _bound = false;
   if (_observer) { try { _observer.disconnect(); } catch (_) {} _observer = null; }
   if (_pollTimer) { try { clearTimeout(_pollTimer); } catch (_) {} _pollTimer = null; }
   const old = document.getElementById(ROOT_ID);
   if (old) old.remove();
   document.querySelectorAll('a[' + HIDDEN_ATTR + ']').forEach(a => a.removeAttribute(HIDDEN_ATTR));
   document.querySelectorAll('[data-lingya-archived-row]').forEach(el => el.removeAttribute('data-lingya-archived-row'));
+  // 复位跨模块标志，允许将来重新 start()
+  try { if (window) window.__lingyaDeepseekArchiveStarted = false; } catch (_) {}
 }
 
 module.exports = { start, stop };
