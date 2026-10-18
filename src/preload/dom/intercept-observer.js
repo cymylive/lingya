@@ -566,6 +566,16 @@ function startInterceptObserver() {
       lastInterceptedText = detail.text || '';
       // 保存服务端权威 token 统计（供面板显示）
       if (detail.tokenUsage) {
+        // 新对话/上下文被压缩时，服务端累计 token 会骤降（或重置为小值）。
+        // 此时需要重置 token 休眠的 band，否则再次跨过阈值就不会触发休眠。
+        const prev = state.serverTokenUsage;
+        if (prev && typeof prev.accumulatedTokens === 'number' &&
+            typeof detail.tokenUsage.accumulatedTokens === 'number' &&
+            detail.tokenUsage.accumulatedTokens < prev.accumulatedTokens) {
+          console.log('[LingYa] Token 累计回落（' + prev.accumulatedTokens + ' → ' +
+            detail.tokenUsage.accumulatedTokens + '），重置休眠 band');
+          state.tokenSleepLastBand = 0;
+        }
         state.serverTokenUsage = detail.tokenUsage;
       }
       // 保存最近一次回复的消息 id（压缩时定位摘要用）

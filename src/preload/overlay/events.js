@@ -515,11 +515,29 @@ function bindEvents() {
     const savedMax = localStorage.getItem('lingya-send-delay-max');
     if (savedMin) state.sendDelayMin = parseInt(savedMin, 10) || 2000;
     if (savedMax) state.sendDelayMax = parseInt(savedMax, 10) || 4000;
+    // 防频繁风控配置
+    const savedThink = localStorage.getItem('lingya-think-node-delay');
+    const savedInterval = localStorage.getItem('lingya-global-send-interval');
+    if (savedThink !== null) state.thinkNodeDelay = parseInt(savedThink, 10) || 0;
+    if (savedInterval !== null) state.globalSendInterval = parseInt(savedInterval, 10) || 0;
     // 同步到输入框
     const minInput = document.getElementById('lingya-delay-min');
     const maxInput = document.getElementById('lingya-delay-max');
     if (minInput) minInput.value = state.sendDelayMin;
     if (maxInput) maxInput.value = state.sendDelayMax;
+    const thinkInput = document.getElementById('lingya-think-delay');
+    const intervalInput = document.getElementById('lingya-global-interval');
+    if (thinkInput) thinkInput.value = state.thinkNodeDelay;
+    if (intervalInput) intervalInput.value = state.globalSendInterval;
+    // Token 休眠配置（阈值存的是 token 数，UI 显示为「万」）
+    const savedTsTh = localStorage.getItem('lingya-token-sleep-threshold');
+    const savedTsDur = localStorage.getItem('lingya-token-sleep-duration');
+    if (savedTsTh !== null) state.tokenSleepThreshold = parseInt(savedTsTh, 10) || 0;
+    if (savedTsDur !== null) state.tokenSleepDuration = parseInt(savedTsDur, 10) || 0;
+    const tsThInput = document.getElementById('lingya-token-sleep-th');
+    const tsDurInput = document.getElementById('lingya-token-sleep-dur');
+    if (tsThInput) tsThInput.value = Math.round((state.tokenSleepThreshold || 0) / 10000);
+    if (tsDurInput) tsDurInput.value = state.tokenSleepDuration;
   } catch (e) {}
 
   const minimizeBtn = document.getElementById('lingya-btn-minimize');
@@ -797,6 +815,49 @@ function bindEvents() {
       localStorage.setItem('lingya-send-delay-max', String(max));
     } catch (e) {}
     showToast('延迟设置已保存：' + min + ' - ' + max + ' ms', 3000);
+  });
+
+  // 保存防频繁风控设置（思考节点延迟 + 全局发送间隔）
+  const saveAntiRateBtn = document.getElementById('lingya-btn-save-antirate');
+  const thinkDelayInput = document.getElementById('lingya-think-delay');
+  const globalIntervalInput = document.getElementById('lingya-global-interval');
+  saveAntiRateBtn?.addEventListener('click', () => {
+    const think = parseInt(thinkDelayInput?.value, 10);
+    const interval = parseInt(globalIntervalInput?.value, 10);
+    if (Number.isNaN(think) || think < 0 || think > 60000) {
+      showToast('思考节点延迟需在 0 - 60000ms 之间', 3000); return;
+    }
+    if (Number.isNaN(interval) || interval < 0 || interval > 600000) {
+      showToast('全局发送间隔需在 0 - 600000ms 之间', 3000); return;
+    }
+    state.thinkNodeDelay = think;
+    state.globalSendInterval = interval;
+    try {
+      localStorage.setItem('lingya-think-node-delay', String(think));
+      localStorage.setItem('lingya-global-send-interval', String(interval));
+    } catch (e) {}
+    // localStorage 已由主世界 hook 实时读取，无需跨世界传值
+    showToast('防频繁已保存：思考节点 ' + think + 'ms，全局间隔 ' + interval + 'ms', 3000);
+  });
+
+  // 保存 Token 休眠设置（每 N 万 tokens 强制休眠 M 毫秒）
+  const saveTokenSleepBtn = document.getElementById('lingya-btn-save-tokensleep');
+  const tsThInput = document.getElementById('lingya-token-sleep-th');
+  const tsDurInput = document.getElementById('lingya-token-sleep-dur');
+  saveTokenSleepBtn?.addEventListener('click', () => {
+    const thWan = parseFloat(tsThInput?.value);
+    const dur = parseInt(tsDurInput?.value, 10);
+    if (!Number.isFinite(thWan) || thWan <= 0) { showToast('Token 阈值需为正数（万）', 3000); return; }
+    if (!Number.isFinite(dur) || dur < 0 || dur > 600000) { showToast('休眠时长需在 0 - 600000ms 之间', 3000); return; }
+    const thTokens = Math.round(thWan * 10000);
+    state.tokenSleepThreshold = thTokens;
+    state.tokenSleepDuration = dur;
+    state.tokenSleepLastBand = 0; // 阈值改了，band 需要重算
+    try {
+      localStorage.setItem('lingya-token-sleep-threshold', String(thTokens));
+      localStorage.setItem('lingya-token-sleep-duration', String(dur));
+    } catch (e) {}
+    showToast('Token 休眠已保存：每 ' + thWan + ' 万 tokens 休眠 ' + dur + 'ms', 3000);
   });
 
   // 悬浮球：可拖动 + 点击切换面板显隐

@@ -11,6 +11,15 @@ module.exports = {
   // 发送延迟配置（毫秒）
   sendDelayMin: 2000,
   sendDelayMax: 4000,
+  // 全局发送间隔锁（毫秒）：任意两条消息的最小发出间隔，防止多路径连发触发风控
+  globalSendInterval: 5000,
+  // 思考节点延迟（毫秒）：主世界流读取在思考段落/RESPONSE 切换处停顿，拉长 Agent 循环间隔
+  thinkNodeDelay: 2000,
+  // Token 休眠：每跨越一个 threshold 倍数（默认 20 万 token）时强制休眠 duration 毫秒
+  tokenSleepThreshold: 200000,
+  tokenSleepDuration: 3000,
+  // 已触发过的 band 索引（floor(当前token / threshold)），避免同一区间重复触发
+  tokenSleepLastBand: 0,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
   // 服务端返回的权威 token 统计（{ accumulatedTokens, insertedAt, updatedAt, modelType }）

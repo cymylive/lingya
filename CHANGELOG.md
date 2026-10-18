@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.75] - 2026-10-19
+
+### Added
+- **三层防频繁风控**（解决 DeepSeek 长任务报「消息发送过于频繁」）
+  - **思考节点延迟**：主世界 `pump()` 流读取在思考段落换行 / THINK→RESPONSE 切换处停顿，默认 2000ms
+    - 延迟的是 `response.clone().body`，网页原生渲染不受影响
+    - `getThinkDelay()` 实时读 localStorage，改配置立即生效
+    - 新增 `hasThinkNodeInObjects()` 递归检查 BATCH 帧（修复子帧漏判）
+  - **全局发送间隔锁**：`sendToChat` 保证任意两条消息发出间隔 ≥ `globalSendInterval`（默认 5000ms），防止工具回传 / 计划续跑 / 兜底续跑多路径同秒连发
+  - **Token 阈值休眠**：累计 token 每跨越一个阈值倍数（默认 20 万），该次发送前额外休眠 `tokenSleepDuration`（默认 3000ms）
+    - `band = floor(累计token / 阈值)` 机制保证同一区间只触发一次
+    - token 累计回落（新对话 / 压缩上下文）时自动重置 band
+- **配置入口（两处）**
+  - 侧边栏 → 设置 → 「Token 休眠（防频繁风控）」
+  - 覆盖层 → 主页 → 「防频繁风控（DeepSeek）」
+  - 参数持久化到 localStorage，重启保留
+
+### Changed
+- `state.js` 新增 `thinkNodeDelay` / `globalSendInterval` / `tokenSleepThreshold` / `tokenSleepDuration` / `tokenSleepLastBand`
+
+### Notes
+- 全量测试 421/421
+
 ## [0.6.74] - 2026-10-18
 
 ### Fixed

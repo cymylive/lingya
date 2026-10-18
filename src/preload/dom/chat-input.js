@@ -23,6 +23,43 @@ function randomDelay() {
   if (min >= max) return min;
   return Math.floor(Math.random() * (max - min)) + min;
 }
+// 全局发送时间戳：任意两条消息之间的最小间隔由 state.globalSendInterval 控制
+let globalLastSendTime = 0;
+
+// 启动时从 localStorage 恢复 Token 休眠配置（侧边栏/覆盖层保存后重启仍生效）
+(function restoreTokenSleepConfig() {
+  try {
+    const th = localStorage.getItem('lingya-token-sleep-threshold');
+    const dur = localStorage.getItem('lingya-token-sleep-duration');
+    if (th !== null) {
+      const n = parseInt(th, 10);
+      if (Number.isFinite(n) && n >= 0) state.tokenSleepThreshold = n;
+    }
+    if (dur !== null) {
+      const n = parseInt(dur, 10);
+      if (Number.isFinite(n) && n >= 0) state.tokenSleepDuration = n;
+    }
+  } catch (_) { /* ignore */ }
+})();
+
+/**
+ * 计算 Token 休眠需要额外增加的延迟（毫秒）。
+ * 规则：floor(累计token / 阈值) 表示当前所在 band；若比上次触发过的 band 大，
+ * 则触发一次休眠（返回 sleepDuration），否则返回 0。
+ * 副作用：命中时更新 state.tokenSleepLastBand，保证同一 band 只触发一次。
+ */
+function computeTokenSleepDelay() {
+  const threshold = Number(state.tokenSleepThreshold) || 0;
+  const duration = Number(state.tokenSleepDuration) || 0;
+  if (threshold <= 0 || duration <= 0) return 0;
+  const usage = state.serverTokenUsage;
+  if (!usage || typeof usage.accumulatedTokens !== 'number') return 0;
+  const band = Math.floor(usage.accumulatedTokens / threshold);
+  if (band <= (state.tokenSleepLastBand || 0)) return 0;
+  state.tokenSleepLastBand = band;
+  return duration;
+}
+
 /**
  * 将文本填入输入框（React 兼容：使用原生 value setter）
  * @param {Element} input - 输入框元素
@@ -120,8 +157,22 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
   if (!(await setInputContent(input, msg))) {
     return false;
   }
-  const sendDelay = fixedDelay !== undefined ? fixedDelay : randomDelay();
-  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送...');
+  const baseDelay = fixedDelay !== undefined ? fixedDelay : randomDelay();
+  // 全局发送间隔锁：即使 Agent 循环再快，任意两条消息发出的间隔也不小于此值，
+  // 防止多条路径（工具回传/续跑/兜底）在同一秒内连发，触发服务端频率风控。
+  const MIN_GLOBAL_SEND_INTERVAL = state.globalSendInterval || 5000;
+  const sinceLast = Date.now() - globalLastSendTime;
+  let sendDelay = Math.max(baseDelay, MIN_GLOBAL_SEND_INTERVAL - sinceLast);
+
+  // Token 休眠：对话累计 token 每跨越一个阈值（默认 20 万），强制多睡 tokenSleepDuration。
+  // 每跨越一个 band 只触发一次，避免同一区间反复叠加。
+  const tokenSleepDelay = computeTokenSleepDelay();
+  if (tokenSleepDelay > 0) {
+    sendDelay += tokenSleepDelay;
+    console.log('[LingYa] Token 休眠触发：额外等待 ' + tokenSleepDelay + 'ms（累计 ' +
+      (state.serverTokenUsage && state.serverTokenUsage.accumulatedTokens) + ' tokens）');
+  }
+  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（基础 ' + baseDelay + '，全局锁 ' + MIN_GLOBAL_SEND_INTERVAL + '，距上次 ' + sinceLast + 'ms）...');
   setTimeout(function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
@@ -130,6 +181,7 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     }
     console.log('[LingYa] 等待结束，开始触发发送');
     triggerSend(input);
+    globalLastSendTime = Date.now();
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();
@@ -404,6 +456,8 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     else if (k === 'auto-rename-enabled') { localStorage.setItem('lingya-auto-rename-enabled', v ? '1' : '0'); }
     else if (k === 'send-delay-min') { localStorage.setItem('lingya-send-delay-min', String(v)); state.sendDelayMin = Number(v); }
     else if (k === 'send-delay-max') { localStorage.setItem('lingya-send-delay-max', String(v)); state.sendDelayMax = Number(v); }
+    else if (k === 'token-sleep-threshold') { localStorage.setItem('lingya-token-sleep-threshold', String(v)); state.tokenSleepThreshold = Number(v); }
+    else if (k === 'token-sleep-duration') { localStorage.setItem('lingya-token-sleep-duration', String(v)); state.tokenSleepDuration = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
     else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
