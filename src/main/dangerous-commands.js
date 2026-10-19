@@ -1,23 +1,15 @@
 /**
- * 危险命令检测
- * 由原 main.js 拆分而来，逻辑保持不变。
+ * 危险命令检测（主进程侧入口）
+ *
+ * 实现已统一到 tools/dangerous-commands.js（单一事实来源）。
+ * 本文件仅做 re-export，保持既有 require 路径不变。
+ * 由原 main.js 拆分而来，历史原因保留此转发层。
  */
+const {
+  DANGEROUS_CMDS,
+  DANGEROUS_PWSH_CMDS,
+  isDangerous,
+  isDangerousPwsh,
+} = require('../../tools/dangerous-commands');
 
-// 危险命令列表 —— 匹配到的命令会额外警告
-const DANGEROUS_CMDS = [
-  /^rm\s+-rf\s+\//i,
-  /^format\s+/i,
-  /^del\s+\/f/i,
-  /^rd\s+\/s/i,
-  /^shutdown\s+/i,
-  /^taskkill\s+/i,
-  /^diskpart/i,
-  /^reg\s+delete/i,
-  /^cipher\s+\/w/i,
-];
-
-function isDangerous(cmd) {
-  return DANGEROUS_CMDS.some((pattern) => pattern.test(cmd.trim()));
-}
-
-module.exports = { DANGEROUS_CMDS, isDangerous };
+module.exports = { DANGEROUS_CMDS, DANGEROUS_PWSH_CMDS, isDangerous, isDangerousPwsh };

@@ -573,9 +573,12 @@ function registerIpcHandlers() {
 
   // 停止当前任务：kill 所有活动子进程 + 置中止标志
   // 之后的工具/JS 调用会被 JsRunner/BashTool 检测到标志并拒绝执行
-  ipcMain.handle('abort-execution', async () => {
-    const killed = activeProcesses.killAll();
-    activeProcesses.markAborted();
+  ipcMain.handle('abort-execution', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    // 只杀本窗口的子进程：A 窗口停止不应中断 B 窗口正在跑的命令
+    const killed = activeProcesses.killAll(profileId);
+    activeProcesses.markAborted(profileId);
     return { success: true, killed };
   });
 
@@ -611,8 +614,10 @@ function registerIpcHandlers() {
   });
 
   // 用户下次发消息时清除中止标志，恢复正常执行
-  ipcMain.handle('clear-abort', async () => {
-    activeProcesses.clearAborted();
+  ipcMain.handle('clear-abort', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    activeProcesses.clearAborted(profileId);
     return { success: true };
   });
 

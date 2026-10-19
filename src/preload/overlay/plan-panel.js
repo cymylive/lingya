@@ -191,13 +191,21 @@ function watchSessionChange() {
 function bindPlanPanelEvents() {
   refreshTodos();
   if (!unsubscribe) {
-    // 收到变更通知：若带 sessionId 且与当前会话不符 → 忽略（防跨会话串扰）；
-    // 匹配（或未带 sessionId）→ 重新拉取权威数据
+    // 收到变更通知：若带 sessionId 且与当前会话不符 → 忽略（防跨会话串扰）。
+    // payload 里已带 todos/archived，直接渲染，不再多发一次 get-todos IPC。
     unsubscribe = window.electronAPI.onTodosUpdated((payload) => {
       try {
         const sid = payload && payload.sessionId;
         if (sid && currentSessionId && sid !== currentSessionId) return;
-      } catch (_) {}
+        if (sid) currentSessionId = sid;
+        if (Array.isArray(payload.todos)) {
+          renderTodos(payload.todos, !!payload.archived);
+          const el = document.getElementById('lingya-plan-session');
+          if (el) el.textContent = sid ? String(sid).slice(0, 10) : '(新会话)';
+          return;
+        }
+      } catch (_) { /* 回落 */ }
+      // payload 缺 todos 时才走 IPC
       refreshTodos();
     });
   }

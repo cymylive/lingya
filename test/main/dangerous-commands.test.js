@@ -26,6 +26,31 @@ test('isDangerous 识别危险命令', () => {
   }
 });
 
+test('isDangerous 识别复合命令中的危险操作（非锚定匹配）', () => {
+  const dangerous = [
+    'cd /tmp && rm -rf /',
+    'echo x; rm -rf /',
+    'git status && shutdown /s /t 0',
+    'ls | taskkill /f /im node.exe',
+    'cd C:\\ && rd /s C:\\',
+  ];
+  for (const cmd of dangerous) {
+    assert.strictEqual(isDangerous(cmd), true, cmd);
+  }
+});
+
+test('isDangerous 不误伤普通删除', () => {
+  const safe = [
+    'rm -rf ./build',
+    'rm -rf node_modules',
+    'rm file.txt',
+    'git rm -r --cached .',
+  ];
+  for (const cmd of safe) {
+    assert.strictEqual(isDangerous(cmd), false, cmd);
+  }
+});
+
 test('isDangerous 识别安全命令', () => {
   assert.strictEqual(isDangerous('echo hello'), false);
   assert.strictEqual(isDangerous('dir'), false);

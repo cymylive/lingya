@@ -4,23 +4,7 @@ const path = require('path');
 const { decodeOutput } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
 const { inspectCommand } = require('./readonly-guard');
-
-// PowerShell 危险命令列表（额外覆盖 PowerShell 特有危险操作）
-const DANGEROUS_PWSH_CMDS = [
-  /^rm\s+-rf\s+\//i,
-  /^format\s+/i,
-  /^del\s+\/f/i,
-  /^rd\s+\/s/i,
-  /^shutdown\s+/i,
-  /^taskkill\s+/i,
-  /^diskpart/i,
-  /^reg\s+delete/i,
-  /^cipher\s+\/w/i,
-  /^Stop-Computer\b/i,
-  /^Restart-Computer\b/i,
-  /^Remove-Item\s+\S*\s*-Recurse\s*-Force\s+C:\\/i,
-  /^Clear-Disk\b/i,
-];
+const { DANGEROUS_PWSH_CMDS } = require('./dangerous-commands');
 
 /**
  * pwsh 执行工具 - 仿照 dsh 的 pwsh 最小移植。
@@ -151,7 +135,7 @@ class PwshTool extends Tool {
             resolve(ToolResult.success(body));
           }
         );
-        activeProcesses.register(child);
+        activeProcesses.register(child, params && params.profileId);
       });
     } catch (err) {
       return ToolResult.error('命令执行异常: ' + err.message);

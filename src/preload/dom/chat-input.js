@@ -40,6 +40,17 @@ function initialDelay() {
       const n = parseInt(m, 10);
       if (Number.isFinite(n) && n >= 0) state.thinkMaxDelay = n;
     }
+    // 双策略延迟配置
+    const g = localStorage.getItem('lingya-global-send-delay');
+    const t = localStorage.getItem('lingya-adaptive-threshold');
+    if (g !== null) {
+      const n = parseInt(g, 10);
+      if (Number.isFinite(n) && n >= 0) state.globalSendDelay = n;
+    }
+    if (t !== null) {
+      const n = parseInt(t, 10);
+      if (Number.isFinite(n) && n >= 0) state.adaptiveThreshold = n;
+    }
   } catch (_) { /* ignore */ }
 })();
 
@@ -155,17 +166,30 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
   if (!(await setInputContent(input, msg))) {
     return false;
   }
-  // 思考耗时自适应延迟：上次 AI 思考越久，这次等越久（比例与上限可配）。
-  // 每轮独立：只看紧邻的上一次请求往返耗时，不累加、不继承历史最长。
-  const adaptiveDelay = computeThinkAdaptiveDelay();
-  console.log('[LingYa][诊断] 计算延迟时 state.thinkRatio=' + state.thinkRatio + '，lastThinkMs=' + state.lastThinkMs);
-  const fallbackDelay = fixedDelay !== undefined ? fixedDelay : initialDelay();
-  const sendDelay = Math.max(fallbackDelay, adaptiveDelay);
-  if (adaptiveDelay > fallbackDelay) {
-    console.log('[LingYa] 思考自适应延迟生效：上次思考 ' + state.lastThinkMs + 'ms × ' +
-      state.thinkRatio + ' = ' + adaptiveDelay + 'ms（上限 ' + state.thinkMaxDelay + 'ms）');
+  // 双策略延迟：
+  //   - 上次请求往返（思考+回复）> adaptiveThreshold → 慢请求，走思考耗时自适应
+  //   - 否则 → 快请求，走全局固定延迟
+  //   - fixedDelay 显式指定时（压缩/重命名等特殊操作）一律优先
+  const thinkMs = Number(state.lastThinkMs) || 0;
+  const threshold = Number(state.adaptiveThreshold) || 20000;
+  let sendDelay;
+  let branch;
+  if (fixedDelay !== undefined) {
+    sendDelay = fixedDelay;
+    branch = '调用方指定 ' + fixedDelay + 'ms';
+  } else if (thinkMs > threshold) {
+    const adaptiveDelay = computeThinkAdaptiveDelay();
+    const fallbackDelay = initialDelay();
+    sendDelay = Math.max(fallbackDelay, adaptiveDelay);
+    branch = '慢请求自适应：往返 ' + thinkMs + 'ms > 阈值 ' + threshold +
+      'ms → ' + sendDelay + 'ms（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay +
+      '，比例 ' + state.thinkRatio + '，上限 ' + state.thinkMaxDelay + '）';
+  } else {
+    const globalDelay = Number(state.globalSendDelay) || 3000;
+    sendDelay = globalDelay;
+    branch = '快请求固定：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold + 'ms → ' + globalDelay + 'ms';
   }
-  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay + '）...');
+  console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（' + branch + '）...');
   setTimeout(function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
@@ -451,6 +475,8 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     else if (k === 'initial-send-delay') { localStorage.setItem('lingya-initial-send-delay', String(v)); state.initialSendDelay = Number(v); }
     else if (k === 'think-ratio') { localStorage.setItem('lingya-think-ratio', String(v)); state.thinkRatio = Number(v); console.log('[LingYa] 配置已更新 thinkRatio=' + state.thinkRatio + '（IPC 生效）'); }
     else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); console.log('[LingYa] 配置已更新 thinkMaxDelay=' + state.thinkMaxDelay + '（IPC 生效）'); }
+    else if (k === 'global-send-delay') { localStorage.setItem('lingya-global-send-delay', String(v)); state.globalSendDelay = Number(v); }
+    else if (k === 'adaptive-threshold') { localStorage.setItem('lingya-adaptive-threshold', String(v)); state.adaptiveThreshold = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
     else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }

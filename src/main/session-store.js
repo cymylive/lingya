@@ -15,7 +15,17 @@ const { getProviderByUrl } = require('../providers');
 function createSessionStore(profileId, storeDir, windowState) {
   const STORE_FILE = path.join(storeDir, 'session-dir-map-' + profileId + '.json');
 
-  function readSessionStore() {
+  // ===== 内存缓存 + 防抖落盘 =====
+  // 原实现每次 read 都同步读盘、每次 write 都同步写盘。handleUrlChange 在每次
+  // URL 变化时都会走这条路径，会话多了以后是主进程事件循环的直接卡点。
+  // 现在：首次读盘后常驻内存；写操作先更新缓存，200ms 内合并为一次落盘；
+  // 退出时由 flush() 强制落盘（index.js before-quit 调用），保证不丢数据。
+  const FLUSH_DEBOUNCE_MS = 200;
+  let _cache = null;
+  let _flushTimer = null;
+  let _dirty = false;
+
+  function _loadFromDisk() {
     try {
       if (fs.existsSync(STORE_FILE)) {
         return JSON.parse(fs.readFileSync(STORE_FILE, 'utf-8'));
@@ -26,12 +36,35 @@ function createSessionStore(profileId, storeDir, windowState) {
     return {};
   }
 
+  /** 读会话存储：命中内存缓存直接返回（返回引用，调用方按 read-modify-write 使用） */
+  function readSessionStore() {
+    if (_cache === null) _cache = _loadFromDisk();
+    return _cache;
+  }
+
+  /** 写会话存储：更新缓存并安排一次防抖落盘 */
   function writeSessionStore(store) {
+    _cache = store || {};
+    _dirty = true;
+    if (_flushTimer) clearTimeout(_flushTimer);
+    _flushTimer = setTimeout(() => {
+      _flushTimer = null;
+      flush();
+    }, FLUSH_DEBOUNCE_MS);
+    if (_flushTimer.unref) _flushTimer.unref();
+  }
+
+  /** 立即把缓存落盘（退出前/测试用）。返回是否实际写入。 */
+  function flush() {
+    if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+    if (!_dirty || _cache === null) return false;
     try {
-      fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2), 'utf-8');
-      console.log('[LingYa] 会话存储已保存:', STORE_FILE);
+      fs.writeFileSync(STORE_FILE, JSON.stringify(_cache, null, 2), 'utf-8');
+      _dirty = false;
+      return true;
     } catch (err) {
       console.error('[LingYa] 写入会话存储失败:', err.message);
+      return false;
     }
   }
 
@@ -347,6 +380,7 @@ function createSessionStore(profileId, storeDir, windowState) {
   return {
     readSessionStore,
     writeSessionStore,
+    flush,
     normalizeEntry,
     getProjectDirBySessionId,
     saveSessionDirMapping,

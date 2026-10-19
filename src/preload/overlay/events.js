@@ -509,26 +509,8 @@ function bindEvents() {
   if (eventsBound) return;
   eventsBound = true;
 
-  // 从 localStorage 恢复延迟配置
-  try {
-
-    // 思考耗时自适应延迟配置
-    const savedRatio = localStorage.getItem('lingya-think-ratio');
-    const savedMaxDelay = localStorage.getItem('lingya-think-max-delay');
-    if (savedRatio !== null) {
-      const n = parseFloat(savedRatio);
-      if (Number.isFinite(n) && n >= 0) state.thinkRatio = n;
-    }
-    if (savedMaxDelay !== null) {
-      const n = parseInt(savedMaxDelay, 10);
-      if (Number.isFinite(n) && n >= 0) state.thinkMaxDelay = n;
-    }
-    // 同步到输入框
-    const ratioInput = document.getElementById('lingya-think-ratio');
-    const maxDelayInput = document.getElementById('lingya-think-max-delay');
-    if (ratioInput) ratioInput.value = state.thinkRatio;
-    if (maxDelayInput) maxDelayInput.value = state.thinkMaxDelay;
-  } catch (e) {}
+  // 延迟配置的恢复已在 chat-input.js 的 restoreThinkDelayConfig 完成，
+  // UI 输入框已移除，这里无需再同步。
 
   const minimizeBtn = document.getElementById('lingya-btn-minimize');
   const initBtn = document.getElementById('lingya-btn-init');
@@ -787,27 +769,7 @@ function bindEvents() {
     }
   } catch (_) { /* ignore */ }
 
-  // 保存「思考耗时自适应延迟」设置
-  const saveThinkBtn = document.getElementById('lingya-btn-save-think');
-  const ratioInput = document.getElementById('lingya-think-ratio');
-  const maxDelayInput = document.getElementById('lingya-think-max-delay');
-  saveThinkBtn?.addEventListener('click', () => {
-    const ratio = parseFloat(ratioInput?.value);
-    const maxDelay = parseInt(maxDelayInput?.value, 10);
-    if (!Number.isFinite(ratio) || ratio < 0 || ratio > 5) {
-      showToast('比例需在 0 - 5 之间（如 0.2 表示思考 10 秒等 2 秒）', 4000); return;
-    }
-    if (!Number.isFinite(maxDelay) || maxDelay < 0 || maxDelay > 600000) {
-      showToast('延迟上限需在 0 - 600000ms 之间', 3000); return;
-    }
-    state.thinkRatio = ratio;
-    state.thinkMaxDelay = maxDelay;
-    try {
-      localStorage.setItem('lingya-think-ratio', String(ratio));
-      localStorage.setItem('lingya-think-max-delay', String(maxDelay));
-    } catch (e) {}
-    showToast('已保存：延迟 = 思考耗时 × ' + ratio + '，上限 ' + maxDelay + 'ms', 3000);
-  });
+  // 发送延迟配置已迁到侧边栏「设置 → AI 回复后的发送延迟」，覆盖层不再提供。
 
   // 悬浮球：可拖动 + 点击切换面板显隐
   const statusBadge = document.getElementById('lingya-status-badge');

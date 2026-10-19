@@ -74,12 +74,10 @@ if (_shouldQuit) {
 if (dataDirInfo.migrated) {
   console.log('[LingYa] 已将旧数据从 ' + dataDirInfo.legacyDir + ' 迁移到便携目录');
 }
-if (dataDirInfo.fromInstaller) {
-  console.log('[LingYa] 数据目录来自安装向导选择: ' + dataDirInfo.dir);
-}
-if (dataDirInfo.installerFallback) {
-  console.warn('[LingYa] 安装向导指定的数据目录不可写（' + dataDirInfo.installerDir + '），已回退到默认目录');
-  console.warn('[LingYa] 如需使用该目录，请以管理员身份运行，或在侧边栏设置里重新指定数据目录');
+if (dataDirInfo.readonlyFallback) {
+  console.warn('[LingYa] ⚠️ 程序目录不可写（' + dataDirInfo.intendedDir + '），数据已回退到用户目录');
+  console.warn('[LingYa] 建议把 LingYa 装到有写权限的位置（如 D:\\LingYa 或用户目录），');
+  console.warn('[LingYa] 这样数据会跟程序放一起，整个目录打包就能迁移。');
 }
 
 // 启动时清理过期的自动隔离实例目录（>7 天），避免 instances/auto-* 无限累积
@@ -1009,22 +1007,6 @@ ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {})
   } catch (err) { return { success: false, error: err.message }; }
 });
 
-// ========== 数据目录管理（指定位置 / 导入 / 导出）==========
-// 注意：自定义数据目录配置写在 appData/<sessionDir>/data-location.json（固定位置），
-// 下次启动由 data-dir.js 的 readCustomDataDir 读取，因此改完必须重启才生效。
-try {
-  require('./data-management').register({
-    ipcMain: ipcMainForProfile,
-    dataDir: EFFECTIVE_USER_DATA_DIR,
-    appDataPath: app.getPath('appData'),
-    sessionDir: SESSION_DIR,
-    fs,
-  });
-  console.log('[LingYa] 数据管理 IPC 已注册（当前数据目录: ' + EFFECTIVE_USER_DATA_DIR + '）');
-} catch (err) {
-  console.error('[LingYa] 数据管理 IPC 注册失败:', err.message);
-}
-
 // 侧边栏 → AI 视图：读偏好（返回 Promise，主进程转发后由 AI 视图回填）
 // 简化：不实现读回，侧边栏用固定默认值展示
 
@@ -1343,6 +1325,17 @@ app.on('before-quit', (event) => {
   if (quitFlushed) return;
   event.preventDefault();
   quitFlushed = true;
+  // 先把各窗口的 sessionStore 内存缓存强制落盘（防抖计时器可能还没到点）
+  try {
+    for (const ctx of windowState.getAllContexts()) {
+      const st = ctx && ctx.sessionStore;
+      if (st && typeof st.flush === 'function') {
+        try { st.flush(); } catch (err) { console.error('[LingYa] flush 会话存储失败:', err && err.message); }
+      }
+    }
+  } catch (err) {
+    console.error('[LingYa] 遍历上下文 flush 失败:', err && err.message);
+  }
   flushAllSessions().finally(() => {
     app.quit();
   });

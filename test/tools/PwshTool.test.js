@@ -24,6 +24,19 @@ test('PwshTool 危险命令拒绝', async () => {
   }
 });
 
+test('PwshTool 拦截复合命令里的危险操作', async () => {
+  const tool = new PwshTool();
+  const cmds = [
+    'Get-Date; Stop-Computer',
+    'Write-Output x; Clear-Disk -Number 1',
+  ];
+  for (const cmd of cmds) {
+    const r = await tool.execute({ command: cmd, description: 'test' });
+    assert.strictEqual(r.success, false, cmd);
+    assert.match(r.error, /安全策略拒绝/);
+  }
+});
+
 test('PwshTool 空命令拒绝', async () => {
   const tool = new PwshTool();
   const r = await tool.execute({ command: '', description: 'test' });

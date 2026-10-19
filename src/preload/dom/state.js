@@ -21,6 +21,11 @@ module.exports = {
   thinkRatio: 0.2,
   // 延迟上限（毫秒）：防止思考很久时等得过长
   thinkMaxDelay: 60000,
+  // ===== 双策略延迟 =====
+  // 快请求（往返 ≤ adaptiveThreshold）用固定延迟 globalSendDelay
+  // 慢请求（往返 > adaptiveThreshold）用思考耗时自适应（× thinkRatio，封顶 thinkMaxDelay）
+  globalSendDelay: 3000,
+  adaptiveThreshold: 20000,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
   // 服务端返回的权威 token 统计（{ accumulatedTokens, insertedAt, updatedAt, modelType }）

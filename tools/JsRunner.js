@@ -228,7 +228,7 @@ function resolveDir(dir, projectDir) {
  * 与 JSON 工具的 bash 不同：非零退出码不视为失败，而是通过 exitCode/error 字段返回，
  * 让 AI 代码可以像普通 shell 一样判断结果。
  */
-function runBash(args, projectDir, readonlyShell) {
+function runBash(args, projectDir, readonlyShell, profileId) {
   const command = normalizeCommand(String(args.command || '').trim());
   if (!command) return Promise.resolve({ success: false, error: 'invalid command: expected a non-empty string' });
   if (DANGEROUS_CMDS.some((pattern) => pattern.test(command))) {
@@ -281,7 +281,7 @@ function runBash(args, projectDir, readonlyShell) {
       // 非零退出也正常返回（success:true），模型看到标记自行判断
       resolve({ success: true, data: body });
     });
-    activeProcesses.register(child);
+    activeProcesses.register(child, profileId);
   });
 }
 
@@ -320,14 +320,14 @@ class JsRunner {
     if (!code || typeof code !== 'string' || !code.trim()) {
       return { success: false, error: '无效的 JS 代码' };
     }
-    // 已停止状态：直接拒绝执行新脚本
-    if (activeProcesses.isAborted()) {
+    const profileId = (options && options.profileId) || null;
+    // 已停止状态：直接拒绝执行新脚本（按窗口 profileId 隔离，A 窗口停止不影响 B）
+    if (activeProcesses.isAborted(profileId)) {
       return { success: false, error: '任务已被用户停止' };
     }
 
     const deniedTools = new Set((options && options.deniedTools) || []);
     const readonlyShell = !!(options && options.readonlyShell);
-    const profileId = (options && options.profileId) || null;
     const sessionId = (options && options.sessionId) || null;
     // 收集本次脚本加载的图片，随结果一起回传（供多模态附件注入）
     const imageCollector = [];
@@ -340,7 +340,8 @@ class JsRunner {
     // 避免沙箱内出现宿主 realm 的 Error / Function 逃逸通道。
     const hostBridge = async (op, argsJson) => {
       // 用户点「停止」后，沙箱代码的下一次工具调用直接失败，从而中断整个脚本
-      if (activeProcesses.isAborted()) {
+      // 按 profileId 隔离：只中断本窗口的任务，不影响其他窗口
+      if (activeProcesses.isAborted(profileId)) {
         return JSON.stringify({ success: false, error: '任务已被用户停止' });
       }
       if (Date.now() - startTime > deadlineMs) {
@@ -371,10 +372,11 @@ class JsRunner {
         const gateToolName = op === '__bash' ? 'bash' : op;
         const gate = checkGate(gateToolName, args, sessionId, profileId);
         if (!gate.allowed) {
-          return JSON.stringify({ success: false, error: gate.error });
-        }
-        if (op === '__bash') {
-          result = await runBash(args, projectDir, readonlyShell);
+          // 走统一收尾（下方 attach/markDone/sweepSession），不能直接 return——
+          // 否则本次 register 的 running 条目永远留在生命周期表里（sweep 不清理 running）。
+          result = { success: false, error: gate.error };
+        } else if (op === '__bash') {
+          result = await runBash(args, projectDir, readonlyShell, profileId);
         } else {
           const tool = this.registry.get(op);
           if (!tool) {

@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.6.88] - 2026-10-19
+
+### Changed
+- **数据目录策略统一：安装版也用 exe 同目录的 LingYa-Data**（重要）
+  - 之前：安装版数据放 %APPDATA%\lingya-ai-pro-session，重装/升级会丢
+  - 现在：便携版和安装版统一用 <exe目录>\LingYa-Data
+  - 效果：整个程序目录打包 zip 就能换电脑直接用；重装升级数据不丢
+  - 首次运行自动从旧 %APPDATA% 目录迁移一次（LINGYA_NO_MIGRATE=1 可禁用）
+  - 只读兜底：装到 C:\Program Files 等无写权限位置时，自动回退 %APPDATA% 并在启动日志警告
+
+### Removed
+- 侧边栏「数据目录」面板（指定位置 / 恢复默认 / 导出数据 / 导入数据）
+- 安装向导「选择数据目录」页（build/installer.nsh）
+- src/main/data-management.js 及其 IPC / preload API
+- 依赖 archiver 和 adm-zip（仅被数据导出/导入使用，共减少 33 个包）
+- data-dir.js 的 readCustomDataDir / writeCustomDataDir / readInstallerDataDir / LOCATION_CONFIG_FILENAME
+
+### Notes
+- 全量测试 427/427（新增 2 个测试：只读回退、安装版迁移）
+- 升级提醒：安装 0.6.88 后数据会从 %APPDATA%\lingya-ai-pro-session 自动迁移到程序目录 LingYa-Data（目标目录非空时跳过）
+- 便携版 unpackDirName 为 LingYa-runtime-0.6.88
+
+## [0.6.87] - 2026-10-19
+
+### Added
+- 双策略发送延迟（侧边栏 → 设置 → 「AI 回复后的发送延迟」）
+  - 判定阈值：上一次 AI 回复耗时 ≤ 阈值 → 固定延迟；> 阈值 → 思考耗时自适应
+  - 默认：阈值 20000ms、固定延迟 3000ms、比例 0.2、上限 60000ms
+- 多窗口停止隔离
+  - 中止标志按 profileId 隔离：A 窗口点停止不再影响 B 窗口的工具执行
+  - 子进程归属按 profileId 记录：A 窗口停止不再杀掉 B 窗口正在跑的 bash/pwsh/后台任务
+
+### Fixed
+- 侧边栏计划面板卡顿（每次 todoWrite 多发一趟 get-todos IPC 往返）
+- 覆盖层计划面板同样存在冗余 IPC
+- JsRunner.runBash 未传 profileId（AI 通过 JS 的 await bash() 启动的子进程无法按窗口隔离）
+- 数据导出失败时资源泄漏（句柄 + 半成品 zip）
+- 数据导入路径校验（按段判断 .. + 拦截绝对路径）
+
+### Changed
+- 覆盖层延迟配置移除：只保留侧边栏「设置 → AI 回复后的发送延迟」
+- UI 文案改为「条件 → 结果」直白结构
+- 侧边栏延迟配置合并为单个保存按钮
+
+### Notes
+- 全量测试 425/425
+
 ## [0.6.86] - 2026-10-19
 
 ### Changed

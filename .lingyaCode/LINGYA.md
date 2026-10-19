@@ -58,24 +58,51 @@ lingya/
 │   ├── main/               # ===== 主进程（Node 环境，有完整系统权限）=====
 │   │   ├── index.js        # 应用入口：窗口创建、IPC 注册、生命周期
 │   │   ├── window.js       # 多窗口管理（每个窗口独立 profile 上下文）
+│   │   ├── tab-manager.js  # 标签页管理（WebContentsView 多标签）
 │   │   ├── ipc.js          # IPC 处理器（渲染进程 <-> 主进程）
 │   │   ├── profile-manager.js  # 窗口 Profile 管理
 │   │   ├── project-context.js  # 项目初始化：目录选择 + systemPrompt 组装 + 发送
-│   │   ├── session-store.js    # 会话持久化（会话 ID <-> 项目目录映射）
+│   │   ├── session-store.js    # 会话持久化（ID<->目录映射，内存缓存+防抖落盘）
 │   │   ├── memory-store.js     # 长期记忆存储（lingya-memory.json）
 │   │   ├── skill-store.js      # 技能存储（lingya-skills.json）
 │   │   ├── security-store.js   # 安全增强配置（lingya-security.json）
+│   │   ├── agent-store.js      # Agent 状态（Plan/Build 模式，per-profile）
+│   │   ├── agents.js           # Agent 定义（deniedTools 等）
+│   │   ├── schedule-store.js   # 定时任务存储
+│   │   ├── scheduler.js / schedule-ipc.js / cron.js  # 定时任务调度
 │   │   ├── refusal-rewriter.js # AI 改写服务（OpenAI 兼容接口）
 │   │   ├── mcp-config.js       # MCP 配置管理
 │   │   ├── mcp-client.js       # MCP SDK 客户端
 │   │   ├── tool-registry.js    # 工具注册表（主进程侧）
-│   │   ├── dangerous-commands.js  # 危险命令检测
+│   │   ├── dangerous-commands.js  # 危险命令检测（转发到 tools/dangerous-commands）
+│   │   ├── file-tree.js        # 项目文件树（只读，节点数/深度上限）
+│   │   ├── data-dir.js         # 数据目录解析（便携优先 + 多实例隔离）
+│   │   ├── data-management.js  # 数据导入导出/自定义目录
+│   │   ├── plugin-store.js     # 本地插件状态存储
+│   │   ├── plugin-host.js      # 本地插件宿主（加载/卸载/ctx）
+│   │   ├── plugin-zip.js       # 插件 zip 打包/解包
+│   │   ├── dropdown-window.js  # 下拉浮层窗口
+│   │   ├── feishu-ipc.js       # 飞书同步 IPC
+│   │   ├── dsh/                # DSH 兼容层（15 个文件）
+│   │   │   ├── index.js        # 初始化 + 插件加载入口
+│   │   │   ├── loader.js       # esbuild 打包 + 插件加载
+│   │   │   ├── agent-runtime.js / runtime.js / shim.js  # 运行时
+│   │   │   ├── event-bridge.js / prompt-sections.js     # ctx 服务
+│   │   │   ├── fs-service.js / skills-service.js / goals-service.js / web-service.js
+│   │   │   ├── installer.js / market.js / market-zh.js  # 插件市场
+│   │   │   ├── plugin-storage.js / state.js / paths.js  # 存储与路径
 │   │   ├── tray.js             # 系统托盘
 │   │   └── updater.js          # 自动更新
+│   │
+│   ├── feishu/             # ===== 飞书同步 =====
+│   │   ├── client.js           # 飞书 API 客户端
+│   │   └── config.js           # 飞书配置存储
 │   │
 │   ├── preload/            # ===== 渲染进程（注入到 AI 网页，受限权限）=====
 │   │   ├── index.js        # Preload 入口：初始化时序
 │   │   ├── api.js          # contextBridge API 暴露（window.electronAPI）
+│   │   ├── shell-preload.js / shell-renderer.js  # 壳窗口（侧栏）preload + 渲染
+│   │   ├── dropdown-preload.js  # 下拉浮层 preload
 │   │   ├── tool-names.js   # 工具名常量
 │   │   ├── overlay/        # 覆盖层 UI
 │   │   │   ├── template.js     # HTML 模板 + CSS（页签布局 / 墨鸦主题）
@@ -84,7 +111,13 @@ lingya/
 │   │   │   ├── project-dir.js  # 项目目录区块
 │   │   │   ├── memory-panel.js # 记忆管理面板
 │   │   │   ├── skill-panel.js  # 技能管理面板
-│   │   │   └── security-panel.js  # 安全增强面板
+│   │   │   ├── security-panel.js  # 安全增强面板
+│   │   │   ├── agent-panel.js  # Agent 模式面板
+│   │   │   ├── plan-panel.js   # 计划（todo）面板
+│   │   │   ├── file-tree-panel.js # 文件树面板
+│   │   │   ├── schedule-panel.js  # 定时任务面板
+│   │   │   ├── feishu-panel.js    # 飞书同步面板
+│   │   │   └── tool-card.js    # 工具调用卡片（dsh 风格）
 │   │   └── dom/            # DOM 监测与执行
 │   │       ├── state.js             # 全局状态
 │   │       ├── chat-input.js        # 输入框定位与发送
@@ -94,6 +127,13 @@ lingya/
 │   │       ├── tool-executor.js     # 触发沙箱执行
 │   │       ├── refusal-detector.js  # 拒绝检测（两级策略）
 │   │       ├── auto-inject.js       # 新会话自动注入记忆+技能
+│   │       ├── auto-rename.js       # 初始化后自动 AI 重命名会话
+│   │       ├── page-title-sync.js   # 会话标题同步到页面标题
+│   │       ├── deepseek-history-archiver.js  # DeepSeek 侧栏对话归档注入
+│   │       ├── supervisor.js        # 停滞监督者（心跳 + 自动催促）
+│   │       ├── feishu-bridge.js     # 飞书消息桥接
+│   │       ├── schedule-bridge.js   # 定时任务桥接
+│   │       ├── conversation-log.js  # 对话记录（导出 Markdown）
 │   │       ├── compaction.js        # 上下文压缩
 │   │       └── session-list.js      # 会话列表
 │   │
@@ -120,17 +160,29 @@ lingya/
 │   ├── ToolRegistry.js         # 工具注册表
 │   ├── lingya-tools.d.ts       # 工具 API 类型声明（注入到 systemPrompt）
 │   ├── BashTool.js / PwshTool.js       # 命令执行
+│   ├── BackgroundTaskTool.js   # 后台任务（bashBackground/Output/Kill）
 │   ├── ReadTool.js / ReadLinesTool.js  # 读取
 │   ├── WriteTool.js / FileWriteTool.js # 写入
 │   ├── EditTool.js / FileEditTool.js   # 编辑
-│   ├── GlobTool.js / GrepTool.js       # 搜索
+│   ├── GlobTool.js / GrepTool.js       # 搜索（另有 *New 版本，待确认后清理）
 │   ├── FileDeleteTool.js       # 删除
-│   ├── TodoWriteTool.js        # 任务列表
+│   ├── TodoWriteTool.js        # 任务列表（按会话隔离）
 │   ├── WebFetchTool.js / WebSearchTool.js  # 网络
 │   ├── MySQLTool.js            # 数据库
 │   ├── OpenBrowserWindowTool.js / InjectJSTool.js  # 浏览器
 │   ├── McpCallTool.js / McpQueryTools.js   # MCP
 │   ├── MemoryTool.js           # 记忆工具
+│   ├── NameConversationTool.js # 会话命名
+│   ├── ListPluginsTool.js      # 列出插件
+│   ├── ViewImageTool.js        # 查看本地图片
+│   ├── dangerous-commands.js   # 危险命令规则（单一事实来源）
+│   ├── readonly-guard.js       # Plan 模式只读守卫（写操作检测）
+│   ├── plan-gate.js            # 计划门禁（写操作前须建计划）
+│   ├── tool-lifecycle.js       # 工具生命周期追踪（按会话隔离清理）
+│   ├── memory-janitor.js       # 主动 GC（节流 800ms）
+│   ├── active-processes.js     # 活跃子进程登记（停止/中止）
+│   ├── decodeOutput.js         # 命令输出解码（GBK/UTF-8 兼容）
+│   ├── browser-window-manager.js  # 浏览器窗口登记
 │   └── index.js                # 导出
 │
 ├── test/                   # ===== 单元测试 =====
@@ -138,13 +190,18 @@ lingya/
 │   ├── main/                   # 主进程测试
 │   └── preload/                # preload 测试
 │
+├── plugins/                # 自带示例插件（打包时播种到 userData/plugins）
+├── resources/runtime/      # 自带 Node 运行时（构建时下载，git 忽略）
+├── scripts/                # 辅助脚本（check-notes / verify-sidebar-parity / fetch-runtime）
 ├── assets/                 # 图标（icon.png / icon.ico / tray-icon.png）
 ├── logo/                   # 品牌素材（lingya.svg）
 ├── dist/                   # 构建产物
+├── docs/                   # 文档
 └── .lingyaCode/LINGYA.md   # 本文件
 ```
 
-用户数据目录：`%APPDATA%\lingya-ai-pro-session\`
+用户数据目录：便携版与程序同目录；否则 `%APPDATA%\lingya-ai-pro-session\`
+多实例：第二个实例自动隔离到 `<数据目录>/instances/auto-<pid>`（`LINGYA_SINGLE=1` 恢复单实例）
 开发日志：`<userData>\wyp\log\`
 
 ---
@@ -218,7 +275,7 @@ lingya/
 # 启动（需 PATH 含 D:\NodeJS）
 npm start
 
-# 测试（246 个用例）
+# 测试（425 个用例）
 npm test
 
 # 测试覆盖率
@@ -260,7 +317,7 @@ npm run build:mac:local             # macOS
 ### 修改原则
 
 - **外科手术式修改**：最小改动范围，不顺手重构无关代码
-- 修改后必须跑 `npm test`，确保 246 用例通过
+- 修改后必须跑 `npm test`，确保 425 用例通过
 - 涉及 UI 的改动，元素 **id 保持不变**（events.js / ui.js 依赖 getElementById）
 
 ---
@@ -278,9 +335,10 @@ npm run build:mac:local             # macOS
 
 ## 八、版本信息
 
-- 当前版本：**0.5.1**
-- 最新构建：`dist/lingya-win-v0.5.1-portable.exe`
-- 仓库：https://github.com/cymylive/lingya （计划）/ https://github.com/cymylive/cuckoo-code-mod （现有）
+- 当前版本：**0.6.86**
+- 最新构建：`dist/lingya-win-v0.6.86-portable.exe`
+- 仓库：https://github.com/cymylive/lingya
+- 发版方式：打 tag 触发 GitHub Actions 打包（本地打包三个坑见 CHANGELOG）
 
 ### 本分支新增（相对上游 cuckoo-code）
 
@@ -333,7 +391,7 @@ npm run build:mac:local             # macOS
 
 ### 10.3 改动后：验证闭环
 
-- 修改后必须跑 `npm test`，确保 246 用例通过
+- 修改后必须跑 `npm test`，确保 425 用例通过
 - 涉及 UI 的改动，元素 **id 保持不变**（events.js / ui.js 依赖 getElementById）
 - 触发限制：**打包/发版前必须先问用户**（不要主动打包）
 
@@ -348,7 +406,7 @@ npm run build:mac:local             # macOS
 
 ```bash
 npm start              # 启动
-npm test               # 246 用例
+npm test               # 425 用例
 npm run check:notes    # 校验架构决策笔记
 npm run test:coverage  # 覆盖率
 npm run build:win:portable:local  # 本地打包

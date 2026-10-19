@@ -10,15 +10,43 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lingya-dd-'));
 }
 
-test('默认（无便携标记）→ 使用 appData 目录', () => {
+test('默认（安装版，无便携标记）→ 使用 exe 同目录 LingYa-Data', () => {
   const appData = tmp();
   const exeDir = tmp();
   const r = resolveDataDir({
     appDataPath: appData, execPath: path.join(exeDir, 'LingYa.exe'),
     env: {}, fs, sessionDir: 'lingya-ai-pro-session',
   });
-  assert.strictEqual(r.portable, false);
+  assert.strictEqual(r.portable, true);
+  assert.strictEqual(r.dir, path.join(exeDir, 'LingYa-Data'));
+});
+
+test('安装版：exe 目录不可写 → 回退 appData 并标记 readonlyFallback', () => {
+  const appData = tmp();
+  // 用一个不存在的深层路径模拟"不可写"（父目录为只读文件）
+  const fakeExeDir = path.join(tmp(), 'readonly-blocker');
+  fs.writeFileSync(fakeExeDir, 'i am a file, not a dir');   // 同名文件挡住目录创建
+  const r = resolveDataDir({
+    appDataPath: appData, execPath: path.join(fakeExeDir, 'sub', 'LingYa.exe'),
+    env: {}, fs, sessionDir: 'lingya-ai-pro-session',
+  });
+  assert.strictEqual(r.readonlyFallback, true);
   assert.strictEqual(r.dir, path.join(appData, 'lingya-ai-pro-session'));
+  assert.ok(r.intendedDir && r.intendedDir.includes('LingYa-Data'));
+});
+
+test('安装版首次运行：appData 旧数据自动迁移到 exe 同目录', () => {
+  const appData = tmp();
+  const exeDir = tmp();
+  const legacy = path.join(appData, 'lingya-ai-pro-session');
+  fs.mkdirSync(legacy, { recursive: true });
+  fs.writeFileSync(path.join(legacy, 'lingya-memory.json'), '{"memories":[]}');
+  const r = resolveDataDir({
+    appDataPath: appData, execPath: path.join(exeDir, 'LingYa.exe'),
+    env: {}, fs, sessionDir: 'lingya-ai-pro-session',
+  });
+  assert.strictEqual(r.migrated, true);
+  assert.ok(fs.existsSync(path.join(r.dir, 'lingya-memory.json')));
 });
 
 test('PORTABLE_EXECUTABLE_DIR → 便携目录', () => {

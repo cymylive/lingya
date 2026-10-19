@@ -4,19 +4,7 @@ const path = require('path');
 const { decodeOutput, normalizeCommand } = require('./decodeOutput');
 const activeProcesses = require('./active-processes');
 const { inspectCommand } = require('./readonly-guard');
-
-// 危险命令列表（保持不变）
-const DANGEROUS_CMDS = [
-  /^rm\s+-rf\s+\//i,
-  /^format\s+/i,
-  /^del\s+\/f/i,
-  /^rd\s+\/s/i,
-  /^shutdown\s+/i,
-  /^taskkill\s+/i,
-  /^diskpart/i,
-  /^reg\s+delete/i,
-  /^cipher\s+\/w/i,
-];
+const { DANGEROUS_CMDS } = require('./dangerous-commands');
 
 /**
  * Bash 执行工具 - 最小移植 dsh 风格。
@@ -144,7 +132,7 @@ class BashTool extends Tool {
             resolve(ToolResult.success(body));
           }
         );
-        activeProcesses.register(child);
+        activeProcesses.register(child, params && params.profileId);
       });
     } catch (err) {
       return ToolResult.error('命令执行异常: ' + err.message);

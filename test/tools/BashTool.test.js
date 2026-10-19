@@ -22,6 +22,20 @@ test('BashTool 危险命令拒绝', async () => {
   }
 });
 
+test('BashTool 拦截复合命令里的危险操作', async () => {
+  const tool = new BashTool();
+  const tests = [
+    'cd /tmp && rm -rf /',
+    'echo x; rd /s C:\\',
+    'git status && shutdown /s',
+  ];
+  for (const cmd of tests) {
+    const r = await tool.execute({ command: cmd, description: 'test' });
+    assert.strictEqual(r.success, false, cmd);
+    assert.match(r.error, /安全策略拒绝/);
+  }
+});
+
 test('BashTool 空命令拒绝', async () => {
   const tool = new BashTool();
   const r = await tool.execute({ command: '', description: 'test' });

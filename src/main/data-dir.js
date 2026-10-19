@@ -6,13 +6,14 @@
  *
  * 优先级：
  *   1. LINGYA_USER_DATA_DIR 环境变量（显式覆盖）
- *   2. 便携模式：
- *      - electron-builder 便携版注入的 PORTABLE_EXECUTABLE_FILE / PORTABLE_EXECUTABLE_DIR
- *      - 手动便携：exe 同目录存在 portable.txt / LingYa-Portable.txt 标记
- *      → 数据写入 <exe目录>/LingYa-Data
- *   3. 默认（安装版）：<appData>/<sessionDir>（保持原行为）
+ *   2. exe 同目录的 <exe目录>/LingYa-Data（便携版和安装版统一）
+ *      - 便携版：PORTABLE_EXECUTABLE_FILE / PORTABLE_EXECUTABLE_DIR / portable.txt 标记
+ *      - 安装版：默认也用 exe 同目录，方便整个目录打包迁移
+ *   3. 回退（仅当 exe 目录不可写，如装到 C:\Program Files 且无管理员权限）：
+ *      <appData>/<sessionDir>
  *
- * 首次便携运行且便携目录为空、旧目录有数据时，自动迁移一次（可用 LINGYA_NO_MIGRATE 禁用）。
+ * 首次运行且目标目录为空、旧目录（appData/<sessionDir>）有数据时，自动迁移一次
+ * （可用 LINGYA_NO_MIGRATE 禁用）。
  *
  * 纯函数 + 依赖注入（fs/env/execPath 全部传入），便于单测。
  */
@@ -20,52 +21,6 @@ const path = require('path');
 
 const PORTABLE_DATA_DIRNAME = 'LingYa-Data';
 const PORTABLE_MARKERS = ['portable.txt', 'LingYa-Portable.txt'];
-// 自定义数据目录配置文件（固定放在 appData/<sessionDir>/ 下，永不随数据目录变化）
-const LOCATION_CONFIG_FILENAME = 'data-location.json';
-
-/**
- * 读取自定义数据目录配置。
- * 配置文件固定放在 appData/<sessionDir>/data-location.json，
- * 即使数据目录已经切走，下次启动仍能从这个固定位置找到配置。
- * @param {string} appDataPath
- * @param {string} sessionDir
- * @param {object} fs
- * @returns {string|null} 绝对路径，无配置或读取失败返回 null
- */
-function readCustomDataDir(appDataPath, sessionDir, fs) {
-  try {
-    const p = path.join(appDataPath, sessionDir, LOCATION_CONFIG_FILENAME);
-    if (!fs.existsSync(p)) return null;
-    const raw = fs.readFileSync(p, 'utf8');
-    const obj = JSON.parse(raw);
-    const dir = (obj && typeof obj.customDataDir === 'string') ? obj.customDataDir.trim() : '';
-    if (!dir) return null;
-    return path.resolve(dir);
-  } catch (_) {
-    return null;
-  }
-}
-
-/**
- * 读取安装向导写入的数据目录。
- * 安装时 NSIS 会把用户选择的数据目录写入 <安装目录>\data-location.txt，
- * 优先级低于运行时的 data-location.json（侧边栏设置），高于便携判定与默认路径。
- * @param {string} execPath process.execPath
- * @param {object} fs
- * @returns {string|null}
- */
-function readInstallerDataDir(execPath, fs) {
-  try {
-    const exeDir = path.dirname(execPath);
-    const p = path.join(exeDir, 'data-location.txt');
-    if (!fs.existsSync(p)) return null;
-    const raw = fs.readFileSync(p, 'utf8').trim();
-    if (!raw) return null;
-    return path.resolve(raw);
-  } catch (_) {
-    return null;
-  }
-}
 
 /**
  * 检查目录是否可写（创建临时文件再删除）。
@@ -83,24 +38,6 @@ function isDirWritable(dir, fs) {
   } catch (_) {
     return false;
   }
-}
-
-/**
- * 写入自定义数据目录配置。
- * @param {string} appDataPath
- * @param {string} sessionDir
- * @param {string|null} customDir null 表示清除（恢复默认）
- * @param {object} fs
- */
-function writeCustomDataDir(appDataPath, sessionDir, customDir, fs) {
-  const dir = path.join(appDataPath, sessionDir);
-  fs.mkdirSync(dir, { recursive: true });
-  const p = path.join(dir, LOCATION_CONFIG_FILENAME);
-  if (!customDir) {
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-    return;
-  }
-  fs.writeFileSync(p, JSON.stringify({ customDataDir: String(customDir).trim() }, null, 2) + '\n', 'utf8');
 }
 
 /** 解析便携数据目录；非便携返回 null */
@@ -163,42 +100,32 @@ function resolveDataDir(options) {
     return { dir: path.resolve(explicit), portable: false, legacyDir, migrated: false };
   }
 
-  // 配置文件自定义目录（侧边栏设置写入，优先级高于便携判定）
-  const customDir = readCustomDataDir(appDataPath, sessionDir, fs);
-  if (customDir) {
-    try { fs.mkdirSync(customDir, { recursive: true }); } catch (_) { /* 创建失败则忽略 */ }
-    return { dir: customDir, portable: false, legacyDir, migrated: false, custom: true };
-  }
+  // 统一策略：数据默认放 exe 同目录的 LingYa-Data（便携版和安装版一致）。
+  // 好处：整个程序目录打包 zip 就能换电脑直接用，升级重装也不丢数据。
+  // 例外：装到 C:\Program Files 等只读位置时，检测不可写则回退旧目录并提示。
+  const portableDir = resolvePortableDataDir(execPath, env, fs) ||
+    path.join(path.dirname(execPath), PORTABLE_DATA_DIRNAME);
 
-  // 安装向导选择的数据目录（<安装目录>\data-location.txt）
-  // 若目录不可写（如装到 C:\Program Files 且无管理员权限），回退默认并标记原因。
-  const installerDir = readInstallerDataDir(execPath, fs);
-  if (installerDir) {
-    if (isDirWritable(installerDir, fs)) {
-      return { dir: installerDir, portable: false, legacyDir, migrated: false, fromInstaller: true };
-    }
+  if (!isDirWritable(portableDir, fs)) {
+    // 只读位置（如 Program Files）：回退 %APPDATA%，标记原因供启动日志提示
     return {
       dir: legacyDir,
       portable: false,
       legacyDir,
       migrated: false,
-      installerFallback: true,
-      installerDir,
+      readonlyFallback: true,
+      intendedDir: portableDir,
     };
   }
 
-  const portableDir = resolvePortableDataDir(execPath, env, fs);
-  if (!portableDir) {
-    return { dir: legacyDir, portable: false, legacyDir, migrated: false };
-  }
-
+  // 首次运行且目标目录为空、旧目录有数据 → 从旧目录迁移一次
   let migrated = false;
   if (!env.LINGYA_NO_MIGRATE && isEmptyDir(portableDir, fs) && !isEmptyDir(legacyDir, fs)) {
     try {
       copyDirRecursive(legacyDir, portableDir, fs);
       migrated = true;
     } catch (_) {
-      // 迁移失败不影响启动，退回使用便携目录（空）
+      // 迁移失败不影响启动，继续用空的目标目录
     }
   }
   return { dir: portableDir, portable: true, legacyDir, migrated };
@@ -259,10 +186,6 @@ function cleanStaleInstances(baseDir, maxAgeMs, fsArg) {
 module.exports = {
   PORTABLE_DATA_DIRNAME,
   PORTABLE_MARKERS,
-  LOCATION_CONFIG_FILENAME,
-  readCustomDataDir,
-  writeCustomDataDir,
-  readInstallerDataDir,
   isDirWritable,
   resolvePortableDataDir,
   copyDirRecursive,

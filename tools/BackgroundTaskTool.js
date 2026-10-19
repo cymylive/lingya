@@ -56,7 +56,7 @@ function startBackground(command, options) {
   };
   task.donePromise = new Promise((resolve) => { task.resolveDone = resolve; });
   tasks.set(id, task);
-  activeProcesses.register(child);
+  activeProcesses.register(child, opts.profileId);
 
   child.stdout.on('data', (d) => appendOutput(task, d.toString()));
   child.stderr.on('data', (d) => appendOutput(task, d.toString()));
@@ -174,7 +174,7 @@ class BashBackgroundTool extends Tool {
       }
     }
     try {
-      const info = startBackground(trimmed, { workdir, projectDir });
+      const info = startBackground(trimmed, { workdir, projectDir, profileId: params && params.profileId });
       console.log('[BashBackgroundTool] 已启动后台任务 ' + info.taskId + ': ' + trimmed);
       return ToolResult.success(
         '后台任务已启动\n任务 ID: ' + info.taskId + '\nPID: ' + info.pid + '\n工作目录: ' + info.cwd +
