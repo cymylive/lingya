@@ -156,8 +156,9 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     return false;
   }
   // 思考耗时自适应延迟：上次 AI 思考越久，这次等越久（比例与上限可配）。
-  // 首次发送无历史 → 返回 0，回落到固定兜底延迟。
+  // 每轮独立：只看紧邻的上一次请求往返耗时，不累加、不继承历史最长。
   const adaptiveDelay = computeThinkAdaptiveDelay();
+  console.log('[LingYa][诊断] 计算延迟时 state.thinkRatio=' + state.thinkRatio + '，lastThinkMs=' + state.lastThinkMs);
   const fallbackDelay = fixedDelay !== undefined ? fixedDelay : initialDelay();
   const sendDelay = Math.max(fallbackDelay, adaptiveDelay);
   if (adaptiveDelay > fallbackDelay) {
@@ -448,8 +449,8 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     if (k === 'auto-inject') { localStorage.setItem('lingya-auto-inject', v ? '1' : '0'); }
     else if (k === 'auto-rename-enabled') { localStorage.setItem('lingya-auto-rename-enabled', v ? '1' : '0'); }
     else if (k === 'initial-send-delay') { localStorage.setItem('lingya-initial-send-delay', String(v)); state.initialSendDelay = Number(v); }
-    else if (k === 'think-ratio') { localStorage.setItem('lingya-think-ratio', String(v)); state.thinkRatio = Number(v); }
-    else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); }
+    else if (k === 'think-ratio') { localStorage.setItem('lingya-think-ratio', String(v)); state.thinkRatio = Number(v); console.log('[LingYa] 配置已更新 thinkRatio=' + state.thinkRatio + '（IPC 生效）'); }
+    else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); console.log('[LingYa] 配置已更新 thinkMaxDelay=' + state.thinkMaxDelay + '（IPC 生效）'); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
     else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }

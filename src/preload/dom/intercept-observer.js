@@ -545,9 +545,14 @@ function startInterceptObserver() {
         console.log('[LingYa][拦截] 检测到新对话开始，已恢复自动执行');
       }
       setFabState('generating');
-      // 补记请求起点：用户直接在页面输入框发消息时不经过 sendToChat，
-      // 这里兜底记录，保证「思考耗时」仍然可测。程序发送时 sendToChat 已设值，不覆盖。
-      if (!state.lastRequestStartAt) state.lastRequestStartAt = Date.now();
+      // 补记请求起点 + 判断是否新一轮
+      // 情况 A：用户直接在页面输入框打字 → 不经过 sendToChat，lastRequestStartAt 为 0
+      //         → 视为新一轮，重置本轮统计
+      // 情况 B：程序通过 sendToChat 发送 → 已设 lastRequestStartAt，属同一轮，不重置
+      if (!state.lastRequestStartAt) {
+        state.lastRequestStartAt = Date.now();
+        console.log('[LingYa] 检测到新请求（用户直发），开始计时');
+      }
       if (generateTimeout) clearTimeout(generateTimeout);
       generateTimeout = setTimeout(() => {
         if (getFabState() === 'generating') setFabState('idle');
@@ -573,12 +578,13 @@ function startInterceptObserver() {
       if (getFabState() === 'generating') setFabState('idle');
       // 缓存最近一次完整回复文本，供手动解析复用（不依赖 DOM）
       lastInterceptedText = detail.text || '';
-      // 计算本轮 AI 思考耗时：从请求发出 → 回复完成。
-      // 供 chat-input 的「思考耗时自适应延迟」使用（思考越久，下次等越久）。
+      // 计算本次请求往返耗时：从消息发出 → 回复完成（含 AI 思考 + 生成回复）。
+      // 每轮独立：本次回复耗时只影响下一次发送的延迟，不累加、不继承历史最长。
       if (state.lastRequestStartAt > 0) {
         const thinkMs = Date.now() - state.lastRequestStartAt;
-        state.lastThinkMs = thinkMs;
         state.lastRequestStartAt = 0;
+        state.lastThinkMs = thinkMs;
+
         const ratio = Number(state.thinkRatio) || 0;
         const maxDelay = Number(state.thinkMaxDelay) || 0;
         let adaptive = 0;
@@ -586,7 +592,10 @@ function startInterceptObserver() {
           adaptive = Math.floor(thinkMs * ratio);
           if (maxDelay > 0) adaptive = Math.min(adaptive, maxDelay);
         }
-        console.log('[LingYa] 本轮 AI 思考耗时 ' + thinkMs + 'ms，下次发送自适应延迟 = ' + adaptive + 'ms');
+        const capped = (maxDelay > 0 && Math.floor(thinkMs * ratio) > maxDelay);
+        console.log('[LingYa] 本次请求往返 ' + thinkMs +
+          'ms（含 AI 思考 + 生成回复）× ' + ratio +
+          ' = ' + adaptive + 'ms' + (capped ? '（已达上限 ' + maxDelay + 'ms）' : ''));
       }
       // 保存服务端权威 token 统计（供面板显示）
       if (detail.tokenUsage) {

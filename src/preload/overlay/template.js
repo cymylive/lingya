@@ -88,7 +88,7 @@ const OVERLAY_HTML = [
 '          <span class="lingya-delay-sep">延迟 = 上次思考耗时 ×</span>',
 '          <input id="lingya-think-ratio" type="number" min="0" max="5" step="0.05" value="0.2" class="lingya-delay-input" />',
 '          <span class="lingya-delay-sep">上限</span>',
-'          <input id="lingya-think-max-delay" type="number" min="0" max="600000" step="1000" value="15000" class="lingya-delay-input" />',
+'          <input id="lingya-think-max-delay" type="number" min="0" max="600000" step="1000" value="60000" class="lingya-delay-input" />',
 '          <span class="lingya-delay-sep">ms</span>',
 '          <button id="lingya-btn-save-think" class="lingya-btn-text lingya-delay-save">保存</button>',
 '        </div>',

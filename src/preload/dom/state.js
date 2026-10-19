@@ -13,14 +13,14 @@ module.exports = {
   // ===== AI 思考耗时自适应延迟 =====
   // 思路：AI 思考越久说明负载越重，下一条消息就等越久再发，从根源避开频率风控。
   // 延迟 = max(兜底延迟, min(上次思考耗时 × thinkRatio, thinkMaxDelay))。
-  // 上次思考耗时（毫秒）：从"用户/AI 消息发出"到"AI 回复完成"的时长
+  // 上次思考耗时（毫秒）：本轮所有 AI 回复中最长的一次（不含工具回传后的快速回复）
   lastThinkMs: 0,
   // 上次请求发出时刻（毫秒时间戳）；0 表示无进行中的请求
   lastRequestStartAt: 0,
   // 延迟比例：思考 10 秒 → 等 2 秒 = 0.2
   thinkRatio: 0.2,
   // 延迟上限（毫秒）：防止思考很久时等得过长
-  thinkMaxDelay: 15000,
+  thinkMaxDelay: 60000,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
   // 服务端返回的权威 token 统计（{ accumulatedTokens, insertedAt, updatedAt, modelType }）
