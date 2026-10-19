@@ -91,6 +91,20 @@ const NOT_TITLE = new Set([
  * preferText 传入时优先精确匹配（第一次同步用旧标题）。
  */
 function findPageTitleEl(preferText) {
+  // 缓存优先：标题元素在会话生命周期内位置稳定，只在 React 重渲染时被替换
+  if (state.cachedPageTitleEl &&
+      document.body && typeof document.body.contains === 'function' &&
+      document.body.contains(state.cachedPageTitleEl)) {
+    try {
+      const r = state.cachedPageTitleEl.getBoundingClientRect();
+      // 仍在顶部区域（top 0-60，left >= 150）→ 认为有效
+      if (r.top >= 0 && r.top <= 60 && r.left >= 150) {
+        return state.cachedPageTitleEl;
+      }
+    } catch (_) {}
+    state.cachedPageTitleEl = null;
+  }
+
   const all = document.querySelectorAll('*');
   const cands = [];
   for (const el of all) {
@@ -116,7 +130,9 @@ function findPageTitleEl(preferText) {
   }
   // 否则按「越靠上、字号越大」排序取第一
   cands.sort((a, b) => (a.top - b.top) || (b.fs - a.fs));
-  return cands[0].el;
+  const found = cands[0].el;
+  state.cachedPageTitleEl = found;   // 缓存，下次直接返回
+  return found;
 }
 
 // ---------- 期望状态 & 守护 ----------
@@ -125,6 +141,10 @@ const state = {
   title: null,
   observer: null,
   timer: null,
+  // 标题元素缓存：会话生命周期内位置稳定，避免每次 guardTick 全页面扫描
+  cachedPageTitleEl: null,
+  // 上次 guardTick 执行时刻：流式输出时 DOM 变动极频繁，需要节流
+  lastGuardAt: 0,
 };
 
 function applyDom(sessionId, title, preferOldTitle) {
@@ -160,10 +180,17 @@ function startGuard() {
       if (state.timer) return;
       state.timer = setTimeout(() => {
         state.timer = null;
+        // 节流：流式输出时 DOM 变动极频繁，120ms 防抖后还要保证最少 500ms 间隔，
+        // 否则长对话每次 token 都触发全量 DOM 扫描 → 严重卡顿。
+        const now = Date.now();
+        if (now - state.lastGuardAt < 500) return;
+        state.lastGuardAt = now;
         try { guardTick(); } catch (_) {}
       }, 120);
     });
-    state.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // 只监听 childList：标题变化时 React 是替换文本节点，不会原地改字符。
+    // 之前开了 characterData，流式输出时每个 token 都触发回调 → 长对话严重卡顿。
+    state.observer.observe(document.body, { childList: true, subtree: true });
   } catch (_) { /* ignore */ }
 }
 

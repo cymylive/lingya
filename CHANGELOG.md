@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.85] - 2026-10-19
+
+### Fixed
+- **长对话流式输出卡顿**（严重性能问题）
+  - 现象：对话越长越卡，AI 流式输出时页面明显顿挫
+  - 根因 1：`page-title-sync.js` 的 MutationObserver 开了 `characterData: true`，AI 每吐一个 token 都触发回调
+  - 根因 2：`findPageTitleEl()` 每次用 `querySelectorAll('*')` 遍历整页，对每个叶子节点调 `getBoundingClientRect()` + `getComputedStyle()`（强制同步重排），长对话几万节点 → 每次几十到几百毫秒
+  - 根因 3：`deepseek-history-archiver.js` 的 `applyArchivedState()` 每次做 3 次全量 `querySelectorAll`，250ms 防抖后仍频繁执行
+
+### Changed
+- **`page-title-sync.js` 四项优化**
+  - 去掉 `characterData: true`，只监听 `childList`（标题变化时 React 替换的是节点，不是字符）
+  - `findPageTitleEl()` 加元素缓存：命中且位置校验通过就直接返回，不再全量扫描；位置变了自动失效重扫
+  - `guardTick` 加 500ms 最小间隔节流（原来 120ms 防抖，流式输出时触发太频繁）
+  - 缓存命中时判断 `document.body.contains` 前先检测该方法存在（兼容测试环境的 mock DOM）
+- **`deepseek-history-archiver.js` 两项优化**
+  - `scheduleRefresh()` 加 2 秒最小刷新间隔（流式输出时不再每 250ms 全量扫一次）
+  - `applyArchivedState()` 在没有任何归档记录时提前返回，跳过后续全量扫描
+
+### Notes
+- 全量测试 421/421
+- **升级提醒**：安装 0.6.85 前请先完全退出旧版进程；便携版 `unpackDirName` 为 `LingYa-runtime-0.6.85`
+
 ## [0.6.84] - 2026-10-19
 
 ### Fixed

@@ -348,6 +348,10 @@ function applyArchivedState() {
   document.querySelectorAll('a[' + HIDDEN_ATTR + ']').forEach(a => a.removeAttribute(HIDDEN_ATTR));
   document.querySelectorAll('[' + ROW_ATTR + ']').forEach(el => el.removeAttribute(ROW_ATTR));
 
+  // 没有任何归档 → 清理完残留标记就可以直接返回，跳过后续全量扫描
+  const ids = Object.keys(archived);
+  if (ids.length === 0) return;
+
   // 重新标记已归档的会话
   for (const it of findConversationAnchors()) {
     if (!archived[it.sessionId]) continue;
@@ -540,10 +544,22 @@ function bindEvents() {
 }
 
 // ---------- 刷新调度 ----------
+// 最小刷新间隔：MutationObserver 监听整个 body，流式输出时每个 token 都会触发，
+// 250ms 防抖不够，还要保证至少 2 秒才真正跑一次全量 DOM 扫描。
+let _lastRefreshAt = 0;
+const MIN_REFRESH_INTERVAL = 2000;
+
 function scheduleRefresh() {
   if (_timer) return;
   _timer = setTimeout(() => {
     _timer = null;
+    const now = Date.now();
+    if (now - _lastRefreshAt < MIN_REFRESH_INTERVAL) {
+      // 还没到最小间隔，重新排队等下一次
+      scheduleRefresh();
+      return;
+    }
+    _lastRefreshAt = now;
     try {
       injectStyles();
       applyArchivedState();
