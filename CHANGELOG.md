@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.86] - 2026-10-19
+
+### Changed
+- **补充 `findSidebarTitleEl` 元素缓存**（0.6.85 的第 6 项优化）
+  - `guardTick` 每次调用两次 `findSidebarTitleEl`（侧栏 + 页面标题区）
+  - 原实现每次用 `querySelector('a[href*="..."]')` 全页搜属性选择器，侧栏会话多时明显变慢
+  - 改为 `sessionId → 元素` 缓存，命中且仍在 DOM 里直接返回，O(1)
+
+### Notes
+- 全量测试 421/421
+- 本版累计 6 项性能优化（0.6.85 的 5 项 + 本版 1 项）
+- **升级提醒**：便携版 `unpackDirName` 为 `LingYa-runtime-0.6.86`
+
 ## [0.6.85] - 2026-10-19
 
 ### Fixed
