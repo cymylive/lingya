@@ -91,16 +91,21 @@ const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|�
 function looksLikeUserQuestion(raw) {
   const text = String(raw || '').trim();
   if (!text) return false;
-  // 结尾问号（中英文）
-  if (/[?？]\s*$/.test(text)) return true;
 
-  const tail = text.slice(-400);
+  // 1) 结尾问号（中英文）：只看最后 100 字符，避免正文里出现的问号误判
+  const tailShort = text.slice(-100);
+  if (/[?？]\s*$/.test(tailShort)) return true;
 
-  // 疑问式征询
-  if (/(选哪个|选哪一|要不要我|请你选择|请你确认|请你决定|你希望我|需要我继续|是否要我|是否继续|告诉我你|等你回复|等你确认|等你答复|由你决定|方案\s*[A-D]|[A-D][）).、])/i.test(tail)) return true;
+  // 2) 征询/等待句式：只看最后 150 字符。
+  //    原实现扫 400 字符，AI 在长篇汇报中间提一句「需要我继续」就会误判为在等用户，
+  //    导致 awaitingUserInput 卡住、监督者永久跳过。
+  const tail = text.slice(-150);
 
-  // 祈使式等待（无问号，但明确把决策权交回用户）
-  if (/(说一声|告诉我即可|告诉我一声|你定|你决定|由你拍板|随时说|需要就|需要的话|想要的话|按你说的|等你指示|听你的|你来选|你来定|可以就|确认后|确认一下|回复我|发我)/i.test(tail)) return true;
+  // 疑问式征询（明确把决策权交回用户）
+  if (/(选哪个|选哪一|请你选择|请你确认|请你决定|你希望我|需要我继续吗|是否要我|是否继续|告诉我你|等你回复|等你确认|等你答复|由你决定|方案\s*[A-D])/i.test(tail)) return true;
+
+  // 祈使式等待（无问号，但明确等用户发话）
+  if (/(告诉我即可|告诉我一声|由你拍板|等你指示|听你的|你来选|你来定|回复我|发我|确认后|确认一下|可以就|说一声)/i.test(tail)) return true;
 
   return false;
 }
@@ -359,6 +364,7 @@ async function continueOnInterruptFallback() {
 async function processInterceptedResponse(text, force, interrupted) {
   state.touch(); // 任何 AI 回复到达 = 有活动
   state.awaitingUserInput = false; // 新回复到达 → 说明用户已交互，清除等待标志
+  state.awaitingUserInputAt = 0;
   const raw = (text || '').trim();
   // 用户已点停止：丢弃本次回复，不执行任何工具、不回传结果
   if (state.stopped) {
@@ -479,6 +485,7 @@ async function processInterceptedResponse(text, force, interrupted) {
   //    若是，球在用户那边，本轮不催、不判完成，等用户回答。
   if (looksLikeUserQuestion(raw)) {
     state.awaitingUserInput = true;
+    state.awaitingUserInputAt = Date.now();
     console.log('[LingYa][拦截] 检测到 AI 在向用户提问，暂停自动续跑（等待用户输入）');
     try { markTaskDone(); } catch (_) { /* 显示为待交互 */ }
     return;

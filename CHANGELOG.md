@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.6.84] - 2026-10-19
+
+### Fixed
+- **数据导出报 `Cannot find module 'archiver'`**（严重）
+  - 根因：`src/main/data-management.js` 的导出功能依赖 `archiver`，但它只作为间接依赖存在于 `node_modules`，未在 `package.json` 的 `dependencies` 中声明
+  - electron-builder 打包时只包含 `dependencies` 声明的模块，导致安装版运行时找不到 `archiver`
+  - 修复：`npm install archiver --save`，正式加入 `dependencies`（`^8.0.0`）
+  - 同时确认 `adm-zip`（导入功能依赖）在 `dependencies` 中（`^0.6.1`）
+
+### Notes
+- 全量测试 421/421
+- **升级提醒**：安装 0.6.84 前请先完全退出旧版进程
+
+## [0.6.83] - 2026-10-19
+
+### Added
+- **安装向导新增「选择数据目录」页**（仅安装版，便携版不受影响）
+  - 位于「选择安装目录」之后，默认值 `%APPDATA%\lingya-ai-pro-session`
+  - 可直接输入路径，或点「浏览…」选文件夹
+  - 安装时写入 `<安装目录>\data-location.txt`，主进程启动时读取
+  - 通过 `build/installer.nsh` 的 `customPageAfterChangeDir` 宏实现
+- **侧边栏「数据目录」管理面板**（侧边栏 → 设置 → 数据目录）
+  - 显示当前路径、来源标记（默认/自定义）、体积、文件数
+  - 四个按钮：指定位置 / 恢复默认 / 导出数据 / 导入数据
+  - 配置写入 `%APPDATA%\lingya-ai-pro-session\data-location.json`（固定位置，切走数据目录后仍可读到）
+
+### Fixed
+- **计划监督失效：计划停在 1/5 后不再催促**（严重）
+  - 根因：AI 回复中含「需要我继续」「确认后」等词被 `looksLikeUserQuestion` 误判为「向用户提问」，置 `awaitingUserInput = true` 后监督者永久跳过
+  - 修复 A：`awaitingUserInput` 超过 **3 分钟**视为误判，清除标志并继续监督
+  - 修复 B：`looksLikeUserQuestion` 判定范围从尾部 400 字符收紧到 **150 字符**，关键词精简（长文中提及不再误判）
+  - 修复 C：`fab` 状态卡在 `executing`/`generating` 超过 **5 分钟**时强制复位为 `idle` 并继续监督
+  - 修复 D：`stallCount` 打满上限后不再永久放弃，改为每 **5 分钟**降频催促一次
+  - 附带：计划已完成时同步清除 `awaitingUserInput` 标志
+
+### Changed
+- `state.js` 新增 `awaitingUserInputAt`（记录标志置位时刻）
+- 启动优先级新增：`<安装目录>\data-location.txt`（安装向导选择），位置在侧边栏配置之后、便携判定之前
+
+### Notes
+- 全量测试 421/421
+- `looksLikeUserQuestion` 自测 9/9 通过
+- **升级提醒**：安装 0.6.83 前请先完全退出旧版进程；便携版 `unpackDirName` 为 `LingYa-runtime-0.6.83`
+
 ## [0.6.81] - 2026-10-19
 
 ### Changed

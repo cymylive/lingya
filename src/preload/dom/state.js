@@ -39,6 +39,8 @@ module.exports = {
   // AI 最近一条回复是否在向用户提问/等决策。
   // 为 true 时：球在用户那边，自动续跑/监督者都应暂停催促（催也白催）。
   awaitingUserInput: false,
+  // awaitingUserInput 置位的时刻。监督者用它在「等太久且计划未完成」时判定为误判，强制催。
+  awaitingUserInputAt: 0,
 
   /** 打一次活动点（AI 响应、工具执行、发送消息时调用） */
   touch() { this.lastActivityAt = Date.now(); },

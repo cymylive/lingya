@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.81",
+  "version": "0.6.84",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -110,11 +110,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "lingya-win-v${version}.${ext}"
+      "artifactName": "lingya-win-v${version}.${ext}",
+      "include": "installer.nsh"
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.81"
+      "unpackDirName": "LingYa-runtime-0.6.84"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",
@@ -152,6 +153,8 @@
       "!node_modules/.bin",
       "!dist",
       "!build",
+      "!wyp",
+      "!**/*.log",
       "!**/*.md",
       "!LICENSE",
       "systemPrompt.md",
@@ -164,6 +167,8 @@
     "@larksuiteoapi/node-sdk": "^1.74.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@vscode/ripgrep": "^1.18.0",
+    "adm-zip": "^0.6.1",
+    "archiver": "^7.0.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",

@@ -15,7 +15,7 @@
  *   无计划的会话由 intercept-observer 的无计划兜底负责。
  */
 const state = require('./state');
-const { getFabState, showToast } = require('../overlay/ui');
+const { getFabState, setFabState, showToast } = require('../overlay/ui');
 const { sendMessageToChat } = require('./chat-input');
 
 // 检查间隔（毫秒）
@@ -49,17 +49,48 @@ async function loadConfig() {
 /**
  * 单次检查。命中"任务未完成 + 停滞 + 空闲"时主动催促。
  */
+// fab「忙」状态超过这个时长视为卡死（工具崩了没复位），强制复位继续监督
+const FAB_STUCK_MS = 5 * 60 * 1000;
+// awaitingUserInput 超过这个时长视为误判（AI 只是说了句带「确认」的话），强制催
+const AWAITING_USER_TIMEOUT_MS = 3 * 60 * 1000;
+// stallCount 打满后的降频间隔：不再永久放弃，而是每 5 分钟催一次
+const STALL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
+
 async function checkOnce() {
   if (state.stopped) return;                       // 用户已停止
   if (state.awaitingRefusalRewrite) return;        // 正在等改写回复
-  if (state.awaitingUserInput) return;             // AI 在等用户回答，不该催
+
+  const now = Date.now();
+
+  // === C) fab 卡死自愈 ===
   const fab = getFabState();
-  if (fab === 'executing' || fab === 'generating') return; // 正在忙
+  if (fab === 'executing' || fab === 'generating') {
+    const idleMs = now - (state.lastActivityAt || 0);
+    if (idleMs > FAB_STUCK_MS) {
+      console.log('[LingYa][监督] fab 状态 ' + fab + ' 已卡 ' + Math.round(idleMs / 1000) +
+        's，强制复位为 idle 继续监督');
+      try { setFabState('idle'); } catch (_) { /* ignore */ }
+      // 继续往下检查，不 return
+    } else {
+      return; // 正常忙，跳过
+    }
+  }
+
+  // === A) awaitingUserInput 超时 ===
+  if (state.awaitingUserInput) {
+    const waited = now - (state.awaitingUserInputAt || 0);
+    if (waited < AWAITING_USER_TIMEOUT_MS) return;
+    console.log('[LingYa][监督] awaitingUserInput 已 ' + Math.round(waited / 1000) +
+      's，视为误判，清除标志并继续监督');
+    // 清掉标志，否则下次检查又要白等 3 分钟
+    state.awaitingUserInput = false;
+    state.awaitingUserInputAt = 0;
+    // 不 return，继续往下；如果计划真完成了会查 todo 判断
+  }
 
   const { enabled, stallMs, max } = await loadConfig();
   if (!enabled) return;
 
-  const now = Date.now();
   const idleMs = now - (state.lastActivityAt || 0);
   if (idleMs < stallMs) return; // 还没停滞
 
@@ -68,15 +99,32 @@ async function checkOnce() {
   try { res = await window.electronAPI.getTodos(); } catch (_) { return; }
   const todos = (res && res.success && Array.isArray(res.todos)) ? res.todos : [];
   const unfinished = todos.filter((t) => t && t.status !== 'completed');
-  if (unfinished.length === 0) { stallCount = 0; return; }
+  if (unfinished.length === 0) {
+    stallCount = 0;
+    // 计划已完成：清掉等待标志（AI 说的"待确认"其实已经做完了）
+    if (state.awaitingUserInput) {
+      state.awaitingUserInput = false;
+      state.awaitingUserInputAt = 0;
+    }
+    return;
+  }
 
   // 停滞计数（时间窗口内累加，超窗口重置）
   if (now - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
-  lastStallAt = now;
+
+  // === D) 打满后降频，不永久放弃 ===
+  // 原实现打满后直接 return，本次会话再也不会催；改为每 STALL_RETRY_INTERVAL_MS 催一次。
   if (stallCount >= max) {
-    console.log('[LingYa][监督] 已达停滞催促上限 ' + max + '，停止');
-    return;
+    if (now - lastStallAt < STALL_RETRY_INTERVAL_MS) {
+      console.log('[LingYa][监督] 已达上限 ' + max + ' 次，降频等待 ' +
+        Math.round((STALL_RETRY_INTERVAL_MS - (now - lastStallAt)) / 1000) + 's');
+      return;
+    }
+    console.log('[LingYa][监督] 已超过 ' + Math.round(STALL_RETRY_INTERVAL_MS / 60000) +
+      ' 分钟未响应，重置计数继续催');
+    stallCount = 0;
   }
+  lastStallAt = now;
   stallCount++;
 
   const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];

@@ -35,6 +35,12 @@ const api = {
   newChat: () => ipcRenderer.invoke('shell-new-chat'),
   runAction: (action) => ipcRenderer.invoke('shell-run-action', { action }),
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
+  // 数据目录管理（指定位置 / 导入 / 导出）
+  dataMgmtInfo: () => ipcRenderer.invoke('data-mgmt-info'),
+  dataMgmtChooseDir: () => ipcRenderer.invoke('data-mgmt-choose-dir'),
+  dataMgmtSetDir: (dir) => ipcRenderer.invoke('data-mgmt-set-dir', { dir }),
+  dataMgmtExport: () => ipcRenderer.invoke('data-mgmt-export'),
+  dataMgmtImport: () => ipcRenderer.invoke('data-mgmt-import'),
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },

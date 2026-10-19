@@ -20,6 +20,88 @@ const path = require('path');
 
 const PORTABLE_DATA_DIRNAME = 'LingYa-Data';
 const PORTABLE_MARKERS = ['portable.txt', 'LingYa-Portable.txt'];
+// 自定义数据目录配置文件（固定放在 appData/<sessionDir>/ 下，永不随数据目录变化）
+const LOCATION_CONFIG_FILENAME = 'data-location.json';
+
+/**
+ * 读取自定义数据目录配置。
+ * 配置文件固定放在 appData/<sessionDir>/data-location.json，
+ * 即使数据目录已经切走，下次启动仍能从这个固定位置找到配置。
+ * @param {string} appDataPath
+ * @param {string} sessionDir
+ * @param {object} fs
+ * @returns {string|null} 绝对路径，无配置或读取失败返回 null
+ */
+function readCustomDataDir(appDataPath, sessionDir, fs) {
+  try {
+    const p = path.join(appDataPath, sessionDir, LOCATION_CONFIG_FILENAME);
+    if (!fs.existsSync(p)) return null;
+    const raw = fs.readFileSync(p, 'utf8');
+    const obj = JSON.parse(raw);
+    const dir = (obj && typeof obj.customDataDir === 'string') ? obj.customDataDir.trim() : '';
+    if (!dir) return null;
+    return path.resolve(dir);
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 读取安装向导写入的数据目录。
+ * 安装时 NSIS 会把用户选择的数据目录写入 <安装目录>\data-location.txt，
+ * 优先级低于运行时的 data-location.json（侧边栏设置），高于便携判定与默认路径。
+ * @param {string} execPath process.execPath
+ * @param {object} fs
+ * @returns {string|null}
+ */
+function readInstallerDataDir(execPath, fs) {
+  try {
+    const exeDir = path.dirname(execPath);
+    const p = path.join(exeDir, 'data-location.txt');
+    if (!fs.existsSync(p)) return null;
+    const raw = fs.readFileSync(p, 'utf8').trim();
+    if (!raw) return null;
+    return path.resolve(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 检查目录是否可写（创建临时文件再删除）。
+ * @param {string} dir
+ * @param {object} fs
+ * @returns {boolean}
+ */
+function isDirWritable(dir, fs) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, '.lingya-write-probe-' + Date.now());
+    fs.writeFileSync(probe, 'ok', 'utf8');
+    fs.unlinkSync(probe);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * 写入自定义数据目录配置。
+ * @param {string} appDataPath
+ * @param {string} sessionDir
+ * @param {string|null} customDir null 表示清除（恢复默认）
+ * @param {object} fs
+ */
+function writeCustomDataDir(appDataPath, sessionDir, customDir, fs) {
+  const dir = path.join(appDataPath, sessionDir);
+  fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, LOCATION_CONFIG_FILENAME);
+  if (!customDir) {
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+    return;
+  }
+  fs.writeFileSync(p, JSON.stringify({ customDataDir: String(customDir).trim() }, null, 2) + '\n', 'utf8');
+}
 
 /** 解析便携数据目录；非便携返回 null */
 function resolvePortableDataDir(execPath, env, fs) {
@@ -79,6 +161,30 @@ function resolveDataDir(options) {
   const explicit = (env.LINGYA_USER_DATA_DIR || '').trim();
   if (explicit) {
     return { dir: path.resolve(explicit), portable: false, legacyDir, migrated: false };
+  }
+
+  // 配置文件自定义目录（侧边栏设置写入，优先级高于便携判定）
+  const customDir = readCustomDataDir(appDataPath, sessionDir, fs);
+  if (customDir) {
+    try { fs.mkdirSync(customDir, { recursive: true }); } catch (_) { /* 创建失败则忽略 */ }
+    return { dir: customDir, portable: false, legacyDir, migrated: false, custom: true };
+  }
+
+  // 安装向导选择的数据目录（<安装目录>\data-location.txt）
+  // 若目录不可写（如装到 C:\Program Files 且无管理员权限），回退默认并标记原因。
+  const installerDir = readInstallerDataDir(execPath, fs);
+  if (installerDir) {
+    if (isDirWritable(installerDir, fs)) {
+      return { dir: installerDir, portable: false, legacyDir, migrated: false, fromInstaller: true };
+    }
+    return {
+      dir: legacyDir,
+      portable: false,
+      legacyDir,
+      migrated: false,
+      installerFallback: true,
+      installerDir,
+    };
   }
 
   const portableDir = resolvePortableDataDir(execPath, env, fs);
@@ -153,6 +259,11 @@ function cleanStaleInstances(baseDir, maxAgeMs, fsArg) {
 module.exports = {
   PORTABLE_DATA_DIRNAME,
   PORTABLE_MARKERS,
+  LOCATION_CONFIG_FILENAME,
+  readCustomDataDir,
+  writeCustomDataDir,
+  readInstallerDataDir,
+  isDirWritable,
   resolvePortableDataDir,
   copyDirRecursive,
   isEmptyDir,

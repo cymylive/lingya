@@ -74,6 +74,13 @@ if (_shouldQuit) {
 if (dataDirInfo.migrated) {
   console.log('[LingYa] 已将旧数据从 ' + dataDirInfo.legacyDir + ' 迁移到便携目录');
 }
+if (dataDirInfo.fromInstaller) {
+  console.log('[LingYa] 数据目录来自安装向导选择: ' + dataDirInfo.dir);
+}
+if (dataDirInfo.installerFallback) {
+  console.warn('[LingYa] 安装向导指定的数据目录不可写（' + dataDirInfo.installerDir + '），已回退到默认目录');
+  console.warn('[LingYa] 如需使用该目录，请以管理员身份运行，或在侧边栏设置里重新指定数据目录');
+}
 
 // 启动时清理过期的自动隔离实例目录（>7 天），避免 instances/auto-* 无限累积
 try {
@@ -1001,6 +1008,22 @@ ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {})
     return { success: true };
   } catch (err) { return { success: false, error: err.message }; }
 });
+
+// ========== 数据目录管理（指定位置 / 导入 / 导出）==========
+// 注意：自定义数据目录配置写在 appData/<sessionDir>/data-location.json（固定位置），
+// 下次启动由 data-dir.js 的 readCustomDataDir 读取，因此改完必须重启才生效。
+try {
+  require('./data-management').register({
+    ipcMain: ipcMainForProfile,
+    dataDir: EFFECTIVE_USER_DATA_DIR,
+    appDataPath: app.getPath('appData'),
+    sessionDir: SESSION_DIR,
+    fs,
+  });
+  console.log('[LingYa] 数据管理 IPC 已注册（当前数据目录: ' + EFFECTIVE_USER_DATA_DIR + '）');
+} catch (err) {
+  console.error('[LingYa] 数据管理 IPC 注册失败:', err.message);
+}
 
 // 侧边栏 → AI 视图：读偏好（返回 Promise，主进程转发后由 AI 视图回填）
 // 简化：不实现读回，侧边栏用固定默认值展示
