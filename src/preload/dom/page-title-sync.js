@@ -68,12 +68,25 @@ function sessionIdFromUrl(url) {
 /** 侧边栏里该会话的标题节点（a[href] 内的叶子 div） */
 function findSidebarTitleEl(sessionId) {
   if (!sessionId) return null;
+
+  // 缓存命中：元素还在 DOM 里且 href 仍匹配该 sessionId → 直接用
+  const cached = state.cachedSidebarEls[sessionId];
+  if (cached && document.body &&
+      typeof document.body.contains === 'function' &&
+      document.body.contains(cached)) {
+    return cached;
+  }
+  if (cached) delete state.cachedSidebarEls[sessionId];
+
   const a = document.querySelector('a[href*="/a/chat/s/' + sessionId + '"]')
     || document.querySelector('a[href*="/s/' + sessionId + '"]');
   if (!a) return null;
   const divs = a.querySelectorAll('div');
   for (const d of divs) {
-    if (d.children.length === 0 && (d.textContent || '').trim()) return d;
+    if (d.children.length === 0 && (d.textContent || '').trim()) {
+      state.cachedSidebarEls[sessionId] = d;   // 缓存
+      return d;
+    }
   }
   return null;
 }
@@ -145,6 +158,8 @@ const state = {
   cachedPageTitleEl: null,
   // 上次 guardTick 执行时刻：流式输出时 DOM 变动极频繁，需要节流
   lastGuardAt: 0,
+  // 侧栏标题元素缓存：sessionId → 元素。querySelector 属性匹配在会话多时较慢
+  cachedSidebarEls: Object.create(null),
 };
 
 function applyDom(sessionId, title, preferOldTitle) {
