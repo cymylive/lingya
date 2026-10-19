@@ -1,44 +1,53 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.89] - 2026-10-20
 
 ### Added
+
+- **容错架构：状态机 + 超时 + 幂等 + DOM 兜底**（6 个新模块）
+  - `task-state.js`：5 状态机（IDLE/SENT/AWAITING/RESPONDED/EXECUTING）+ localStorage 持久化
+    - 停滞阈值：SENT 30s / RESPONDED 30s / AWAITING 120s / EXECUTING 720s（IDLE 不设阈值）
+    - 页面刷新 / 渲染进程崩溃重载后能恢复「上次停在哪」
+  - `timeout.js`：Promise 超时包装，防 IPC 永久挂起
+  - `idempotency.js`：工具调用幂等键（TTL 1h，只缓存成功结果，键含 projectDir 防跨项目串数据）
+  - `dom-fallback.js`：绕过网络 hook 的 DOM 二次信号，AWAITING 停滞时补处理
+  - `global-guard.js`：主进程 uncaughtException / unhandledRejection / child-process-gone 捕获 + 落盘 + 通知 UI
+  - `with-timeout.js`：主进程侧工具超时（按工具分类，bash 60s / mcp_call 180s / 兜底 300s）
+
 - **内置 Superpowers 开发方法论**（obra/superpowers v7.0.0，MIT）
   - 位置：`src/prompt/superpowers/`，随 systemPrompt 注入，任何项目都生效
   - 12 个方法论 skill：brainstorming / systematic-debugging / test-driven-development / writing-plans / executing-plans / verification-before-completion / requesting-code-review / receiving-code-review / finishing-a-development-branch / using-git-worktrees / writing-skills / diagnosing-superpowers
-  - `router.md` 强制路由：建功能先 brainstorm、修 bug 先 systematic-debugging，未读 skill 不得回话
-  - 跳过 2 个依赖 subagent 的 skill（dispatching-parallel-agents / subagent-driven-development）——LingYa 无子 agent
-  - **bash 脚本重写为 Node 版** `sp-tools.js`：原 5 个脚本依赖 bash+awk+sed，Windows 无 Git Bash 时不可用；重写后只需 node，且支持非 git 仓库降级
-  - 所有 `superpowers:xxx` 前缀引用（39 处）改为本地 skill 名，跨 harness 概念（Skill tool / subagent dispatch / SessionStart hook）已适配说明
+  - `router.md` 强制路由 + **L0-L3 任务分诊**：微改/小任务/标准功能/架构级，判断不清时往高一级走
+    - 强制输出【策略】【理由】【流程】【跳过】四行声明，让用户能立刻叫停
+    - 支持动态升级/降级
+  - 跳过 2 个依赖 subagent 的 skill——LingYa 无子 agent
+  - **bash 脚本重写为 Node 版** `sp-tools.js`：Windows 无 Git Bash 时原脚本不可用，重写后只需 node
+  - 39 处 `superpowers:xxx` 前缀引用改为本地 skill 名
+
+- **NSIS 安装版升级不再删除用户数据**（`build/installer.nsh`）
+  - 根因：0.6.88 把数据目录改到 `<安装目录>\\LingYa-Data`，而卸载逻辑是 `RMDir /r $INSTDIR`
+  - 关键洞察：升级跑的是【旧版本】的卸载器，新包里的 `customRemoveFiles` 对跨版本升级无效
+  - 方案：`customInit`（必须在 `initMultiUser` 之后）备份到 %TEMP% → `customInstall` 还原
+  - 不能用 `preInit`——那时 $INSTDIR 还没赋值
 
 ### Fixed
-- **状态机恢复路径接上**（`restore()` 从未被调用）
-  - 根因：`task-state.js` 往 localStorage 写状态，但没有任何地方调用 `restore()` 读回来
-  - 后果：页面刷新 / 渲染进程崩溃自动重载后状态机归零回 IDLE，「崩溃可恢复」设计完全失效
-  - 修复：`startInterceptObserver()` 开头调用 `restore()`
-- **幂等缓存跨项目串数据**
-  - 根因：幂等键只有「工具名 + 参数」，不含项目目录
-  - 后果：A 项目 `read a.js` 缓存后，切到 B 项目再读同名文件会命中 A 的内容
-  - 修复：`makeKey/lookup/record` 增加 `projectDir` 参数，由 `tool-executor` 传入 `state.currentProjectDir`
-- **幂等白名单误含写操作**（`todo_write` / `memory_save` / `memory_update`）
-  - 后果：AI 调这些工具时命中缓存 → 返回假 success → 计划/记忆实际没更新，AI 却以为更新了
-  - 修复：白名单只保留纯读工具
-- **工具集去重：5 对重复工具不再注册**
-  - 停止注册 `file_write` / `file_read` / `file_edit` / `file_glob` / `file_grep`（类文件保留供历史测试）
-  - `JsRunner` 的 `readFile/writeFile/editFile` 旧别名改映射到新工具名，保持向后兼容
-  - 注册工具数 33 → 28，AI 看到的工具描述减半
-- **`tool-names.js` 漏了 `file_delete`**
-  - 后果：AI 用 JSON 格式调 `file_delete` 会被误判「工具不存在」
-  - 修复：补进 `STATIC_TOOL_NAMES`，同时清掉已废弃的旧工具名
-- **Superpowers skill 正文的 subagent 表述与 router 矛盾**
-  - `executing-plans` / `requesting-code-review` 里仍写「dispatch a subagent」
-  - 修复：改为「自己做一遍」，并说明「自我审查弱于独立审查」
 
-- **本地打包不再跑旧代码**（`unpackDirName` 硬编码残留）
-  - 根因：`build.portable.unpackDirName` 写死为 `LingYa-runtime-0.6.88`，只有 CI 发版时 `scripts/sync-version.js` 会同步它；本地 `npm run build:*:local` 完全不过这个脚本，升版本后本地打的包仍复用 `%TEMP%\LingYa-runtime-0.6.88` 旧解压目录，启动跑的是旧代码
-  - 修复：`sync-version.js` 新增本地模式（无 `GITHUB_REF_NAME` 时取 `package.json` 自身版本，只同步派生字段、不覆盖 version）
-  - 给 `build:local` / `build:win:local` / `build:win:portable:local` 挂 `pre` 钩子自动调用
-  - 说明：`unpackDirName` 不能用 `${version}` 宏——electron-builder 不展开宏，会变成字面量导致所有版本共用一个目录，问题更严重
+- **状态机恢复路径接上**：`restore()` 写了但从未被调用，持久化等于白写
+- **幂等缓存跨项目串数据**：键增加 `projectDir`
+- **幂等白名单误含写操作**：`todo_write`/`memory_save`/`memory_update` 命中缓存返回假 success
+- **工具集去重**：5 对重复工具不再注册，33 → 28
+- **`tool-names.js` 漏了 `file_delete`**：AI 调用会被误判「工具不存在」
+- **Superpowers skill 正文的 subagent 表述与 router 矛盾**
+- **中断时工具块不执行**：`if (interrupted)` 排在工具提取之前
+- **队列异常被吞掉**：改为回传 AI 让其重试
+- **`state.stopped` 被自动续跑误清**：新增 `opts.auto` 标记
+- **本地打包不再跑旧代码**：`sync-version.js` 支持本地模式 + prebuild 钩子
+
+### Notes
+
+- 全量测试 428/428 通过
+- 便携版 unpackDirName 为 LingYa-runtime-0.6.89
+- **升级提醒**：本次改动量大，建议完全退出旧版进程后再安装
 
 ## [0.6.88] - 2026-10-19
 
