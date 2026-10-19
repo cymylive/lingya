@@ -6,6 +6,25 @@ const { app, BrowserWindow, Menu, dialog, WebContentsView, ipcMain } = require('
 const path = require('path');
 const fs = require('fs');
 
+// ========== 全局异常保护（必须尽早安装）==========
+// 在主进程加载任何业务模块前装好，才能捕获模块初始化阶段的异常。
+// 详见 global-guard.js 的说明：不阻止崩溃，但保证崩溃可见、状态可恢复。
+const globalGuard = require('./global-guard');
+globalGuard.install({
+  onError: (info) => {
+    // 通知所有窗口：主进程出过问题，UI 可显示提示
+    try {
+      const { getAllContexts } = require('./window');
+      for (const ctx of getAllContexts()) {
+        const wc = ctx.rawWin && ctx.rawWin.webContents;
+        if (wc && !wc.isDestroyed()) {
+          wc.send('lingya-main-error', info);
+        }
+      }
+    } catch (_) { /* window 模块可能尚未初始化 */ }
+  },
+});
+
 const windowState = require('./window');
 const profileManager = require('./profile-manager');
 const { createSessionStore } = require('./session-store');

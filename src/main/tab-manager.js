@@ -59,6 +59,50 @@ function createTab(ctx, opts) {
     view.webContents.on('will-prevent-unload', (e) => e.preventDefault());
   } catch (_) {}
 
+  // ===== 渲染进程崩溃 / 无响应监听 =====
+  // 页面进程崩溃（OOM、原生模块段错误、Chrome 内部错误）时，默认表现是标签变白，
+  // 用户不知道发生了什么，preload 里的工具执行链也随之消失（任务静默死亡）。
+  // 这里做两件事：记录原因 + 自动重载（配合 preload 的状态机持久化，能接着跑）。
+  try {
+    view.webContents.on('render-process-gone', (_e, details) => {
+      const reason = (details && details.reason) || 'unknown';
+      const code = (details && details.exitCode) != null ? details.exitCode : '?';
+      console.error('[LingYa Tab] 渲染进程崩溃: reason=' + reason + ' exitCode=' + code +
+        ' tab=' + tabId + ' url=' + (tab.url || ''));
+      try {
+        require('./global-guard').record('render-process-gone',
+          new Error('tab=' + tabId + ' reason=' + reason + ' exitCode=' + code + ' url=' + (tab.url || '')),
+          false);
+      } catch (_) {}
+      // 用户主动关闭 / 标签已不存在：不重载
+      if (reason === 'clean-exit' || !tabs.has(tabId)) return;
+      // 延迟 800ms 重载，避免崩溃后立刻重载又被同样的页面内容搞崩（崩溃循环）
+      setTimeout(() => {
+        try {
+          if (!tabs.has(tabId) || view.webContents.isDestroyed()) return;
+          console.log('[LingYa Tab] 自动重载崩溃标签: ' + tabId);
+          view.webContents.reload();
+        } catch (e) {
+          console.error('[LingYa Tab] 自动重载失败:', e && e.message);
+        }
+      }, 800);
+    });
+  } catch (_) { /* 旧版本 Electron 可能不支持该事件 */ }
+
+  // 无响应（页面卡死但未崩溃）：只记录，不强制重载（用户可能只是页面在跑重活）
+  try {
+    view.webContents.on('unresponsive', () => {
+      console.warn('[LingYa Tab] 页面无响应: tab=' + tabId + ' url=' + (tab.url || ''));
+      try {
+        require('./global-guard').record('unresponsive',
+          new Error('tab=' + tabId + ' url=' + (tab.url || '')), false);
+      } catch (_) {}
+    });
+    view.webContents.on('responsive', () => {
+      console.log('[LingYa Tab] 页面已恢复响应: tab=' + tabId);
+    });
+  } catch (_) {}
+
   // 标题跟随网页 title（主标签除外：主标签用 LingYa 对话名，由 session-store 驱动）
   view.webContents.on('page-title-updated', (_e, title) => {
     try {

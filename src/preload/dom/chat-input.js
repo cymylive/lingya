@@ -6,6 +6,7 @@ const { ipcRenderer } = require('electron');
 const state = require('./state');
 const { BT } = require('./js-detector');
 const { getProviderByUrl } = require('../../../src/providers');
+const taskState = require('./task-state');
 
 /**
  * 根据当前 URL 获取 provider
@@ -138,10 +139,19 @@ function onUserMessageSent(cb) {
   return () => { if (onUserMessageSentCb === cb) onUserMessageSentCb = null; };
 }
 
-async function sendToChat(msg, tag, fixedDelay, afterSent) {
+async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
   state.touch(); // 发消息 = 有活动
-  // 用户主动发消息：清除「已停止」状态，恢复正常自动执行
-  if (state.stopped) {
+  const isAuto = !!(opts && opts.auto);
+  // 【重要】自动续跑（监督者/计划续跑/兜底续跑/中断续跑等）绝不能清除 stopped ——
+  // 否则用户点了停止后，程序自己发的催促消息会把 stopped 清掉，任务原地复活。
+  // 这类消息在 stopped 状态下应当直接丢弃。
+  if (isAuto) {
+    if (state.stopped) {
+      console.log('[LingYa] 已停止，丢弃自动续跑消息（' + (tag || '') + '）');
+      return false;
+    }
+  } else if (state.stopped) {
+    // 用户主动发消息：清除「已停止」状态，恢复正常自动执行
     state.stopped = false;
     try { window.electronAPI.clearAbort(); } catch (_) {}
     try {
@@ -200,6 +210,14 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
     triggerSend(input);
     // 记录本次请求发出时刻，供 intercept-observer 计算思考耗时
     state.lastRequestStartAt = Date.now();
+    // 状态机：已发出，等 AI 开始生成（intercept-observer 收到 lingya-ai-start 后会切 AWAITING）
+    // 若 30s 内仍未切走，监督者会判定「消息可能没发出去」并重试
+    try {
+      taskState.transition(taskState.STATES.SENT, {
+        lastSentTag: String(tag || ''),
+        round: taskState.snapshot().round + 1,
+      });
+    } catch (_) { /* 状态机异常不影响发送 */ }
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();
@@ -209,8 +227,8 @@ async function sendToChat(msg, tag, fixedDelay, afterSent) {
 /**
  * 将消息填入 DeepSeek 聊天输入框并触发发送（工具结果回传的公共实现）
  */
-function sendMessageToChat(msg, tag) {
-  return sendToChat(msg, tag);
+function sendMessageToChat(msg, tag, opts) {
+  return sendToChat(msg, tag, undefined, undefined, opts);
 }
 /**
  * 将 JSON 工具执行结果发送回 DeepSeek 聊天，让 AI 看到结果并继续工作
@@ -233,7 +251,7 @@ function sendToolResultToChat(toolCall, result) {
   }
 
   console.log('[LingYa] 回传工具结果, 消息长度=' + msg.length);
-  sendMessageToChat(msg, '工具=' + toolCall.toolName);
+  sendMessageToChat(msg, '工具=' + toolCall.toolName, { auto: true });
 }
 /**
  * 将 JS 工具脚本执行结果发送回 DeepSeek 聊天，让 AI 看到结果并继续工作
@@ -277,7 +295,7 @@ function sendCombinedJsResultsToChat(results) {
   console.log('[LingYa] 回传 JS 汇总执行结果, 消息长度=' + msg.length + ', 图片=' + allImages.length);
   // 先填文本（sendToChat 内部会 selectAll+delete 清空输入框），再注入图片附件；
   // 文本发送有 2-4s 延迟，注入的附件会在发送前附着。
-  sendMessageToChat(msg, 'JS汇总');
+  sendMessageToChat(msg, 'JS汇总', { auto: true });
   if (allImages.length > 0) {
     injectImagesToInput(allImages);
   }

@@ -26,18 +26,17 @@ function getIpcRenderer() {
   }
 }
 
+// 兜底工具名清单（主进程 tool-list-names 不可用时使用）。
+// 只列实际注册的工具：旧版 file_write / file_read / file_edit / file_glob / file_grep
+// 已不再注册进 registry，列在这里会让 AI 误以为可用。
 const STATIC_TOOL_NAMES = [
-  'file_write',
   'write',
-  'file_read',
   'read',
   'read_lines',
-  'file_edit',
   'edit',
-  'file_glob',
   'glob',
-  'file_grep',
   'grep',
+  'file_delete',
   'todo_write',
   'bash',
   'bash_background',

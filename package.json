@@ -16,9 +16,12 @@
     "build:win:portable": "electron-builder --win --config.win.target=portable --publish always",
     "build:mac": "electron-builder --mac --publish always",
     "build:mac:dmg": "electron-builder --mac --config.mac.target=dmg --publish always",
+    "prebuild:local": "node scripts/sync-version.js",
     "build:local": "electron-builder --publish never",
+    "prebuild:win:local": "node scripts/sync-version.js",
     "build:win:local": "electron-builder --win --publish never",
     "build:win:nsis:local": "electron-builder --win --config.win.target=nsis --publish never",
+    "prebuild:win:portable:local": "node scripts/sync-version.js",
     "build:win:portable:local": "electron-builder --win --config.win.target=portable --publish never",
     "prep:portable": "scripts\\apply-portable-patch.bat",
     "build:mac:local": "electron-builder --mac --publish never",
@@ -108,6 +111,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "artifactName": "lingya-win-v${version}.${ext}"
@@ -158,7 +162,8 @@
       "!LICENSE",
       "systemPrompt.md",
       "tools/rules.md",
-      "src/prompt/*.md"
+      "src/prompt/*.md",
+      "src/prompt/superpowers/**/*"
     ]
   },
   "dependencies": {

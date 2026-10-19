@@ -11,6 +11,7 @@ const { setFabState, getFabState, setStopped, markTaskDone } = require('../overl
 const { hasTool, toolNamesList } = require('../tool-names');
 const { detectRefusal } = require('./refusal-detector');
 const state = require('./state');
+const taskState = require('./task-state');
 
 const MAX_JS_RETRY = 3;
 // 连续 XML 提示次数（防止无限循环）
@@ -21,6 +22,15 @@ let lastProcessedText = '';
 // 最近一次拦截到的完整回复文本（供手动解析复用，不依赖 DOM）
 let lastInterceptedText = '';
 
+// 处理链异常兜底：processInterceptedResponse 执行中抛异常（工具/JS 执行崩溃等）时，
+// 原实现只打一行日志就吞掉 —— 不回传、不重试、不催促，用户看到的是「AI 说完就没下文」。
+// 现在改为把错误回传给 AI 让其重试。独立计数 + 时间窗口，防止异常本身导致死循环。
+// 注：声明必须放在 enqueueProcessing 之前（函数体内引用这些变量）。
+let queueErrorContinueCount = 0;
+let lastQueueErrorContinueAt = 0;
+const QUEUE_ERROR_WINDOW_MS = 180000;
+const QUEUE_ERROR_MAX = 3;
+
 // 串行化处理队列：processInterceptedResponse 可能因工具/JS 脚本执行耗时数十秒，
 // 期间若又有 lingya-ai-response 事件到达（用户手动发消息、页面重试等），
 // 事件监听器不会等待前一个 async 完成 → 并发重入，导致状态错乱、回复丢失。
@@ -29,6 +39,35 @@ let processingChain = Promise.resolve();
 function enqueueProcessing(taskFn) {
   processingChain = processingChain.then(taskFn).catch((err) => {
     console.error('[LingYa][拦截] 队列处理出错:', err);
+    // 异常不能让任务静默死掉：把错误回传给 AI，让它知道发生了什么并重试。
+    // 注意：本 catch 内部必须再包 try/catch —— 若异常本身就来自 sendMessageToChat，
+    // 直接调用会再次抛出，导致「异常 → 发送 → 再异常」的死循环。
+    try {
+      if (state.stopped) return;               // 用户已停止，不打扰
+      if (state.awaitingRefusalRewrite) return; // 正在等改写回复，别插话
+
+      const now = Date.now();
+      if (now - lastQueueErrorContinueAt > QUEUE_ERROR_WINDOW_MS) queueErrorContinueCount = 0;
+      lastQueueErrorContinueAt = now;
+      if (queueErrorContinueCount >= QUEUE_ERROR_MAX) {
+        console.log('[LingYa][拦截] 队列异常已连续 ' + queueErrorContinueCount + ' 次（上限 ' + QUEUE_ERROR_MAX + '），停止自动重试');
+        return;
+      }
+      queueErrorContinueCount++;
+
+      const detail = (err && err.message) ? String(err.message).slice(0, 500) : String(err || '未知错误');
+      console.log('[LingYa][拦截] 队列异常第 ' + queueErrorContinueCount + ' 次，回传错误并催 AI 重试');
+      sendMessageToChat(
+        '【系统提示】上一步的自动化处理执行时发生内部异常，任务可能没有完成。\n' +
+        '错误信息：' + detail + '\n\n' +
+        '请判断当前进度：若任务尚未完成，请立即重新调用工具继续（可先检查上一步是否已生效，避免重复执行）；' +
+        '若任务确已完成，请用一句话明确说明"任务已完成"。',
+        '队列异常重试',
+        { auto: true }
+      );
+    } catch (innerErr) {
+      console.error('[LingYa][拦截] 异常兜底本身失败（已忽略，防死循环）:', innerErr && innerErr.message);
+    }
   });
   return processingChain;
 }
@@ -76,6 +115,7 @@ let interruptContinueCount = 0;
 let lastInterruptContinueAt = 0;
 const INTERRUPT_CONTINUE_WINDOW_MS = 180000;
 const INTERRUPT_CONTINUE_MAX_DEFAULT = 5;
+
 // AI 明确表示任务已完成时，不再兜底催促（避免催到死）
 const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|所有步骤(已)?完成|没有(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
 
@@ -176,7 +216,7 @@ async function handleInterruptedIfNeeded(raw) {
     '上一条回复在生成中被中断（未正常结束）。请从中断处继续完成，不要重复已输出的内容；若上次内容已完成，请继续下一步。';
 
   console.log('[LingYa][拦截] 检测到生成中断（第 ' + autoContinueCount + ' 次），自动发送继续指令');
-  sendMessageToChat(text, '自动续写');
+  sendMessageToChat(text, '自动续写', { auto: true });
   return true;
 }
 
@@ -249,7 +289,7 @@ async function handleRefusalIfNeeded(raw) {
   }
 
   console.log('[LingYa][拦截] 回传继续执行消息，长度=' + msg.length);
-  sendMessageToChat(msg, '拒绝拦截');
+  sendMessageToChat(msg, '拒绝拦截', { auto: true });
   return true;
 }
 
@@ -290,7 +330,8 @@ async function continueIfPlanUnfinished(raw) {
     sendMessageToChat(
       '【自动续跑】任务计划尚未完成，还剩 ' + unfinished.length + ' 项未做完。当前应继续：' + next.content +
       '。请立刻调用工具推进（不要只描述计划、不要停下来等用户确认），完成后用 todoWrite 更新状态，再继续下一项。',
-      '计划续跑'
+      '计划续跑',
+      { auto: true }
     );
     return true;
   }
@@ -322,7 +363,8 @@ async function continueIfPlanUnfinished(raw) {
   sendMessageToChat(
     '【自动续跑】上一步操作后你停下了。若任务尚未完成，请立即调用工具继续执行下一步（不要只描述计划、不要停下来等用户确认）；' +
     '若任务确已完成，请用一句话明确说明"任务已完成"，不要调用工具。',
-    '兜底续跑'
+    '兜底续跑',
+    { auto: true }
   );
   return true;
 }
@@ -351,7 +393,8 @@ async function continueOnInterruptFallback() {
   sendMessageToChat(
     '【自动续跑】上一条回复被服务端中断（已停止），任务尚未完成。请立即从中断处继续执行下一步（不要重复已完成的步骤、不要只描述计划），' +
     '完成后用 todoWrite 更新状态。若任务确已完成，请用一句话明确说明"任务已完成"。',
-    '中断续跑'
+    '中断续跑',
+    { auto: true }
   );
   return true;
 }
@@ -371,12 +414,41 @@ async function processInterceptedResponse(text, force, interrupted) {
     console.log('[LingYa][拦截] 已停止，丢弃本次回复');
     return;
   }
-  // 中断（服务端已停止/流断开）优先处理：即使 raw 为空也要走兜底续跑，
+  // 统一去重（同一文本只处理一次，除非 force）
+  if (raw && !force && raw === lastProcessedText) return;
+  if (raw) lastProcessedText = raw;
+
+  // 优先提取并执行 JS 工具代码块：即使流被中断（服务端已停止/流断开），
+  // 已完整输出的 lingya 代码块仍应执行——否则 AI 输出了工具调用却不生效，
+  // 表现为"工具调用变成纯文本"。
+  const jsBlocks = extractJsToolBlocks(raw);
+  if (jsBlocks.length > 0) {
+    console.log('[LingYa][拦截] 检测到 JS 工具代码块（' + jsBlocks.length + ' 个）' +
+      (interrupted ? '（流中断，仍执行）' : '') + '，开始执行');
+    xmlHintCount = 0;
+    planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
+    unplannedContinueCount = 0;
+    queueErrorContinueCount = 0; // 链路正常，重置异常兜底预算
+    state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
+    // 状态机：进入工具执行阶段（超时阈值 720s，覆盖 JsRunner 的 660s deadline）
+    try { taskState.transition(taskState.STATES.EXECUTING); } catch (_) {}
+    emitToolCall({ phase: 'start' });
+    const results = await executeJsBlocksWithRetry(jsBlocks);
+    emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
+    if (results.length > 0) {
+      if (state.stopped) {
+        console.log('[LingYa][拦截] 已停止，丢弃 JS 结果回传');
+      } else {
+        sendCombinedJsResultsToChat(results);
+      }
+    }
+    return;
+  }
+
+  // 中断（服务端已停止/流断开）处理：即使 raw 为空也要走兜底续跑，
   // 否则"一开始就断"的场景会直接 return → 任务卡死。
   if (interrupted) {
     console.log('[LingYa][拦截] 检测到生成中断（服务端已停止/流断开），raw 长度=' + raw.length);
-    if (raw && !force && raw === lastProcessedText) return;
-    if (raw) lastProcessedText = raw;
     const handled = await handleInterruptedIfNeeded(raw);
     if (handled) return;
     console.log('[LingYa][拦截] 生成中断且未自动续写，回退到计划续跑');
@@ -386,10 +458,15 @@ async function processInterceptedResponse(text, force, interrupted) {
     return;
   }
   if (!raw) return;
-  if (!force && raw === lastProcessedText) return;
-  lastProcessedText = raw;
 
   console.log('[LingYa][拦截] 收到完整回复，长度=' + raw.length);
+
+  // 状态机：收到回复 → RESPONDED（后续若有工具执行会切 EXECUTING）
+  try {
+    taskState.transition(taskState.STATES.RESPONDED, {
+      lastResponsePreview: raw.slice(0, 120),
+    });
+  } catch (_) { /* ignore */ }
 
   // 正常完成：清空续写计数
   autoContinueCount = 0;
@@ -407,38 +484,18 @@ async function processInterceptedResponse(text, force, interrupted) {
     }
     state.refusalRewriteFallback = '';
     console.log('[LingYa][拦截] 当前对话改写完成，回传长度=' + rewritten.length);
-    sendMessageToChat(rewritten, '拒绝改写回传');
+    sendMessageToChat(rewritten, '拒绝改写回传', { auto: true });
     return;
   }
 
-  // 1. 优先检测 JS 工具代码块（lingya / js 代码块）
-  const jsBlocks = extractJsToolBlocks(raw);
-  if (jsBlocks.length > 0) {
-    console.log('[LingYa][拦截] 检测到 JS 工具代码块（' + jsBlocks.length + ' 个），开始执行');
-    xmlHintCount = 0;
-    planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
-    unplannedContinueCount = 0;
-    state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
-    emitToolCall({ phase: 'start' });
-    const results = await executeJsBlocksWithRetry(jsBlocks);
-    emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
-    if (results.length > 0) {
-      if (state.stopped) {
-        console.log('[LingYa][拦截] 已停止，丢弃 JS 结果回传');
-      } else {
-        sendCombinedJsResultsToChat(results);
-      }
-    }
-    return;
-  }
-
-  // 2. JSON 工具调用
+  // 1. JSON 工具调用
   const toolCall = tryParseToolCall(raw);
   if (toolCall) {
     xmlHintCount = 0;
     planContinueCount = 0; // 工具实际执行 = 有进展，重置续跑预算
     unplannedContinueCount = 0;
     state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
+    try { taskState.transition(taskState.STATES.EXECUTING); } catch (_) {}
     if (!hasTool(toolCall.toolName)) {
       console.log('[LingYa][拦截] 工具不存在: ' + toolCall.toolName);
       sendToolResultToChat(
@@ -468,7 +525,8 @@ async function processInterceptedResponse(text, force, interrupted) {
     console.log('[LingYa][拦截] 检测到 XML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
     sendMessageToChat(
       '请使用' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 代码块进行工具调用，不要使用 XML invoke 格式。',
-      'XML工具调用提示'
+      'XML工具调用提示',
+      { auto: true }
     );
     return;
   }
@@ -487,6 +545,9 @@ async function processInterceptedResponse(text, force, interrupted) {
     state.awaitingUserInput = true;
     state.awaitingUserInputAt = Date.now();
     console.log('[LingYa][拦截] 检测到 AI 在向用户提问，暂停自动续跑（等待用户输入）');
+    // 状态机回 IDLE：球在用户那边，本轮循环已正常结束。
+    // 防误催由 state.awaitingUserInput 负责（supervisor 会先检查它）。
+    try { taskState.reset('AI 在向用户提问'); } catch (_) {}
     try { markTaskDone(); } catch (_) { /* 显示为待交互 */ }
     return;
   }
@@ -494,6 +555,10 @@ async function processInterceptedResponse(text, force, interrupted) {
   if (await continueIfPlanUnfinished(raw)) return;
   // 计划已完成 / 本就无计划 → 收尾
   console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用，且无未完成计划');
+  // 状态机回 IDLE：一轮 Agent 循环正常结束。
+  // 这是 supervisor「无计划兜底」的触发前提 —— 若任务型会话停在这里不动，
+  // supervisor 会看到 IDLE + sessionHadToolExecution 并主动催促。
+  try { taskState.reset('一轮循环正常收尾'); } catch (_) {}
   try {
     window.electronAPI.showAiNotification().catch(() => {});
   } catch (e) { /* ignore */ }
@@ -539,6 +604,19 @@ function onInterceptedResponse(cb) {
  * 启动拦截事件监听
  */
 function startInterceptObserver() {
+  // 从 localStorage 恢复上次的状态机快照（页面刷新 / 渲染进程崩溃重载后走这里）。
+  // 不恢复的话，状态机会归零回 IDLE，supervisor 就不知道「上次停在 AWAITING」，
+  // 崩溃后无法接着判断该不该兜底。
+  try {
+    const restored = taskState.restore();
+    if (restored && restored.state !== 'IDLE') {
+      console.log('[LingYa][拦截] 状态机已恢复，当前 ' + restored.state +
+        '，交由 supervisor 判断是否停滞');
+    }
+  } catch (err) {
+    console.error('[LingYa][拦截] 状态机恢复失败:', err && err.message);
+  }
+
   // AI 开始生成回复：悬浮球切换为「AI 生成中」
   window.addEventListener('lingya-ai-start', () => {
     try {
@@ -552,6 +630,15 @@ function startInterceptObserver() {
         console.log('[LingYa][拦截] 检测到新对话开始，已恢复自动执行');
       }
       setFabState('generating');
+      // 状态机：确认 AI 已开始生成 → 从 SENT 切到 AWAITING（发送 ack 达成）
+      try {
+        const snap = taskState.snapshot();
+        if (snap.state === taskState.STATES.SENT || snap.state === taskState.STATES.IDLE) {
+          taskState.transition(taskState.STATES.AWAITING);
+        } else {
+          taskState.touch(); // 其他状态仅刷新活动时间
+        }
+      } catch (_) { /* ignore */ }
       // 补记请求起点 + 判断是否新一轮
       // 情况 A：用户直接在页面输入框打字 → 不经过 sendToChat，lastRequestStartAt 为 0
       //         → 视为新一轮，重置本轮统计
@@ -629,10 +716,15 @@ function getLastInterceptedText() {
   return lastInterceptedText;
 }
 
+/** 取最近一次已处理的文本（供 DOM 兜底去重比对） */
+function getLastProcessedText() {
+  return lastProcessedText;
+}
+
 /** 清除「生成中」兜底定时器并复位状态（停止任务时调用） */
 function resetGenerating() {
   if (generateTimeout) { clearTimeout(generateTimeout); generateTimeout = null; }
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, onInterceptedResponse, onToolCall, resetGenerating };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, onInterceptedResponse, onToolCall, resetGenerating };

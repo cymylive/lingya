@@ -6,6 +6,8 @@ const { showToast, setTaskStatus, addHistory, truncate, flashBadge } = require('
 const { sendToolResultToChat } = require('./chat-input');
 const state = require('./state');
 const { renderToolCard } = require('../overlay/tool-card');
+const { withTimeout, TIMEOUTS } = require('./timeout');
+const idempotency = require('./idempotency');
 
 // 是否正在执行命令或工具
 let isExecuting = false;
@@ -80,7 +82,27 @@ async function handleJsToolScript(code) {
   const callId = 'js_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
   console.log('[LingYa] [诊断] 即将执行的代码(JSON转义): ' + JSON.stringify(code));
   try {
-    const result = await window.electronAPI.executeJs(code, callId);
+    // 幂等检查：同一份代码重复执行大概率是重试，复用上次结果，
+    // 配合状态机/DOM 兜底的重试机制，让重试不会造成重复副作用。
+    const jsIdemScope = state.currentProjectDir || '';
+    let cachedJs = null;
+    try { cachedJs = idempotency.lookup('__js_script__', { code: code }, jsIdemScope); } catch (_) { cachedJs = null; }
+
+    let result;
+    if (cachedJs) {
+      console.log('[LingYa] JS 脚本命中幂等缓存，跳过实际执行');
+      result = cachedJs;
+    } else {
+      // 超时保护：主进程崩溃/IPC 失效时，await 会永久挂起，导致整个队列卡死
+      result = await withTimeout(
+        window.electronAPI.executeJs(code, callId),
+        TIMEOUTS.executeJs,
+        'JS 脚本执行'
+      );
+      if (result && result.success) {
+        try { idempotency.record('__js_script__', { code: code }, result, jsIdemScope); } catch (_) {}
+      }
+    }
 
     const resultSection = document.getElementById('lingya-result-section');
     const resultStatus = document.getElementById('lingya-result-status');
@@ -154,7 +176,31 @@ async function handleToolCall(toolCall) {
   showToast('开始执行命令');
 
   try {
-    const result = await window.electronAPI.executeTool(toolName, params, callId);
+    // 幂等检查：若上次相同调用已成功，直接复用结果，避免重复副作用。
+    // 只对白名单内的纯读工具生效（bash/pwsh 等有副作用的默认不缓存）。
+    // 必须带 projectDir —— 否则跨项目会串数据（A 项目读到 B 项目的文件）。
+    const idemScope = state.currentProjectDir || '';
+    let cachedTool = null;
+    if (idempotency.isIdempotent(toolName)) {
+      try { cachedTool = idempotency.lookup(toolName, params, idemScope); } catch (_) { cachedTool = null; }
+    }
+
+    let result;
+    if (cachedTool) {
+      console.log('[LingYa] 工具 ' + toolName + ' 命中幂等缓存，跳过实际执行');
+      result = cachedTool;
+    } else {
+      // 超时保护：同 executeJs，防 IPC 永久挂起
+      result = await withTimeout(
+        window.electronAPI.executeTool(toolName, params, callId),
+        TIMEOUTS.executeTool,
+        '工具 ' + toolName + ' 执行'
+      );
+      // 只记录成功结果：失败可能是暂时的（网络/锁），重试有意义
+      if (result && result.success) {
+        try { idempotency.record(toolName, params, result, idemScope); } catch (_) {}
+      }
+    }
 
     const resultSection = document.getElementById('lingya-result-section');
     const resultStatus = document.getElementById('lingya-result-status');

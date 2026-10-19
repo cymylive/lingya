@@ -15,6 +15,7 @@
  *   无计划的会话由 intercept-observer 的无计划兜底负责。
  */
 const state = require('./state');
+const taskState = require('./task-state');
 const { getFabState, setFabState, showToast } = require('../overlay/ui');
 const { sendMessageToChat } = require('./chat-input');
 
@@ -29,6 +30,9 @@ const STALL_WINDOW_MS = 300 * 1000;
 let timer = null;
 let stallCount = 0;
 let lastStallAt = 0;
+// 状态机停滞的独立计数器：与 todo 续跑分开，避免两条路径互相挤占预算
+let stateStallCount = 0;
+let lastStateStallAt = 0;
 let running = false;
 
 /**
@@ -55,6 +59,117 @@ const FAB_STUCK_MS = 5 * 60 * 1000;
 const AWAITING_USER_TIMEOUT_MS = 3 * 60 * 1000;
 // stallCount 打满后的降频间隔：不再永久放弃，而是每 5 分钟催一次
 const STALL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * 状态机停滞处理 —— 覆盖「事件丢失」盲区。
+ *
+ * 与 todo 判断的区别：
+ *   todo 判断看的是「AI 有没有按计划推进」，只在有计划时有效。
+ *   本函数看的是「Agent 循环本身有没有卡住」，不依赖 todo，能救：
+ *     - 消息发出去了但 AI 没开始生成（SENT 停滞 → 重发）
+ *     - AI 在生成但流没收尾、事件丢失（AWAITING 停滞 → 催它继续）
+ *     - 工具执行卡死（EXECUTING 停滞 → 标记失败并催）
+ *
+ * @returns {Promise<boolean>} true 表示已处理（调用方应 return）
+ */
+async function handleTaskStateStall(now, max) {
+  let stallInfo;
+  try { stallInfo = taskState.checkStall(); } catch (_) { return false; }
+  if (!stallInfo || !stallInfo.stalled) return false;
+
+  // 独立计数：与 todo 续跑分开，互不挤占预算
+  if (now - lastStateStallAt > STALL_WINDOW_MS) stateStallCount = 0;
+  if (stateStallCount >= max) {
+    if (now - lastStateStallAt < STALL_RETRY_INTERVAL_MS) {
+      // 降频期内不处理状态机，但返回 false 让 todo 分支有机会（可能确实有计划待催）
+      return false;
+    }
+    console.log('[LingYa][监督] 状态机停滞已达上限 ' + max + ' 次且超过降频窗口，重置计数');
+    stateStallCount = 0;
+  }
+  lastStateStallAt = now;
+  stateStallCount++;
+
+  const sec = Math.round(stallInfo.elapsedMs / 1000);
+  console.log('[LingYa][监督] 状态机停滞：' + stallInfo.state + ' 已 ' + sec + 's（阈值 ' +
+    Math.round(stallInfo.thresholdMs / 1000) + 's），判定：' + stallInfo.reason +
+    '，第 ' + stateStallCount + ' 次处理');
+
+  // SENT 停滞：消息大概率没发出去 → 提示用户，不自动重发（避免重复消息）
+  if (stallInfo.state === taskState.STATES.SENT) {
+    try { showToast('⚠️ 消息可能未发送成功（' + sec + 's 无响应），请手动检查输入框', 6000); } catch (_) {}
+    // 回到 IDLE，避免每轮都报警
+    try { taskState.reset('SENT 停滞已提示'); } catch (_) {}
+    return true;
+  }
+
+  // AWAITING 停滞：事件可能丢了
+  if (stallInfo.state === taskState.STATES.AWAITING) {
+    // 先试 DOM 兜底：如果页面上其实已经有完整回复（只是事件没来），直接补处理，
+    // 比催 AI 重发更准确（避免重复生成、省 token）
+    let recovered = false;
+    try {
+      const domFallback = require('./dom-fallback');
+      const observer = require('./intercept-observer');
+      const r = await domFallback.tryRecoverFromDom(
+        observer.getLastProcessedText ? observer.getLastProcessedText() : '',
+        observer.processInterceptedResponse
+      );
+      if (r && r.recovered) {
+        recovered = true;
+        console.log('[LingYa][监督] DOM 兜底成功：' + r.reason);
+        try { showToast('检测到回复事件丢失，已从页面补回', 4000); } catch (_) {}
+        try { taskState.reset('AWAITING 已 DOM 补回'); } catch (_) {}
+        state.touch();
+        return true;
+      }
+      console.log('[LingYa][监督] DOM 兜底未成功：' + (r && r.reason) + '，改为催促 AI 继续');
+    } catch (err) {
+      console.log('[LingYa][监督] DOM 兜底异常：' + (err && err.message) + '，改为催促 AI 继续');
+    }
+
+    // DOM 兜底失败 → 催 AI 继续
+    if (!recovered) {
+      try { showToast('检测到回复中断，已自动催促继续', 4000); } catch (_) {}
+      sendMessageToChat(
+        '【监督续跑】检测到上一条回复可能因网络或页面异常中断（已 ' + sec + ' 秒无进展）。' +
+        '请继续完成当前任务：若上一步已生效请勿重复执行，直接推进下一步；' +
+        '若任务已完成，请用一句话明确说明"任务已完成"。',
+        '状态机续跑',
+        { auto: true }
+      );
+      try { taskState.reset('AWAITING 停滞已催促'); } catch (_) {}
+      state.touch();
+      return true;
+    }
+  }
+
+  // RESPONDED 停滞：收到了回复但处理卡住（解析/执行阶段抛异常）
+  if (stallInfo.state === taskState.STATES.RESPONDED) {
+    console.log('[LingYa][监督] 回复处理卡住 ' + sec + 's，重置状态让流程继续');
+    try { showToast('⚠️ 回复处理异常，已重置状态', 4000); } catch (_) {}
+    try { taskState.reset('RESPONDED 处理卡住'); } catch (_) {}
+    state.touch();
+    return true;
+  }
+
+  // EXECUTING 停滞：工具卡死 → 提示并催
+  if (stallInfo.state === taskState.STATES.EXECUTING) {
+    try { showToast('⚠️ 工具执行超时（' + sec + 's），已中断并催促继续', 5000); } catch (_) {}
+    sendMessageToChat(
+      '【监督续跑】上一步工具执行超时（已 ' + sec + ' 秒无响应），可能已失败。' +
+      '请检查该操作是否已生效：若未生效，换一种方式重试；若已生效，直接推进下一步。' +
+      '若任务已完成，请用一句话明确说明"任务已完成"。',
+      '工具超时续跑',
+      { auto: true }
+    );
+    try { taskState.reset('EXECUTING 停滞已催促'); } catch (_) {}
+    state.touch();
+    return true;
+  }
+
+  return false;
+}
 
 async function checkOnce() {
   if (state.stopped) return;                       // 用户已停止
@@ -94,6 +209,11 @@ async function checkOnce() {
   const idleMs = now - (state.lastActivityAt || 0);
   if (idleMs < stallMs) return; // 还没停滞
 
+  // ===== A2) 状态机停滞：能救「事件丢失」的盲区 =====
+  // 这是 todo 判断覆盖不到的场景：AI 发出了工具调用但 lingya-ai-response 事件没来，
+  // 或消息根本没发出去。此时 todo 可能是空的（无计划会话），原逻辑会直接 return。
+  if (await handleTaskStateStall(now, max)) return;
+
   // 查该会话 todo：只有"有计划且未完成"才触发（保守，避免误伤闲聊）
   let res;
   try { res = await window.electronAPI.getTodos(); } catch (_) { return; }
@@ -105,6 +225,32 @@ async function checkOnce() {
     if (state.awaitingUserInput) {
       state.awaitingUserInput = false;
       state.awaitingUserInputAt = 0;
+    }
+    // ===== 无计划兜底（原 supervisor 的盲区）=====
+    // 场景：任务型会话（执行过工具）但没建 todo，AI 停在中途不动了。
+    // 原实现直接 return，这类会话永远不会被催促。
+    // 判断依据：本会话执行过工具 + 当前处于 IDLE（说明一轮循环已结束但任务未必完成）
+    if (state.sessionHadToolExecution) {
+      const snap = taskState.snapshot();
+      if (snap.state === taskState.STATES.IDLE) {
+        const nowMs = Date.now();
+        if (nowMs - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
+        if (stallCount < max) {
+          lastStallAt = nowMs;
+          stallCount++;
+          console.log('[LingYa][监督] 无计划任务停滞 ' + Math.round(idleMs / 1000) +
+            's，兜底续跑第 ' + stallCount + ' 次');
+          try { showToast('检测到任务停滞（无计划），已自动催促继续', 4000); } catch (_) {}
+          sendMessageToChat(
+            '【监督续跑】检测到你已经 ' + Math.round(idleMs / 1000) + ' 秒没有动作。' +
+            '若任务尚未完成，请立即调用工具继续下一步（不要只描述计划、不要停下来等用户确认）；' +
+            '若任务确已完成，请用一句话明确说明"任务已完成"。',
+            '无计划兜底续跑',
+            { auto: true }
+          );
+          state.touch();
+        }
+      }
     }
     return;
   }
@@ -135,7 +281,8 @@ async function checkOnce() {
     '【监督续跑】检测到你已经 ' + Math.round(idleMs / 1000) + ' 秒没有动作，但任务计划尚未完成（还剩 ' +
     unfinished.length + ' 项）。请立即继续执行：' + next.content +
     '。不要停下来等用户确认；若任务确已完成，请用一句话明确说明"任务已完成"并更新 todo。',
-    '监督续跑'
+    '监督续跑',
+    { auto: true }
   );
   // 催促即视为一次活动，避免下一次检查立刻又命中
   state.touch();
@@ -162,6 +309,8 @@ function stopSupervisor() {
 function resetStall() {
   stallCount = 0;
   lastStallAt = 0;
+  stateStallCount = 0;
+  lastStateStallAt = 0;
 }
 
 module.exports = { startSupervisor, stopSupervisor, resetStall, checkOnce };

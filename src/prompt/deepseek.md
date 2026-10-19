@@ -21,6 +21,8 @@
 >
 > **记忆管理**：保存新记忆用 memorySave({ type, name, content, tags, pinned })，更新用 memoryUpdate，删除用 memoryDelete。
 
+{{SUPERPOWERS_SECTION}}
+
 ## 技能
 
 以下是当前已启用的技能（作为专家指令参考）：

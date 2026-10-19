@@ -36,16 +36,15 @@ const { ListPluginsTool } = require('./ListPluginsTool');
 const registry = new ToolRegistry();
 
 // 注册所有工具
-registry.register(new FileWriteTool());
+// 只注册新版工具。旧版（file_write / file_read / file_edit / file_glob / file_grep）
+// 仍保留类文件供历史测试使用，但不再注册进 registry：
+//   - AI 看到的工具描述减半，没有选择困惑
+//   - 新旧实现有差异（GlobTool 自己遍历 vs GlobToolNew 用 ripgrep），只留一套避免行为不一致
 registry.register(new WriteTool());
-registry.register(new FileReadTool());
 registry.register(new ReadTool());
 registry.register(new ReadLinesTool());
-registry.register(new FileEditTool());
 registry.register(new EditTool());
-registry.register(new GlobTool());
 registry.register(new GlobToolNew());
-registry.register(new GrepTool());
 registry.register(new GrepToolNew());
 registry.register(new TodoWriteTool());
 registry.register(new BashTool());

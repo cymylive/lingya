@@ -1,6 +1,7 @@
 /**
  * 工具注册表 - 管理所有可用工具
  */
+const { withTimeout, getTimeoutFor } = require('./with-timeout');
 
 class Tool {
   constructor(name, description, parameters, jsApi) {
@@ -97,8 +98,14 @@ class ToolRegistry {
       return ToolResult.error(`未找到工具: ${name}`);
     }
     try {
-      // 验证参数（可选，这里简化处理）
-      return await tool.execute(params);
+      // 主进程侧超时：与 preload 侧的超时互为兜底。
+      // 防止某个工具永不 settle 导致线程池被占满、tool-lifecycle 条目永远 running。
+      const timeoutMs = getTimeoutFor(name);
+      return await withTimeout(
+        tool.execute(params),
+        timeoutMs,
+        '工具 ' + name + ' '
+      );
     } catch (err) {
       return ToolResult.error(`工具执行失败: ${err.message}`);
     }

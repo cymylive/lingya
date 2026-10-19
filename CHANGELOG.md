@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **内置 Superpowers 开发方法论**（obra/superpowers v7.0.0，MIT）
+  - 位置：`src/prompt/superpowers/`，随 systemPrompt 注入，任何项目都生效
+  - 12 个方法论 skill：brainstorming / systematic-debugging / test-driven-development / writing-plans / executing-plans / verification-before-completion / requesting-code-review / receiving-code-review / finishing-a-development-branch / using-git-worktrees / writing-skills / diagnosing-superpowers
+  - `router.md` 强制路由：建功能先 brainstorm、修 bug 先 systematic-debugging，未读 skill 不得回话
+  - 跳过 2 个依赖 subagent 的 skill（dispatching-parallel-agents / subagent-driven-development）——LingYa 无子 agent
+  - **bash 脚本重写为 Node 版** `sp-tools.js`：原 5 个脚本依赖 bash+awk+sed，Windows 无 Git Bash 时不可用；重写后只需 node，且支持非 git 仓库降级
+  - 所有 `superpowers:xxx` 前缀引用（39 处）改为本地 skill 名，跨 harness 概念（Skill tool / subagent dispatch / SessionStart hook）已适配说明
+
+### Fixed
+- **状态机恢复路径接上**（`restore()` 从未被调用）
+  - 根因：`task-state.js` 往 localStorage 写状态，但没有任何地方调用 `restore()` 读回来
+  - 后果：页面刷新 / 渲染进程崩溃自动重载后状态机归零回 IDLE，「崩溃可恢复」设计完全失效
+  - 修复：`startInterceptObserver()` 开头调用 `restore()`
+- **幂等缓存跨项目串数据**
+  - 根因：幂等键只有「工具名 + 参数」，不含项目目录
+  - 后果：A 项目 `read a.js` 缓存后，切到 B 项目再读同名文件会命中 A 的内容
+  - 修复：`makeKey/lookup/record` 增加 `projectDir` 参数，由 `tool-executor` 传入 `state.currentProjectDir`
+- **幂等白名单误含写操作**（`todo_write` / `memory_save` / `memory_update`）
+  - 后果：AI 调这些工具时命中缓存 → 返回假 success → 计划/记忆实际没更新，AI 却以为更新了
+  - 修复：白名单只保留纯读工具
+- **工具集去重：5 对重复工具不再注册**
+  - 停止注册 `file_write` / `file_read` / `file_edit` / `file_glob` / `file_grep`（类文件保留供历史测试）
+  - `JsRunner` 的 `readFile/writeFile/editFile` 旧别名改映射到新工具名，保持向后兼容
+  - 注册工具数 33 → 28，AI 看到的工具描述减半
+- **`tool-names.js` 漏了 `file_delete`**
+  - 后果：AI 用 JSON 格式调 `file_delete` 会被误判「工具不存在」
+  - 修复：补进 `STATIC_TOOL_NAMES`，同时清掉已废弃的旧工具名
+- **Superpowers skill 正文的 subagent 表述与 router 矛盾**
+  - `executing-plans` / `requesting-code-review` 里仍写「dispatch a subagent」
+  - 修复：改为「自己做一遍」，并说明「自我审查弱于独立审查」
+
+- **本地打包不再跑旧代码**（`unpackDirName` 硬编码残留）
+  - 根因：`build.portable.unpackDirName` 写死为 `LingYa-runtime-0.6.88`，只有 CI 发版时 `scripts/sync-version.js` 会同步它；本地 `npm run build:*:local` 完全不过这个脚本，升版本后本地打的包仍复用 `%TEMP%\LingYa-runtime-0.6.88` 旧解压目录，启动跑的是旧代码
+  - 修复：`sync-version.js` 新增本地模式（无 `GITHUB_REF_NAME` 时取 `package.json` 自身版本，只同步派生字段、不覆盖 version）
+  - 给 `build:local` / `build:win:local` / `build:win:portable:local` 挂 `pre` 钩子自动调用
+  - 说明：`unpackDirName` 不能用 `${version}` 宏——electron-builder 不展开宏，会变成字面量导致所有版本共用一个目录，问题更严重
+
 ## [0.6.88] - 2026-10-19
 
 ### Changed

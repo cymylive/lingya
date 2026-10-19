@@ -272,6 +272,27 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     console.error('[LingYa] 构建技能注入块失败:', err.message);
   }
 
+  // Superpowers 开发流程注入块（强制路由 + 13 个方法论 skill 全文路径）
+  // 内置在 src/prompt/superpowers/，与项目无关，任何项目都注入。
+  // 作用等同于 Claude Code 的 SessionStart hook：让 AI 在动手前必须读对应 skill。
+  let superpowersSection = '';
+  try {
+    const spRoot = path.join(PROMPT_DIR, 'superpowers');
+    const routerPath = path.join(spRoot, 'router.md');
+    if (fs.existsSync(routerPath)) {
+      let routerText = fs.readFileSync(routerPath, 'utf-8');
+      // 把 skill 根目录的真实绝对路径注入进去（AI 要用 read 读全文）
+      const skillRoot = path.join(spRoot, 'skills').replace(/\\/g, '/');
+      routerText = routerText.replace(/\{\{SKILL_ROOT\}\}/g, skillRoot);
+      // router.md 里的 <程序目录> 占位也换掉
+      routerText = routerText.replace(/<程序目录>/g, skillRoot);
+      superpowersSection = '---\n' + routerText;
+      console.log('[LingYa] Superpowers 注入块长度:', superpowersSection.length, '| skill 根目录:', skillRoot);
+    }
+  } catch (err) {
+    console.error('[LingYa] 构建 Superpowers 注入块失败:', err.message);
+  }
+
   // CTF 注入块（可选，由安全增强配置控制）
   let ctfSection = '';
   try {
@@ -334,6 +355,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{MCP_SECTION}}': mcpSection,
     '{{MEMORY_SECTION}}': memorySection,
     '{{SKILL_SECTION}}': skillSection,
+    '{{SUPERPOWERS_SECTION}}': superpowersSection,
     '{{CTF_SECTION}}': ctfSection,
     '{{AGENT_SECTION}}': agent.section || '',
     '{{PLUGIN_SECTION}}': pluginSection,

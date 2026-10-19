@@ -32,7 +32,7 @@ const AGENTS = {
     icon: '📋',
     description: '规划模式。只读探索，禁用写/改/删工具，产出的方案需用户批准后再实现。',
     // 对齐 opencode：plan agent 禁用 edit 类工具（write / edit / apply_patch 等）
-    deniedTools: ['write', 'file_write', 'edit', 'file_edit', 'file_delete'],
+    deniedTools: ['write', 'edit', 'file_delete'],
     // 方案 B：bash / pwsh 只放行只读命令，写操作在守卫层被拦截
     readonlyShell: true,
     section: [
