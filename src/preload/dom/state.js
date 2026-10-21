@@ -44,13 +44,22 @@ module.exports = {
   // AI 最近一条回复是否在向用户提问/等决策。
   // 为 true 时：球在用户那边，自动续跑/监督者都应暂停催促（催也白催）。
   awaitingUserInput: false,
+  // AI 是否已明确声明「任务已完成」。
+  // 为 true 时：监督者不再催促（哪怕 todo 里还有未完成项 —— 那是 AI 判断不需要做的）。
+  // 关键区别：todo 是 AI 自己写的计划，声明完成是 AI 对「工作是否结束」的最终判断，
+  // 后者优先级更高。下次 AI 调用工具（markToolExecuted）时自动复位。
+  taskDeclaredDone: false,
   // awaitingUserInput 置位的时刻。监督者用它在「等太久且计划未完成」时判定为误判，强制催。
   awaitingUserInputAt: 0,
 
   /** 打一次活动点（AI 响应、工具执行、发送消息时调用） */
   touch() { this.lastActivityAt = Date.now(); },
-  /** 标记本会话执行过工具 + 打活动点 */
-  markToolExecuted() { this.sessionHadToolExecution = true; this.lastActivityAt = Date.now(); },
+  /** 标记本会话执行过工具 + 打活动点。有新工具执行 = 任务又开始了，清掉「已声明完成」 */
+  markToolExecuted() {
+    this.sessionHadToolExecution = true;
+    this.taskDeclaredDone = false;   // 新一轮工作开始，之前的「完成」声明失效
+    this.lastActivityAt = Date.now();
+  },
   /** 会话切换/重置时清空任务型标记 */
   resetTaskFlags() { this.sessionHadToolExecution = false; this.lastActivityAt = Date.now(); },
 };

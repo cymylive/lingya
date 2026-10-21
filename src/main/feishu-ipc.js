@@ -147,7 +147,7 @@ async function handleFeishuCommand(text, chatId, ctx) {
     return reply([
       '🤖 LingYa 指令：',
       '/new [项目名] — 开新对话：桌面新建项目文件夹 + 注入提示词（AI 可访问电脑）',
-      '/list — 列出当前窗口的会话（显示 ID）',
+      '/list — 列出会话：标题 + 相对时间，当前置顶、归档垫底',
       '/say <ID> — 切换到指定会话（ID 用 /list 查看，支持前缀）',
       '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
       '/help — 显示本帮助',
@@ -228,14 +228,91 @@ async function handleFeishuCommand(text, chatId, ctx) {
     const all = store.readSessionStore();
     const ids = Object.keys(all);
     if (ids.length === 0) return reply('📭 当前窗口暂无历史会话');
+
     const current = store.state && store.state.currentSessionId;
-    const lines = ids.slice(0, 50).map((sid) => {
-      const dir = all[sid] || '(未绑定目录)';
-      const mark = sid === current ? ' 👈当前' : '';
-      return '· ' + sid.slice(0, 8) + '…  ' + dir + mark;
+
+    // 归一化：store[sid] 可能是旧格式（字符串 = projectDir）或新格式（对象）。
+    // 【历史 bug】旧代码直接 'xxx' + all[sid]，对象拼字符串会变成 "[object Object]"。
+    const norm = (typeof store.normalizeEntry === 'function')
+      ? store.normalizeEntry
+      : (e) => {
+          if (typeof e === 'string') return { projectDir: e, title: null, updatedAt: null, archivedAt: null };
+          if (e && typeof e === 'object') {
+            return {
+              projectDir: e.projectDir || null,
+              title: e.title || null,
+              updatedAt: e.updatedAt || null,
+              archivedAt: e.archivedAt || null,
+            };
+          }
+          return null;
+        };
+
+    // 构建展示项
+    const items = ids.map((sid) => {
+      const e = norm(all[sid]) || {};
+      // 标题：优先 AI 起的名字；没名字就用项目目录名兜底；都没有标「未命名」
+      let title = (e.title || '').trim();
+      if (!title && e.projectDir) {
+        const parts = String(e.projectDir).split(/[\\/]/).filter(Boolean);
+        title = parts[parts.length - 1] || '';
+      }
+      if (!title) title = '(未命名)';
+      return {
+        sid,
+        shortId: sid.slice(0, 8),
+        title,
+        updatedAt: e.updatedAt || null,
+        archived: !!e.archivedAt,
+        isCurrent: sid === current,
+      };
     });
-    return reply('📋 会话列表（' + ids.length + '）：\n' + lines.join('\n') +
-      '\n\n💡 切换到某会话：/say <ID前几位>');
+
+    // 排序：当前会话置顶 → 未归档按更新时间倒序 → 已归档垫底
+    items.sort((a, b) => {
+      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+      if (a.archived !== b.archived) return a.archived ? 1 : -1;
+      const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+
+    // 相对时间（飞书纯文本，不用具体时间戳更易读）
+    const relTime = (iso) => {
+      if (!iso) return '';
+      const t = Date.parse(iso);
+      if (!Number.isFinite(t)) return '';
+      const min = Math.floor((Date.now() - t) / 60000);
+      if (min < 1) return '刚刚';
+      if (min < 60) return min + '分钟前';
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return hr + '小时前';
+      const day = Math.floor(hr / 24);
+      if (day < 30) return day + '天前';
+      const d = new Date(t);
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    };
+
+    // 飞书单条消息有长度上限，最多展示 30 条
+    const MAX_SHOW = 30;
+    const shown = items.slice(0, MAX_SHOW);
+    const body = shown.map((it) => {
+      const mark = it.isCurrent ? '👉' : '  ';
+      const time = relTime(it.updatedAt);
+      const tail = (time ? '  ' + time : '') + (it.archived ? '  📦' : '');
+      return mark + ' ' + it.shortId + '  ' + it.title + tail;
+    }).join('\n');
+
+    const more = items.length > MAX_SHOW
+      ? ('\n\n… 另有 ' + (items.length - MAX_SHOW) + ' 个未显示')
+      : '';
+
+    return reply(
+      '📋 会话列表（共 ' + items.length + ' 个）\n\n' +
+      body + more +
+      '\n\n💡 /say <ID前几位> 切换会话\n' +
+      '   👉 当前会话   📦 已归档'
+    );
   }
 
   if (name === 'say' || name === 'switch' || name === 'to') {

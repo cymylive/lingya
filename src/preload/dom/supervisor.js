@@ -174,6 +174,10 @@ async function handleTaskStateStall(now, max) {
 async function checkOnce() {
   if (state.stopped) return;                       // 用户已停止
   if (state.awaitingRefusalRewrite) return;        // 正在等改写回复
+  // 【关键】AI 已明确声明任务完成 → 不催。
+  // 这是最高优先级的停止信号：todo 里残留的未完成项可能只是 AI 判断不需要做的，
+  // 或 todoWrite 更新失败。继续催会形成「AI 说完成 → 被催 → 再说完成」的死循环。
+  if (state.taskDeclaredDone) return;
 
   const now = Date.now();
 
@@ -230,9 +234,27 @@ async function checkOnce() {
     // 场景：任务型会话（执行过工具）但没建 todo，AI 停在中途不动了。
     // 原实现直接 return，这类会话永远不会被催促。
     // 判断依据：本会话执行过工具 + 当前处于 IDLE（说明一轮循环已结束但任务未必完成）
+    //
+    // 【重要】必须排除「AI 已声明任务完成」的情况，否则会出现：
+    //   计划 7/7 全完成 + AI 明说"任务已完成" → 仍在催（用户实测反馈的 bug）
+    // 主防护在 intercept-observer 收尾处（命中 DONE_HINT 就 resetTaskFlags），
+    // 这里再加一道：检查最近一次拦截到的回复文本是否声明完成。
     if (state.sessionHadToolExecution) {
       const snap = taskState.snapshot();
       if (snap.state === taskState.STATES.IDLE) {
+        // 双重保险：查最近回复是否已声明完成
+        let declaredDone = false;
+        try {
+          const observer = require('./intercept-observer');
+          const lastText = observer.getLastProcessedText ? observer.getLastProcessedText() : '';
+          if (lastText && observer.DONE_HINT_RE && observer.DONE_HINT_RE.test(String(lastText))) {
+            declaredDone = true;
+            // 顺手复位标记，避免后续每轮都走到这里
+            try { state.resetTaskFlags(); } catch (_) {}
+            console.log('[LingYa][监督] 最近回复已声明任务完成，跳过无计划兜底');
+          }
+        } catch (_) { /* ignore */ }
+        if (declaredDone) return;
         const nowMs = Date.now();
         if (nowMs - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
         if (stallCount < max) {
@@ -272,6 +294,22 @@ async function checkOnce() {
   }
   lastStallAt = now;
   stallCount++;
+
+  // 【重要】AI 已声明「任务已完成」但 todo 里还有未完成项时，不要催。
+  //
+  // 场景：AI 说「任务已完成，但 todo 里有 3 项我判断不需要做了」，
+  //   或 todoWrite 工具执行失败导致 todo 没更新完。
+  //   此时 todo 仍是 unfinished，supervisor 会一直催 —— 用户看到的正是「AI 说完成了还在催」。
+  // 判断方式与无计划分支一致：查最近一次处理的回复文本。
+  try {
+    const observer = require('./intercept-observer');
+    const lastText = observer.getLastProcessedText ? observer.getLastProcessedText() : '';
+    if (lastText && observer.DONE_HINT_RE && observer.DONE_HINT_RE.test(String(lastText))) {
+      console.log('[LingYa][监督] 有计划但 AI 已声明任务完成，跳过催促（todo 可能未同步）');
+      stallCount = 0;
+      return;
+    }
+  } catch (_) { /* ignore */ }
 
   const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];
   console.log('[LingYa][监督] 检测到停滞 ' + Math.round(idleMs / 1000) + 's，任务剩 ' +

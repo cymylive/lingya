@@ -117,7 +117,14 @@ const INTERRUPT_CONTINUE_WINDOW_MS = 180000;
 const INTERRUPT_CONTINUE_MAX_DEFAULT = 5;
 
 // AI 明确表示任务已完成时，不再兜底催促（避免催到死）
-const DONE_HINT_RE = /(任务已?完成|全部完成|已经完成|均已完成|所有步骤(已)?完成|没有(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
+// 匹配 AI「声明任务完成」的表述。命中后：
+//   1) intercept-observer 收尾时复位 sessionHadToolExecution
+//   2) supervisor 无计划兜底跳过催促
+// 覆盖常见说法，包括「无剩余待办」这种省略「没有」的表述。
+// 注意：「已经完成」不能单独出现，否则会匹配「第 1 个任务已经完成」这种局部表述，
+// 导致 resetTaskFlags() 误清任务型标记，后续真正的未完成任务不再被催。
+// 必须带「全部/所有/均」等前缀，或明确主语是「任务」。
+const DONE_HINT_RE = /(任务已?完成|全部完成|所有(任务|步骤)?(已|都)?完成|均已?完成|(没有|无)(其它|其他|剩余)?(需要|待办|要做)|无需继续|nothing (else )?to do|task (is )?complete)/i;
 
 
 /**
@@ -555,9 +562,24 @@ async function processInterceptedResponse(text, force, interrupted) {
   if (await continueIfPlanUnfinished(raw)) return;
   // 计划已完成 / 本就无计划 → 收尾
   console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用，且无未完成计划');
+
+  // 【关键】AI 明确说「任务已完成」→ 清掉任务型标记，阻止 supervisor 无计划兜底误催。
+  //
+  // 为什么必须在这里做：supervisor 的无计划兜底只查 state（拿不到 raw 文本），
+  // 它看到「sessionHadToolExecution=true + 状态机 IDLE」就会催。
+  // 而 sessionHadToolExecution 一旦置 true 就永不复位 —— 导致 AI 说完"任务已完成"
+  // 之后，每轮空闲都会被催一次（用户反馈：计划 7/7 完成 + AI 说完成，还在催）。
+  // 在这里按 raw 判断后复位，supervisor 就认为这不是任务型会话，自然不催。
+  // 后续用户发新任务时，markToolExecuted() 会重新置 true，不受影响。
+  if (raw && DONE_HINT_RE.test(String(raw))) {
+    try { state.resetTaskFlags(); } catch (_) {}
+    // 置位「已声明完成」标记：supervisor 看到就不再催（哪怕 todo 里还有未完成项）。
+    // 下次 AI 调工具时 markToolExecuted() 会自动复位。
+    try { state.taskDeclaredDone = true; } catch (_) {}
+    console.log('[LingYa][拦截] AI 已声明任务完成，置位 taskDeclaredDone（停止所有监督兜底）');
+  }
+
   // 状态机回 IDLE：一轮 Agent 循环正常结束。
-  // 这是 supervisor「无计划兜底」的触发前提 —— 若任务型会话停在这里不动，
-  // supervisor 会看到 IDLE + sessionHadToolExecution 并主动催促。
   try { taskState.reset('一轮循环正常收尾'); } catch (_) {}
   try {
     window.electronAPI.showAiNotification().catch(() => {});
@@ -727,4 +749,4 @@ function resetGenerating() {
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, onInterceptedResponse, onToolCall, resetGenerating };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, onInterceptedResponse, onToolCall, resetGenerating, DONE_HINT_RE };
