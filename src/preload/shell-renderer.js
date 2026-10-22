@@ -999,6 +999,19 @@
   // ---- 计划面板 ----
   function renderPlanView(el){
     el.innerHTML = panel('任务计划',
+      // ===== Agent 模式切换（Plan / Build）=====
+      // 放在计划视图顶部：模式决定「AI 能不能动手改东西」，和计划是同一件事的两面
+      // —— 在 Plan 里排好步骤，切到 Build 立刻执行，不用再跑去设置页翻。
+      '<div style="margin-bottom:10px;">'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'+
+          '<span style="font-size:12px;font-weight:700;color:var(--ck-title);">Agent 模式</span>'+
+          '<span id="sh-agent-hint" style="font-size:10px;color:var(--ck-text-dim);max-width:60%;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>'+
+        '</div>'+
+        '<div id="sh-agent-switch" style="display:flex;gap:4px;">'+
+          '<button class="sh-btn" data-agent="build" style="flex:1;padding:5px 0;font-size:12px;">🔨 Build</button>'+
+          '<button class="sh-btn" data-agent="plan" style="flex:1;padding:5px 0;font-size:12px;">📋 Plan</button>'+
+        '</div>'+
+      '</div>'+
       '<div style="margin-bottom:10px;">'+
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'+
           '<span style="font-size:12px;font-weight:700;color:var(--ck-title);">我的待办</span>'+
@@ -1226,6 +1239,67 @@
         if(typeof window.__lingyaUserTodoReload === 'function') window.__lingyaUserTodoReload();
       });
     }
+
+    // ===== Agent 模式切换（Plan / Build）=====
+    // 状态由主进程 agent-store 持久化（per-profile），这里只做展示与切换。
+    // 不做广播订阅：切换入口就在本视图，切完自己重绘即可；跨入口同步成本高于收益。
+    // 放在函数末尾：面板 HTML 与 user-todos 渲染代码需保持连续（测试按固定窗口切片断言 esc() 用量）。
+    (function(){
+      var box = document.getElementById('sh-agent-switch');
+      if(!box || !window.shellAPI) return;
+      var curAgent = 'build';
+      var defs = [];
+
+      function hl(){
+        var bs = box.querySelectorAll('button[data-agent]');
+        for(var i=0;i<bs.length;i++){
+          var on = bs[i].getAttribute('data-agent') === curAgent;
+          bs[i].style.background = on ? 'var(--ck-primary)' : '';
+          bs[i].style.color = on ? '#fff' : '';
+          bs[i].style.borderColor = on ? 'var(--ck-primary)' : 'var(--ck-border)';
+        }
+        var hint = document.getElementById('sh-agent-hint');
+        if(hint){
+          var d = null;
+          for(var k=0;k<defs.length;k++) if(defs[k].id === curAgent){ d = defs[k]; break; }
+          hint.textContent = d ? d.description : '';
+          hint.title = d ? d.description : '';
+        }
+      }
+
+      function load(){
+        if(!window.shellAPI.listAgents) return;
+        window.shellAPI.listAgents().then(function(r){
+          if(r && r.success){
+            defs = r.agents || [];
+            curAgent = r.current || 'build';
+            hl();
+          }
+        })['catch'](function(){});
+      }
+
+      function pick(aid){
+        if(aid === curAgent) return;
+        if(!window.shellAPI.setAgent){ toast2('接口不可用'); return; }
+        window.shellAPI.setAgent(aid).then(function(r){
+          if(r && r.success){
+            curAgent = r.agentId || aid;
+            hl();
+            toast2('已切换到 ' + (curAgent === 'plan' ? 'Plan 模式（只读规划）' : 'Build 模式（可执行）'));
+          } else {
+            toast2('切换失败：' + ((r && r.error) || '未知错误'));
+          }
+        })['catch'](function(){ toast2('切换失败'); });
+      }
+
+      var bs = box.querySelectorAll('button[data-agent]');
+      for(var i=0;i<bs.length;i++){
+        (function(b){
+          b.addEventListener('click', function(){ pick(b.getAttribute('data-agent')); });
+        })(bs[i]);
+      }
+      load();
+    })();
   }
 
   // ---- 记忆面板 ----
