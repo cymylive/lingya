@@ -38,6 +38,10 @@ _*.log
 *.tmp
 temp/
 
+# 临时提交消息文件（git commit -F 用，用完即删，不应入库）
+.git-msg.txt
+.git-commit-msg.txt
+
 # Project specific
 .cuckooCode/
 .claude/
