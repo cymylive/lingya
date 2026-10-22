@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.97] - 2026-10-22
+
+### Added
+
+- **计划执行前人工确认**（默认开启，可在设置关闭）
+  - AI 制定计划后**暂停执行**，等用户点「确认执行」按钮或回复确认词
+  - 计划面板新增「▶ 确认执行」按钮，仅在等待确认时显示
+  - 确认方式二选一：
+    - 点按钮 → 主进程代发「计划已确认，开始执行」指令
+    - 回复「确认执行 / 确认 / 开始执行 / ok / 好的」等关键词 → 用户消息本身即指令，不重复代发
+  - 硬拦截：未确认前任何写操作（write/edit/delete/bash/pwsh）都会被 plan-gate 拒绝，
+    AI 收到明确的「等待确认」错误提示后自然停下，不会反复重试
+  - 只读操作（read/glob/grep/只读 bash）不受影响，AI 可正常探索代码
+  - 配置项 `planConfirmEnabled`（默认 true），改设置立即生效
+
+### 实现要点
+
+- `tools/plan-gate.js`：新增 `awaitingConfirm` 状态机 + `markConfirmed` / `isAwaitingConfirm`
+- `tools/TodoWriteTool.js`：首次建计划时在返回值注入「等用户确认」指令
+- `src/main/ipc.js`：`plan-confirm` / `plan-confirm-status` 两个通道，均按 `event.sender` 定位会话
+- `src/preload/overlay/plan-panel.js`：确认按钮 + 关键词轮询 + 防重复订阅
+- **修过一个真 bug**：`markEstablished` 每次都会重置 `confirmed`，
+  导致用户确认后 AI 每更新一次进度就又变回「等待确认」—— 现只在首次建立时决定
+
+---
+
 ## [0.6.96] - 2026-10-22
 
 ### Fixed

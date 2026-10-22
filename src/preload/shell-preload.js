@@ -37,6 +37,9 @@ const api = {
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
+  // 计划执行前人工确认
+  planConfirm: (opts) => ipcRenderer.invoke('plan-confirm', opts || {}),
+  planConfirmStatus: () => ipcRenderer.invoke('plan-confirm-status'),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },
   // 用户手动待办（与 AI 计划完全独立）
   userTodosList: () => ipcRenderer.invoke('user-todos-list'),

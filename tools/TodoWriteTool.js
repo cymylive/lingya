@@ -1,6 +1,6 @@
 const { Tool, ToolResult } = require('./ToolRegistry');
 const { EventEmitter } = require('events');
-const { markEstablished } = require('./plan-gate');
+const { markEstablished, isAwaitingConfirm } = require('./plan-gate');
 const fs = require('fs');
 const path = require('path');
 
@@ -234,6 +234,23 @@ class TodoWriteTool extends Tool {
       //
       // 注意：不要改 formatTodoOutput()——它有精确的单测断言，且职责是纯格式化。
       // 收尾指令属于 execute() 层的业务语义，加在这里。
+      // ===== 计划已建立但等待用户确认 =====
+      // 需求：AI 制定计划后不要立即执行，等用户点「确认执行」或回复确认词。
+      //
+      // 为什么在返回值里明说（而不只是靠 plan-gate 硬拦截）：
+      //   只硬拦截的话，AI 会反复尝试调工具被拒，白烧几轮对话还可能触发失败重试。
+      //   在返回值里明确"停下等确认"，AI 会自然地汇报计划并询问用户。
+      //
+      // 只在「仍在等待确认」时追加（isAwaitingConfirm 已内含 established +
+      // requireConfirm + !confirmed 三重判断），确认后自动不再打扰。
+      if (isAwaitingConfirm(sessionId, profileId)) {
+        output += '\n\n【计划已建立 · 等待用户确认】' +
+          '任务计划已保存，但按照当前设置，**需要用户确认后才能开始执行**。' +
+          '请立刻停止调用任何工具，向用户简要说明计划要点，' +
+          '并明确告知：「计划已就绪，请点击计划面板的【确认执行】按钮，或回复「确认执行」」。' +
+          '在用户确认之前，任何写操作都会被拒绝。';
+      }
+
       if (archived) {
         output += '\n\n【计划已全部完成 · 请收尾】' +
           '所有待办项均已标记为 completed，这是最后一步。' +

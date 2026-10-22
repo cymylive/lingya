@@ -84,6 +84,101 @@ function renderTodos(todos, archived) {
   if (float) float.classList.remove('lingya-hidden');
 }
 
+// ===================== 计划执行前人工确认 =====================
+// AI 制定计划后暂停，等用户点按钮或回复确认词。
+
+// 确认词白名单（严格匹配，避免误判）
+const CONFIRM_KEYWORDS = /^(确认执行|确认|执行吧|开始执行|开始吧|执行|ok|好的|可以|继续执行)[\s。！!，,]*$/i;
+
+/** 查询当前是否等待确认，控制按钮显隐 */
+async function refreshConfirmStatus() {
+  try {
+    if (!window.electronAPI || !window.electronAPI.planConfirmStatus) return;
+    const r = await window.electronAPI.planConfirmStatus();
+    const btn = document.getElementById('lingya-plan-confirm-btn');
+    if (!btn) return;
+    const awaiting = !!(r && r.success && r.awaiting);
+    btn.classList.toggle('lingya-hidden', !awaiting);
+  } catch (e) {
+    console.warn('[LingYa] 查询确认状态失败:', e && e.message);
+  }
+}
+
+/**
+ * 确认执行计划。
+ * @param {boolean} silent true = 用户已自己发消息（关键词触发），无需程序代发
+ */
+async function confirmPlanExec(silent) {
+  try {
+    const btn = document.getElementById('lingya-plan-confirm-btn');
+    if (btn) btn.disabled = true;
+    const r = await window.electronAPI.planConfirm({ silent: !!silent });
+    if (r && r.success) {
+      if (btn) btn.classList.add('lingya-hidden');
+    } else {
+      console.warn('[LingYa] 确认失败:', r && r.error);
+    }
+  } catch (e) {
+    console.error('[LingYa] 确认执行异常:', e && e.message);
+  } finally {
+    const btn = document.getElementById('lingya-plan-confirm-btn');
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** 绑定确认按钮与事件 */
+function bindPlanConfirm() {
+  const btn = document.getElementById('lingya-plan-confirm-btn');
+  if (btn && !btn.__lingyaBound) {
+    btn.__lingyaBound = true;
+    btn.addEventListener('click', confirmPlanExec);
+  }
+  refreshConfirmStatus();
+
+  // 用户点确认后，主进程通知 AI 继续（这里只负责刷新按钮状态）
+  try {
+    if (!window.__lingyaConfirmSubscribed && window.electronAPI.onPlanConfirmedContinue) {
+      window.__lingyaConfirmSubscribed = true;
+      window.electronAPI.onPlanConfirmedContinue(() => {
+        refreshConfirmStatus();
+        // 【关键】用户点了按钮但没发消息 → AI 停在那里不会自己动，必须程序代发一条。
+        // 这是「点确认后 AI 真的开始执行」的最后一环。
+        try {
+          const { sendMessageToChat } = require('../dom/chat-input');
+          sendMessageToChat(
+            '【用户已确认执行】计划已获得授权。请立即开始执行第一项，不要再询问确认、不要重复说明计划。',
+            '计划确认',
+            { auto: true }
+          );
+          console.log('[LingYa] 已代发「计划已确认，开始执行」指令');
+        } catch (e) {
+          console.error('[LingYa] 代发确认指令失败:', e && e.message);
+        }
+      });
+    }
+  } catch (_) {}
+
+  // 用户直发消息时检查确认词（通过 lastUserMessage 变化检测）
+  if (!window.__lingyaConfirmKeywordTimer) {
+    let lastSeen = '';
+    window.__lingyaConfirmKeywordTimer = setInterval(() => {
+      try {
+        // 读 chat-input 的共享 state（同进程，模块缓存，开销可忽略）
+        const st = require('./../dom/state');
+        const msg = String(st.lastUserMessage || '').trim();
+        if (msg && msg !== lastSeen) {
+          lastSeen = msg;
+          if (CONFIRM_KEYWORDS.test(msg)) {
+            console.log('[LingYa] 检测到确认关键词: ' + msg);
+            // silent=true：用户自己发的这条消息已经会到达 AI，无需程序代发
+            confirmPlanExec(true);
+          }
+        }
+      } catch (_) {}
+    }, 1000);
+  }
+}
+
 /** 拉取一次当前计划 */
 async function refreshTodos() {
   try {
@@ -91,6 +186,7 @@ async function refreshTodos() {
     if (r && r.success) {
       planSessionId = r.sessionId || null;
       renderTodos(r.todos, r.archived);
+      refreshConfirmStatus();   // 计划更新后同步按钮显隐
       const el = document.getElementById('lingya-plan-session');
       if (el) el.textContent = r.sessionId ? String(r.sessionId).slice(0, 10) : '(新会话)';
     }
@@ -405,6 +501,7 @@ function bindUserTodoPanel() {
 function bindPlanPanelEvents() {
   refreshTodos();
   bindUserTodoPanel();
+  bindPlanConfirm();
   if (!unsubscribe) {
     // 收到变更通知：若带 sessionId 且与当前会话不符 → 忽略（防跨会话串扰）。
     // payload 里已带 todos/archived，直接渲染，不再多发一次 get-todos IPC。

@@ -137,7 +137,17 @@ try {
 
 // 初始化安全增强配置存储（CTF 注入 + 拒绝拦截）
 try {
-  require('./security-store').init(app.getPath('userData'));
+  const secStore = require('./security-store');
+  secStore.init(app.getPath('userData'));
+  // 计划确认开关：把持久化配置同步到 plan-gate
+  // 默认开启（DEFAULT_CONFIG.planConfirmEnabled = true）
+  try {
+    const cfg = secStore.getConfig();
+    require('../../tools/plan-gate').setRequireConfirmEnabled(cfg.planConfirmEnabled !== false);
+    console.log('[LingYa] 计划确认开关: ' + (cfg.planConfirmEnabled !== false ? '开启' : '关闭'));
+  } catch (e) {
+    console.error('[LingYa] 同步计划确认开关失败:', e.message);
+  }
 } catch (err) {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }

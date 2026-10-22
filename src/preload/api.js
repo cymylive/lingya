@@ -187,6 +187,18 @@ let electronAPI = {
   getCtfPrompt: () => {
     return ipcRenderer.invoke('security-get-ctf-prompt');
   },
+  // ===== 计划执行前人工确认 =====
+  planConfirm: (opts) => {
+    return ipcRenderer.invoke('plan-confirm', opts || {});
+  },
+  planConfirmStatus: () => {
+    return ipcRenderer.invoke('plan-confirm-status');
+  },
+  onPlanConfirmedContinue: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('lingya-plan-confirmed-continue', h);
+    return () => ipcRenderer.removeListener('lingya-plan-confirmed-continue', h);
+  },
   // I2：覆盖层面板的「立即改写」按钮（与侧边栏同一个 IPC）
   manualRewrite: () => {
     return ipcRenderer.invoke('security-manual-rewrite');

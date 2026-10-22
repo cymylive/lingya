@@ -21,6 +21,7 @@ const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
 const { todoEvents, getTodos, clearTodos } = require('../../tools/TodoWriteTool');
 const userTodoStore = require('../../tools/UserTodoStore');
+const planGate = require('../../tools/plan-gate');
 const { checkGate } = require('../../tools/plan-gate');
 const memoryJanitor = require('../../tools/memory-janitor');
 const toolLifecycle = require('../../tools/tool-lifecycle');
@@ -75,6 +76,53 @@ function registerIpcHandlers() {
     const sessionId = resolveSessionId(ctx, event.sender);
     const r = getTodos(sessionId, profileId);
     return { success: true, todos: r.todos, archived: r.archived, sessionId };
+  });
+
+  // ===== 计划执行前人工确认 =====
+  // 用户点计划面板「确认执行」按钮 → 解除该会话的等待确认状态
+  // @param opts.silent 用户已自己发了消息（如回复「确认」），只需解锁、不必程序代发
+  ipcMain.handle('plan-confirm', async (event, opts) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx) return { success: false, error: '窗口不存在' };
+      const profileId = ctx.profileId;
+      const sessionId = resolveSessionId(ctx, event.sender);
+      planGate.markConfirmed(sessionId, profileId);
+      const silent = !!(opts && opts.silent);
+      console.log('[LingYa] 用户确认执行计划: session=' + (sessionId || 'null') +
+        (silent ? '（silent，用户已自行发消息）' : '（需程序代发继续指令）'));
+      // 点按钮时用户没发消息，AI 停在那里不会自己动 → 需要程序发一条。
+      // 回复确认词时用户的消息本身就会到达 AI → 不能再发，否则重复两轮。
+      if (!silent) {
+        try {
+          const target = ctx.view && ctx.view.webContents && !ctx.view.webContents.isDestroyed()
+            ? ctx.view.webContents
+            : (ctx.win && ctx.win.webContents);
+          if (target) target.send('lingya-plan-confirmed-continue', { sessionId });
+        } catch (_) {}
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 查询当前是否在等待确认（面板据此决定是否显示「确认执行」按钮）
+  ipcMain.handle('plan-confirm-status', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx) return { success: false, error: '窗口不存在' };
+      const profileId = ctx.profileId;
+      const sessionId = resolveSessionId(ctx, event.sender);
+      return {
+        success: true,
+        awaiting: planGate.isAwaitingConfirm(sessionId, profileId),
+        enabled: planGate.isRequireConfirmEnabled(),
+        sessionId,
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   // 清空当前会话待办（AI 明确说完成时 / 手动清）
@@ -1019,6 +1067,15 @@ function registerIpcHandlers() {
   ipcMain.handle('security-update-config', async (_event, { config } = {}) => {
     try {
       const updated = securityStore.updateConfig(config || {});
+      // 计划确认开关变化时同步到 plan-gate（否则改了设置不生效）
+      if (config && Object.prototype.hasOwnProperty.call(config, 'planConfirmEnabled')) {
+        try {
+          planGate.setRequireConfirmEnabled(updated.planConfirmEnabled !== false);
+          console.log('[LingYa] 计划确认开关已更新: ' + (updated.planConfirmEnabled !== false ? '开启' : '关闭'));
+        } catch (e) {
+          console.error('[LingYa] 同步计划确认开关失败:', e.message);
+        }
+      }
       return { success: true, config: updated };
     } catch (err) {
       return { success: false, error: err.message };
@@ -1028,7 +1085,11 @@ function registerIpcHandlers() {
   // 重置安全配置
   ipcMain.handle('security-reset-config', async () => {
     try {
-      return { success: true, config: securityStore.resetConfig() };
+      const cfg = securityStore.resetConfig();
+      try {
+        planGate.setRequireConfirmEnabled(cfg.planConfirmEnabled !== false);
+      } catch (_) {}
+      return { success: true, config: cfg };
     } catch (err) {
       return { success: false, error: err.message };
     }
