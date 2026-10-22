@@ -153,6 +153,8 @@ function saveAutoInjectSetting() {
 async function stopTask(silent) {
   // 先置本地标志，避免停止过程中又有回复进入处理
   state.stopped = true;
+  // 记录停止时刻：intercept-observer 用它判断「停止后收到的新回复」是否该自动恢复
+  state.stoppedAt = Date.now();
   try { await window.electronAPI.stopExecution(); } catch (_) {}
   // 点击页面原生「停止生成」按钮（各平台选择器不同）
   try {
@@ -178,6 +180,7 @@ async function stopTask(silent) {
 async function clearStopped() {
   if (!state.stopped) return;
   state.stopped = false;
+  state.stoppedAt = 0;
   try { await window.electronAPI.clearAbort(); } catch (_) {}
   setStopped(false);
 }

@@ -42,6 +42,15 @@ temp/
 .cuckooCode/
 .claude/
 
+# .lingyaCode/ 璋冭瘯鑴氭湰锛堜繚鐣欐枃妗ｄ笌绗旇锛屽拷鐣ヤ竴娆℃�ф帰閽堣剼鏈級
+# 璇存槑锛歀INGYA.md / README.md / notes/ / manifest.example.json 鏄」鐩祫浜э紝闇�璺熻釜
+.lingyaCode/*
+!.lingyaCode/LINGYA.md
+!.lingyaCode/README.md
+!.lingyaCode/notes/
+!.lingyaCode/notes/**
+!.lingyaCode/manifest.example.json
+
 # Coverage reports
 coverage.lcov
 test/coverage.lcov
@@ -51,5 +60,5 @@ test/coverage.lcov
 *.bak-*  
 *.bak  
  
-# 自带 Node 运行时（构建时由 scripts/fetch-runtime.mjs 下载） 
+# 锟皆达拷 Node 锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷时锟斤拷 scripts/fetch-runtime.mjs 锟斤拷锟截ｏ拷 
 resources/runtime/ 

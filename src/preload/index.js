@@ -66,6 +66,55 @@ function init() {
     return;
   }
 
+  // ===== 第 1 层：核心执行链路（必须先于一切 UI）=====
+  // 【架构不变量】拦截器是 Agent 循环的心脏，必须最先启动，且与 UI 初始化完全解耦。
+  //
+  // 0.6.94 静默停摆 bug 根因：startInterceptObserver() 曾埋在 UI try 块内、排在
+  // ui.injectCSS()/injectOverlay()/bindEvents() 之后。任一 UI 步骤抛异常 → catch
+  // → 事件监听器从未注册 → AI 回复到达但无人接收 → 工具永不执行；而 catch 里的
+  // forceShowOverlay() 又把面板强行显示出来，伪装成"一切正常"，用户完全无从发现。
+  //
+  // 此不变量由 test/preload/preload-init-order.test.js 锁定，改动前请先读它。
+  let interceptObserver = null;
+  try {
+    interceptObserver = require('./dom/intercept-observer');
+    interceptObserver.startInterceptObserver();
+  } catch (err) {
+    console.error('[LingYa][致命] 拦截器启动失败，Agent 循环不可用:', err);
+  }
+
+  // 第 1 层：手动触发拒绝改写（依赖 interceptObserver，与 UI 显示无关）
+  try {
+    if (interceptObserver && window.electronAPI && window.electronAPI.onManualRewrite) {
+      window.electronAPI.onManualRewrite((payload) => {
+        const requestId = (payload && payload.requestId) || '';
+        interceptObserver.manualRewrite().then((res) => {
+          try {
+            if (window.electronAPI.sendManualRewriteResult) {
+              window.electronAPI.sendManualRewriteResult(requestId, res || { success: false, error: '空结果' });
+            }
+          } catch (_) {}
+        }).catch((err) => {
+          try {
+            if (window.electronAPI.sendManualRewriteResult) {
+              window.electronAPI.sendManualRewriteResult(requestId, { success: false, error: err.message });
+            }
+          } catch (_) {}
+        });
+      });
+    }
+  } catch (err) {
+    console.error('[LingYa][致命] 手动改写监听注册失败:', err);
+  }
+
+  // 第 1 层：停滞监督者（兜底心跳，绝不能因 UI 失败而丢）
+  try {
+    require('./dom/supervisor').startSupervisor();
+  } catch (err) {
+    console.error('[LingYa][致命] 监督者启动失败:', err);
+  }
+
+  // ===== 第 2 层：UI 初始化（失败只影响显示，不影响执行）=====
   try {
     ui.injectCSS();
     ui.injectOverlay();
@@ -82,23 +131,35 @@ function init() {
 
     // 默认显示覆盖层 - 兜底强制显示
     ui.forceShowOverlay();
+  } catch (err) {
+    // UI 失败只影响显示，核心执行链路（第 1 层）已在前面独立启动，不受影响
+    console.error('[LingYa] UI 初始化失败（不影响工具执行）:', err);
+    try { ui.forceShowOverlay(); } catch (_) {}
+  }
 
-    // 拦截模式：监听主世界注入器派发的 'lingya-ai-response' 事件
-    const interceptObserver = require('./dom/intercept-observer');
-    interceptObserver.startInterceptObserver();
-
+  // ===== 第 3 层：其余子系统（各自独立，任一失败不拖累其他）=====
+  try {
     // 启动新会话自动注入监视（记忆+技能）
     require('./dom/auto-inject').startAutoInjectWatcher();
+  } catch (err) {
+    console.error('[LingYa] 自动注入监视启动失败:', err);
+  }
 
+  try {
     // 飞书同步：上报用户消息/AI回复/工具状态，并接收飞书来消息
     require('./dom/feishu-bridge').initFeishuBridge();
+  } catch (err) {
+    console.error('[LingYa] 飞书同步启动失败:', err);
+  }
 
+  try {
     // 定时任务：接收主进程下发的任务指令并发送给 AI
     require('./dom/schedule-bridge').initScheduleBridge();
+  } catch (err) {
+    console.error('[LingYa] 定时任务桥接启动失败:', err);
+  }
 
-    // 停滞监督者：独立心跳，检测到任务卡住时自动催促继续
-    require('./dom/supervisor').startSupervisor();
-
+  try {
     // ===== 执行插件注册的 preload 脚本 =====
     // 插件通过 ctx.registerPreload(scriptText) 注册脚本，主进程收集后经 IPC 返回，
     // 这里在页面渲染进程里执行（可挂钩 DOM / 网络）。
@@ -193,9 +254,9 @@ function init() {
       }, 800);
     } catch (_) { /* ignore */ }
   } catch (err) {
-    console.error('[LingYa] init() 出错:', err);
-    // 兜底：即使出错也强制显示面板
-    ui.forceShowOverlay();
+    // 第 3 层兜底：这里的异常只可能来自插件/归档/标题同步等辅助功能。
+    // 核心链路（第 1 层）与 UI（第 2 层）都已独立 try，不受影响。
+    console.error('[LingYa] 辅助子系统初始化失败（不影响核心执行）:', err);
   }
 
   // 对话记录：累积用户/AI 消息，供导出 Markdown

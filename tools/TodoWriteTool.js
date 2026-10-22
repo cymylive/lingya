@@ -217,7 +217,32 @@ class TodoWriteTool extends Tool {
       });
 
       console.log('[TodoWriteTool] 更新待办: key=' + key + ', sessionId=' + (sessionId || 'null') + ', archived=' + archived + ', ' + JSON.stringify(counts));
-      return ToolResult.success(formatTodoOutput(counts));
+
+      let output = formatTodoOutput(counts);
+
+      // 【计划全部完成 → 主动下达收尾指令】
+      //
+      // 为什么必须在这里做：
+      //   todoWrite 在这一刻已经知道「这是最后一步」（archived=true），但这个事实
+      //   从未传递给 AI。于是 AI 收尾汇报时可能只说"代码已经写好了"，漏掉「任务已完成」
+      //   四个字 → intercept-observer 的 DONE_HINT_RE 不命中 → state.taskDeclaredDone
+      //   保持 false → supervisor 30 秒后判定任务停滞 → 又催一轮逼 AI 补声明。
+      //   用户看到的就是「明明做完了，还被催一次」，白费一轮对话。
+      //
+      // 在这里把"该收尾了"提前告诉 AI，让它最后一次回复天然带上完成声明，
+      // 监督者就再也不会多催。
+      //
+      // 注意：不要改 formatTodoOutput()——它有精确的单测断言，且职责是纯格式化。
+      // 收尾指令属于 execute() 层的业务语义，加在这里。
+      if (archived) {
+        output += '\n\n【计划已全部完成 · 请收尾】' +
+          '所有待办项均已标记为 completed，这是最后一步。' +
+          '请在本次回复中直接向用户汇报最终结果，并在结尾明确写出「任务已完成」——' +
+          '这是监督者判定收尾的唯一依据，漏写会导致被误催一轮，影响体验。' +
+          '不需要再调用任何工具。';
+      }
+
+      return ToolResult.success(output);
     } catch (err) {
       return ToolResult.error('更新待办列表失败: ' + err.message);
     }

@@ -153,6 +153,24 @@ let electronAPI = {
     ipcRenderer.on('lingya-todos-updated', handler);
     return () => ipcRenderer.removeListener('lingya-todos-updated', handler);
   },
+  // ===== 用户手动待办（与 AI 计划完全独立）=====
+  userTodosList: () => {
+    return ipcRenderer.invoke('user-todos-list');
+  },
+  userTodosAdd: (text) => {
+    return ipcRenderer.invoke('user-todos-add', { text });
+  },
+  userTodosUpdate: (id, patch) => {
+    return ipcRenderer.invoke('user-todos-update', { id, patch });
+  },
+  userTodosDelete: (id) => {
+    return ipcRenderer.invoke('user-todos-delete', { id });
+  },
+  onUserTodosUpdated: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('lingya-user-todos-updated', handler);
+    return () => ipcRenderer.removeListener('lingya-user-todos-updated', handler);
+  },
   // ========== 安全增强 API（CTF 注入 + 拒绝拦截）==========
   getSecurityConfig: () => {
     return ipcRenderer.invoke('security-get-config').then(r => (r && r.success ? r.config : null));
@@ -168,6 +186,10 @@ let electronAPI = {
   },
   getCtfPrompt: () => {
     return ipcRenderer.invoke('security-get-ctf-prompt');
+  },
+  // I2：覆盖层面板的「立即改写」按钮（与侧边栏同一个 IPC）
+  manualRewrite: () => {
+    return ipcRenderer.invoke('security-manual-rewrite');
   },
   // ========== MCP 相关 API ==========
   listMcpServers: () => {
@@ -197,6 +219,10 @@ let electronAPI = {
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
   onSessionArchivedUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-archived-updated',h); return ()=>ipcRenderer.removeListener('session-archived-updated',h); },
+  // 手动触发拒绝改写（侧边栏「立即改写」按钮 → 主进程转发 → AI 视图执行）
+  onManualRewrite: (cb) => { const h=(_e,p)=>cb(p||{}); ipcRenderer.on('lingya-manual-rewrite',h); return ()=>ipcRenderer.removeListener('lingya-manual-rewrite',h); },
+  // I1：AI 视图执行完手动改写后，把结果回传给主进程（供侧边栏等待）
+  sendManualRewriteResult: (requestId, result) => ipcRenderer.send('security-manual-rewrite-result', { requestId, result }),
   // ========== 平台相关 API ==========
   listProviders: () => {
     return ipcRenderer.invoke('list-providers');

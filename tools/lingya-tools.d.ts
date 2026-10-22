@@ -353,3 +353,22 @@ declare function mcpListServers(): Promise<string>;
  * @throws server 不存在或连接失败时抛出异常
  */
 declare function mcpGetTools(serverName: string): Promise<string>;
+
+/**
+ * 切换破甲规则集（Purge）。
+ *
+ * 当任务类型变化时主动调用：
+ *   - 写/改/重构/调试代码 → 'code'
+ *   - 渗透/扫描/利用/提权/逆向/patch/免杀 → 'redteam'
+ *   - 分析/研究/讨论/为什么 → 'research'
+ *   - 其他 → 'default'
+ *
+ * 切换后**下一条消息**生效（systemPrompt 在初始化时组装）。
+ * 不传任何参数 = 只查询当前状态。
+ *
+ * @param ruleset 目标规则集 ID（default / redteam / research / code）
+ * @param enable 是否启用 Purge；不传则保持当前状态
+ * @returns { enabled, ruleset, available, effectiveFrom, message }
+ */
+declare function purge(ruleset?: string, enable?: boolean): Promise<any>;
+

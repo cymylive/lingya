@@ -200,6 +200,40 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
     branch = '快请求固定：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold + 'ms → ' + globalDelay + 'ms';
   }
   console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（' + branch + '）...');
+
+  // ===== 延迟决策可见化 =====
+  // 为什么需要：thinkRatio / thinkMaxDelay 只在「慢请求自适应」分支生效，
+  // 快请求分支用的是固定 globalSendDelay。用户看不到走了哪个分支，
+  // 就误以为「延迟功能没生效」——尤其多窗口场景（A 任务重走自适应、B 任务轻走固定），
+  // 两个窗口表现不同，很容易被当成 bug。这里把完整决策记入历史面板，一眼可查。
+  // 注意：必须包 try —— 可观测性代码绝不能阻断消息发送。
+  try {
+    const { addHistory } = require('../overlay/ui');
+    addHistory({
+      id: 'delay_' + Date.now(),
+      command: '[发送延迟] ' + sendDelay + 'ms（' + branch + '）',
+      success: true,
+      canceled: false,
+      output: [
+        '实际延迟: ' + sendDelay + 'ms',
+        '分支: ' + branch,
+        '--- 计算依据 ---',
+        'lastThinkMs（上次往返）: ' + thinkMs + 'ms',
+        'adaptiveThreshold（快慢阈值）: ' + threshold + 'ms',
+        'thinkRatio（自适应比例）: ' + state.thinkRatio,
+        'thinkMaxDelay（自适应上限）: ' + state.thinkMaxDelay + 'ms',
+        'globalSendDelay（快请求固定延迟）: ' + state.globalSendDelay + 'ms',
+        'initialSendDelay（兜底延迟）: ' + state.initialSendDelay + 'ms',
+        '',
+        '判定: ' + (thinkMs > threshold
+          ? '上次往返 ' + thinkMs + 'ms > 阈值 ' + threshold + 'ms → 走【慢请求自适应】，thinkRatio/thinkMaxDelay 生效'
+          : '上次往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold + 'ms → 走【快请求固定】，thinkRatio/thinkMaxDelay 不参与'),
+        '消息 tag: ' + (tag || '(无)'),
+      ].join(String.fromCharCode(10)),
+      timestamp: Date.now(),
+    });
+  } catch (_) { /* 记录失败不影响发送 */ }
+
   setTimeout(function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
@@ -219,6 +253,13 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
       });
     } catch (_) { /* 状态机异常不影响发送 */ }
     console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
+    // 记录用户原始消息（排除程序自动发的催促/工具回传，供本地拒绝改写使用）
+    if (!isAuto) {
+      try {
+        state.lastUserMessage = String(msg || '');
+        state.lastUserMessageAt = Date.now();
+      } catch (_) {}
+    }
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
     if (typeof afterSent === 'function') afterSent();
   }, sendDelay);

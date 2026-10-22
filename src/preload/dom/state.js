@@ -8,6 +8,9 @@ module.exports = {
   pendingInitialPrompt: false,
   // 待执行的工具调用
   pendingToolCall: null,
+  // 最近一次用户发出的原始消息（用于本地规则改写 / 拒绝兜底）
+  lastUserMessage: '',
+  lastUserMessageAt: 0,
   // 首条消息兜底延迟（毫秒）：尚无思考历史时使用
   initialSendDelay: 1000,
   // ===== AI 思考耗时自适应延迟 =====
@@ -34,6 +37,9 @@ module.exports = {
   lastResponseMsgIds: null,
   // 用户是否点击了「停止」：为 true 时丢弃后续 AI 回复与工具结果，不再自动继续
   stopped: false,
+  // 点「停止」的时刻。用于判断「停止后收到的新回复」是否该自动恢复执行
+  // （见 intercept-observer 的 processInterceptedResponse 兜底逻辑）
+  stoppedAt: 0,
   // 是否正在等待"用当前对话改写拒绝"的回复：为 true 时，下一条 AI 回复当作改写结果发出去
   awaitingRefusalRewrite: false,
   // 最近一次"活动"时间戳（AI 响应/工具执行/发送消息都会更新）。

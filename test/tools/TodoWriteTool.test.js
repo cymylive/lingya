@@ -112,3 +112,82 @@ test('同一窗口不同会话互相隔离（sessionId 优先）', async () => {
   // 未指定 sessionId 时读临时键（pending:winA），此前没写过 → 空
   assert.deepStrictEqual(getTodos(null, 'winA').todos, []);
 });
+
+
+// ===================== 计划全部完成时的收尾提示 =====================
+// 背景：todoWrite 已经把 archived 算出来了（知道"这是最后一步"），但没传给 AI。
+// 结果 AI 收尾汇报可能漏写「任务已完成」→ DONE_HINT_RE 不命中 →
+// supervisor 误判任务停滞 → 多催一轮，白费一次对话。
+// 修复：archived=true 时在返回值末尾注入收尾指令。
+
+test('计划全部完成时返回值包含收尾指令', async () => {
+  const tool = new TodoWriteTool();
+  const res = await tool.execute({
+    profileId: 'pDone',
+    todos: [
+      { content: 'A', status: 'completed' },
+      { content: 'B', status: 'completed' },
+    ],
+  });
+  assert.strictEqual(res.success, true);
+  assert.ok(res.data.includes('计划已全部完成'), '应包含「计划已全部完成」提示');
+  assert.ok(res.data.includes('请收尾'), '应明确要求收尾');
+});
+
+test('收尾指令包含「任务已完成」四个字（保证命中 DONE_HINT_RE）', async () => {
+  const tool = new TodoWriteTool();
+  const res = await tool.execute({
+    profileId: 'pDone2',
+    todos: [{ content: 'X', status: 'completed' }],
+  });
+  // 与 intercept-observer 的 DONE_HINT_RE 保持一致
+  const DONE_HINT_RE = /(任务已?完成|全部完成|所有(任务|步骤)?(已|都)?完成|均已?完成)/i;
+  assert.ok(
+    DONE_HINT_RE.test(res.data),
+    '工具返回值本身应命中 DONE_HINT_RE，才能确保 AI 照抄后触发停止监督'
+  );
+});
+
+test('计划未全部完成时不含收尾指令', async () => {
+  const tool = new TodoWriteTool();
+  const res = await tool.execute({
+    profileId: 'pNotDone',
+    todos: [
+      { content: 'A', status: 'completed' },
+      { content: 'B', status: 'in_progress' },
+    ],
+  });
+  assert.strictEqual(res.success, true);
+  assert.ok(!res.data.includes('计划已全部完成'), '未完成时不应出现收尾指令');
+  assert.ok(!res.data.includes('请收尾'), '未完成时不应要求收尾');
+});
+
+test('单条计划全部完成也触发收尾指令', async () => {
+  const tool = new TodoWriteTool();
+  const res = await tool.execute({
+    profileId: 'pSingle',
+    todos: [{ content: 'only', status: 'completed' }],
+  });
+  assert.ok(res.data.includes('请收尾'));
+});
+
+test('收尾指令明确要求不要继续调工具', async () => {
+  const tool = new TodoWriteTool();
+  const res = await tool.execute({
+    profileId: 'pNoMoreTool',
+    todos: [{ content: 'Z', status: 'completed' }],
+  });
+  assert.ok(
+    /不需要再调用|无需再调用|不要再调用/.test(res.data),
+    '收尾指令应明确告知不必再调工具，避免 AI 反复试探'
+  );
+});
+
+test('formatTodoOutput 本身行为不变（收尾指令不污染它）', () => {
+  const counts = { pending: 0, inProgress: 0, completed: 2 };
+  assert.strictEqual(
+    formatTodoOutput(counts),
+    'Updated todo list: 0 pending, 0 in progress, 2 completed.',
+    'formatTodoOutput 必须保持纯净，收尾指令在 execute() 层追加'
+  );
+});

@@ -38,6 +38,12 @@ const api = {
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },
+  // 用户手动待办（与 AI 计划完全独立）
+  userTodosList: () => ipcRenderer.invoke('user-todos-list'),
+  userTodosAdd: (text) => ipcRenderer.invoke('user-todos-add', { text }),
+  userTodosUpdate: (id, patch) => ipcRenderer.invoke('user-todos-update', { id, patch }),
+  userTodosDelete: (id) => ipcRenderer.invoke('user-todos-delete', { id }),
+  onUserTodosUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-user-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-user-todos-updated',h); },
   onSessionChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-session-changed',h); return ()=>ipcRenderer.removeListener('lingya-session-changed',h); },
   onHistoryUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-history-updated',h); return ()=>ipcRenderer.removeListener('lingya-history-updated',h); },
   // 记忆
@@ -58,6 +64,7 @@ const api = {
   updateSecurityConfig: (config) => ipcRenderer.invoke('security-update-config', { config }),
   resetSecurityConfig: () => ipcRenderer.invoke('security-reset-config'),
   getCtfPrompt: () => ipcRenderer.invoke('security-get-ctf-prompt'),
+  triggerManualRewrite: () => ipcRenderer.invoke('security-manual-rewrite'),
   // 定时任务
   listSchedules: () => ipcRenderer.invoke('schedule-list'),
   addSchedule: (task) => ipcRenderer.invoke('schedule-add', task),

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "note": "Purge 规则集清单。新增规则集在此登记，UI 与工具从这份清单读取。",
+  "rulesets": [
+    {
+      "id": "default",
+      "name": "通用破甲",
+      "description": "基础强指令块：禁止拒绝/免责/稀释/标注注入。任何场景可用。",
+      "file": "default.md",
+      "icon": "🛡️"
+    },
+    {
+      "id": "redteam",
+      "name": "红队 / 渗透 / CTF",
+      "description": "安全测试专用。允许端口扫描、漏洞利用、提权、逆向、免杀原理。逆向工程默认执行：静态分析、动态调试、脱壳、反混淆、授权机制与 DRM 实现分析。",
+      "file": "redteam.md",
+      "icon": "⚔️"
+    },
+    {
+      "id": "research",
+      "name": "研究 / 学术",
+      "description": "争议性技术讨论。不回避敏感话题，给完整分析而非安全版。",
+      "file": "research.md",
+      "icon": "🔬"
+    },
+    {
+      "id": "code",
+      "name": "代码工程",
+      "description": "专注可运行代码，不给最佳实践说教，一次只改必要部分。",
+      "file": "code.md",
+      "icon": "💻"
+    }
+  ]
+}

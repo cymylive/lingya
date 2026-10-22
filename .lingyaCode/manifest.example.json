@@ -1,0 +1,39 @@
+{
+  "_comment": "LingYa Downloader 清单示例。删掉 _comment 不影响。",
+  "download_dir": "downloads",
+  "install_dir": "installed",
+  "items": [
+    {
+      "name": "7-Zip 24.09 (x64)",
+      "url": "https://www.7-zip.org/a/7z2409-x64.exe",
+      "md5": "",
+      "sha256": "",
+      "filename": "7z2409-x64.exe",
+      "extract": null,
+      "installer": {
+        "cmd": "7z2409-x64.exe",
+        "args": ["/S"],
+        "workdir": "."
+      },
+      "note": "静默安装示例（Inno/NSIS 用 /S）",
+      "enabled": false
+    },
+    {
+      "name": "示例压缩包（本地自测）",
+      "url": "http://127.0.0.1:8899/sample.zip",
+      "filename": "sample.zip",
+      "extract": "zip",
+      "extract_to": "sample",
+      "note": "本地自测用，需先运行 selftest_server.py",
+      "enabled": true
+    },
+    {
+      "name": "示例大文件（分片下载测试）",
+      "url": "http://127.0.0.1:8899/big.bin",
+      "filename": "big.bin",
+      "extract": null,
+      "note": "20MB 随机数据，测多线程分片",
+      "enabled": true
+    }
+  ]
+}

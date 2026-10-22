@@ -293,6 +293,40 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     console.error('[LingYa] 构建 Superpowers 注入块失败:', err.message);
   }
 
+  // ===== Purge 破甲注入块 =====
+  // 对齐 dsh-purge 的机制：注入强指令块，让模型把本会话的本地指令当作
+  // 「运行配置」而非「不可信的参考建议」，从而不被 Harness 的保守默认策略削弱。
+  //
+  // 与 CTF 注入的区别：
+  //   CTF   = 声明场景（"你在 CTF 沙箱里"）
+  //   Purge = 清洗 Harness 层（"别把我的话当 prompt injection"）
+  // 两者可同时启用，Purge 在前（先解除削弱，再声明场景）。
+  let purgeSection = '';
+  try {
+    const secCfgPurge = securityStore.getConfig();
+    if (secCfgPurge.purgeEnabled) {
+      const purgeDir = path.join(PROMPT_DIR, 'purge');
+      const rulesetId = String(secCfgPurge.purgeRuleset || 'default').trim() || 'default';
+      // 只允许 manifest 里登记过的 id（防路径穿越）
+      let allowed = ['default'];
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(purgeDir, 'manifest.json'), 'utf-8'));
+        if (Array.isArray(manifest.rulesets)) allowed = manifest.rulesets.map(r => r.id);
+      } catch (_) { /* manifest 缺失时只放行 default */ }
+      const safeId = allowed.includes(rulesetId) ? rulesetId : 'default';
+      const rulePath = path.join(purgeDir, safeId + '.md');
+      if (fs.existsSync(rulePath)) {
+        const ruleText = fs.readFileSync(rulePath, 'utf-8');
+        purgeSection = ruleText;
+        console.log('[LingYa] Purge 注入块: ruleset=' + safeId + ', 长度=' + purgeSection.length);
+      } else {
+        console.warn('[LingYa] Purge 规则集文件不存在: ' + rulePath);
+      }
+    }
+  } catch (err) {
+    console.error('[LingYa] 构建 Purge 注入块失败:', err.message);
+  }
+
   // CTF 注入块（可选，由安全增强配置控制）
   let ctfSection = '';
   try {
@@ -356,7 +390,8 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{MEMORY_SECTION}}': memorySection,
     '{{SKILL_SECTION}}': skillSection,
     '{{SUPERPOWERS_SECTION}}': superpowersSection,
-    '{{CTF_SECTION}}': ctfSection,
+    // Purge 在前：先解除 Harness 削弱，再声明 CTF 场景
+    '{{CTF_SECTION}}': (purgeSection ? purgeSection + '\n\n' : '') + ctfSection,
     '{{AGENT_SECTION}}': agent.section || '',
     '{{PLUGIN_SECTION}}': pluginSection,
   };

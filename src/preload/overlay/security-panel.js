@@ -67,6 +67,8 @@ async function loadConfig() {
     if (stallThreshold) stallThreshold.value = cfg.stallThresholdMs != null ? Math.round(cfg.stallThresholdMs / 1000) : 120;
     if (stallContinueMax) stallContinueMax.value = cfg.stallContinueMax != null ? cfg.stallContinueMax : 5;
     if (refusalEnabled) refusalEnabled.checked = !!cfg.refusalEnabled;
+    const localRewrite = el('lingya-security-local-rewrite');
+    if (localRewrite) localRewrite.checked = cfg.localRewriteEnabled !== false;
     if (aiRewrite) aiRewrite.checked = !!cfg.aiRewriteEnabled;
     const aiRewriteViaChat = el('lingya-security-ai-rewrite-via-chat');
     if (aiRewriteViaChat) aiRewriteViaChat.checked = !!cfg.aiRewriteViaChat;
@@ -98,6 +100,7 @@ async function saveConfig() {
     stallThresholdMs: (() => { const v = el('lingya-security-stall-threshold'); const s = v ? Math.floor(Number(v.value)) : 0; return s > 0 ? s * 1000 : ''; })(),
     stallContinueMax: el('lingya-security-stall-continue-max') ? el('lingya-security-stall-continue-max').value : '',
     refusalEnabled: !!(el('lingya-security-refusal-enabled') && el('lingya-security-refusal-enabled').checked),
+    localRewriteEnabled: !!(el('lingya-security-local-rewrite') && el('lingya-security-local-rewrite').checked),
     aiRewriteEnabled: !!(el('lingya-security-ai-rewrite') && el('lingya-security-ai-rewrite').checked),
     aiRewriteViaChat: !!(el('lingya-security-ai-rewrite-via-chat') && el('lingya-security-ai-rewrite-via-chat').checked),
     aiEndpoint: el('lingya-security-ai-endpoint') ? el('lingya-security-ai-endpoint').value.trim() : '',
@@ -172,6 +175,22 @@ async function injectCtfPrompt() {
 }
 
 /**
+ * 手动触发拒绝改写（I2：与侧边栏「立即改写」按钮同源）
+ */
+async function manualRewrite() {
+  try {
+    const res = await window.electronAPI.manualRewrite();
+    if (res && res.success) {
+      showToast(res.mode === 'local' ? '已本地改写并重发' : '已请求 AI 改写', 2500);
+    } else {
+      showToast('改写失败：' + ((res && res.error) || '未知错误'), 3000);
+    }
+  } catch (err) {
+    showToast('改写异常：' + err.message, 3000);
+  }
+}
+
+/**
  * 绑定安全增强面板事件
  */
 function bindSecurityPanelEvents() {
@@ -189,6 +208,9 @@ function bindSecurityPanelEvents() {
 
   const injectBtn = el('lingya-security-inject');
   injectBtn?.addEventListener('click', injectCtfPrompt);
+
+  const manualBtn = el('lingya-security-manual-rewrite');
+  manualBtn?.addEventListener('click', manualRewrite);
 }
 
 module.exports = { bindSecurityPanelEvents, openSecurityManager, closeSecurityManager };

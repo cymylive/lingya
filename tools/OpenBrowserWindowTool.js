@@ -30,8 +30,14 @@ class OpenBrowserWindowTool extends Tool {
   }
 
   async execute(params) {
-    const { url, id, width, height } = params;
-    const options = {};
+    // profileId 由 JsRunner 注入（见 tools/JsRunner.js 的 tool.execute({... profileId})），
+    // 标识「是哪个窗口发起的这次工具调用」。
+    //
+    // 【必须传下去】多窗口场景下，若不带 profileId，browser-window-manager 只能用
+    // 「最后激活的窗口」猜测归属 —— A 窗口调用工具、用户切到 B 窗口，标签就会开到 B。
+    // 这是用户实测反馈的 bug（A 开 5 个标签全跑到 B 的标签栏）。
+    const { url, id, width, height, profileId } = params;
+    const options = { profileId };
     if (width) options.width = width;
     if (height) options.height = height;
     const windowId = windowManager.openWindow(id || null, url, options);

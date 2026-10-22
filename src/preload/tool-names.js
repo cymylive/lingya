@@ -52,6 +52,7 @@ const STATIC_TOOL_NAMES = [
   'mcp_get_tools',
   'nameConversation',
   'listPlugins',
+  'purge',
 ];
 
 // 动态工具名集合（含插件贡献），null 表示尚未拉取

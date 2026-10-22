@@ -46,8 +46,34 @@ class BrowserWindowManager {
       do { id = 'win-' + (this.nextAutoId++); } while (this.entries.has(id));
     }
 
-    // ---- 优先：当前窗口内开标签 ----
-    const ctx = this._getActiveContext();
+    // ---- 优先：发起调用的那个窗口内开标签 ----
+    //
+    // 【为什么必须按 profileId 定位】
+    //   _getActiveContext() 返回的是「最后被激活的窗口」（getMainContext →
+    //   lastActiveWindowId）。多窗口场景下这会导致标签开错窗口：
+    //     A 窗口执行 openBrowserWindow（开 5 个标签）→ 用户切到 B 窗口
+    //     → 工具调用时 lastActiveWindowId 已是 B → 5 个标签全跑到 B 的标签栏。
+    //   用户实测复现，是明确的 bug。
+    //
+    // 降级顺序：
+    //   ① options.profileId → getWindowByProfileId（精确，发起窗口）
+    //   ② 无 profileId / 找不到 → _getActiveContext()（兼容旧调用）
+    let ctx = null;
+    const pid = options && options.profileId;
+    if (pid) {
+      try {
+        const windowState = require('../src/main/window');
+        ctx = windowState.getWindowByProfileId(pid);
+        if (ctx) {
+          console.log('[LingYa] openWindow 按 profileId 定位窗口: ' + pid);
+        } else {
+          console.warn('[LingYa] openWindow 未找到 profileId=' + pid + ' 的窗口，回退到活跃窗口');
+        }
+      } catch (err) {
+        console.warn('[LingYa] openWindow 按 profileId 定位失败:', err && err.message);
+      }
+    }
+    if (!ctx) ctx = this._getActiveContext();
     if (ctx && ctx.tabs && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
       try {
         const tabManager = require('../src/main/tab-manager');

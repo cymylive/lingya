@@ -20,6 +20,7 @@ const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
 const { todoEvents, getTodos, clearTodos } = require('../../tools/TodoWriteTool');
+const userTodoStore = require('../../tools/UserTodoStore');
 const { checkGate } = require('../../tools/plan-gate');
 const memoryJanitor = require('../../tools/memory-janitor');
 const toolLifecycle = require('../../tools/tool-lifecycle');
@@ -83,6 +84,91 @@ function registerIpcHandlers() {
     const sessionId = resolveSessionId(ctx, event.sender);
     clearTodos(sessionId, profileId);
     return { success: true };
+  });
+
+  // ========== 用户手动待办（与 AI 的 todoWrite 完全独立）==========
+  // 存储：<userData>/lingya-user-todos.json，独立于 lingya-todos.json
+  // 所有 handler 一律按 event.sender 定位窗口 —— 绝不能用 getMainContext()（最后激活窗口），
+  // 那是多窗口串台的已知根因（openBrowserWindow 修过同类 bug）。
+
+  /**
+   * 广播用户待办变更：同时发给 AI 视图（覆盖层）与壳窗口（侧边栏）。
+   * 带 sessionId，前端按当前会话过滤，避免跨会话串扰。
+   */
+  function broadcastUserTodos(sessionId, todos) {
+    const payload = { sessionId: sessionId || null, todos };
+    for (const ctx of windowState.getAllContexts()) {
+      try {
+        const wc = ctx.win && ctx.win.webContents;
+        if (wc && !wc.isDestroyed()) wc.send('lingya-user-todos-updated', payload);
+      } catch (_) {}
+      try {
+        const raw = ctx.rawWin;
+        if (raw && !raw.isDestroyed() && raw.webContents) {
+          raw.webContents.send('lingya-user-todos-updated', payload);
+        }
+      } catch (_) {}
+    }
+  }
+
+  ipcMain.handle('user-todos-list', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
+    const todos = userTodoStore.list(sessionId, profileId);
+    return { success: true, todos, sessionId };
+  });
+
+  ipcMain.handle('user-todos-add', async (event, { text } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
+    try {
+      // 支持多行粘贴：parseBulk 在存储层，只有每行都带列表标记时才拆条
+      const parts = userTodoStore.parseBulk(text);
+      if (parts.length === 0) {
+        return { success: false, error: '待办内容不能为空' };
+      }
+      const added = [];
+      for (const p of parts) {
+        added.push(userTodoStore.add(sessionId, profileId, p));
+      }
+      const todos = userTodoStore.list(sessionId, profileId);
+      broadcastUserTodos(sessionId, todos);
+      return { success: true, added, todos, sessionId };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('user-todos-update', async (event, { id, patch } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
+    try {
+      const ok = userTodoStore.update(sessionId, profileId, String(id || ''), patch || {});
+      if (!ok) return { success: false, error: '待办不存在' };
+      const todos = userTodoStore.list(sessionId, profileId);
+      broadcastUserTodos(sessionId, todos);
+      return { success: true, todos };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('user-todos-delete', async (event, { id } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profileId = ctx ? ctx.profileId : null;
+    const sessionId = resolveSessionId(ctx, event.sender);
+    try {
+      const ok = userTodoStore.remove(sessionId, profileId, String(id || ''));
+      if (!ok) return { success: false, error: '待办不存在' };
+      const todos = userTodoStore.list(sessionId, profileId);
+      broadcastUserTodos(sessionId, todos);
+      return { success: true, todos };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   // 侧栏开合联动窗口宽度：展开时窗口加宽 280px（侧栏占新增空间，AI 对话区净宽不变）
@@ -961,6 +1047,51 @@ function registerIpcHandlers() {
         if (fs.existsSync(p)) ctfPrompt = fs.readFileSync(p, 'utf-8');
       }
       return { success: true, prompt: ctfPrompt, enabled: !!cfg.ctfInjectionEnabled };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 手动触发拒绝改写：侧边栏按钮 → 转发给该窗口的 AI 视图执行 → 等待结果
+  // 为什么走事件而不是直接调用：改写逻辑（本地规则 / 当前对话改写）全在 preload，
+  // 主进程只负责路由意图。
+  // I1：handler 返回 Promise 等待 AI 视图回传结果（带 requestId + 15s 超时），
+  //     否则侧边栏会在 manualRewrite 实际失败时误报「已触发改写」。
+  const manualRewritePending = new Map(); // requestId -> { resolve, timer }
+
+  ipcMain.on('security-manual-rewrite-result', (_event, { requestId, result } = {}) => {
+    const p = manualRewritePending.get(requestId);
+    if (!p) return;
+    clearTimeout(p.timer);
+    manualRewritePending.delete(requestId);
+    p.resolve(result || { success: false, error: '空结果' });
+  });
+
+  ipcMain.handle('security-manual-rewrite', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx) return { success: false, error: '未找到窗口上下文' };
+      let target = null;
+      try {
+        if (ctx.view && ctx.view.webContents && !ctx.view.webContents.isDestroyed()) {
+          target = ctx.view.webContents;
+        } else if (ctx.win && ctx.win.webContents && !ctx.win.webContents.isDestroyed()) {
+          target = ctx.win.webContents;
+        }
+      } catch (_) {}
+      if (!target) return { success: false, error: 'AI 视图不可用' };
+
+      const requestId = 'mr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const resultPromise = new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          manualRewritePending.delete(requestId);
+          resolve({ success: false, error: '等待改写结果超时（15 秒）' });
+        }, 15000);
+        manualRewritePending.set(requestId, { resolve, timer });
+      });
+
+      target.send('lingya-manual-rewrite', { requestId });
+      return await resultPromise;
     } catch (err) {
       return { success: false, error: err.message };
     }

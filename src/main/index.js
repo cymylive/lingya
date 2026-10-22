@@ -163,6 +163,15 @@ try {
   console.error('[LingYa] 初始化待办存储失败:', err.message);
 }
 
+// 初始化【用户手动待办】存储（独立文件 lingya-user-todos.json）
+// 与上面的 AI 计划（todoWrite）完全分离：AI 的 todoWrite 是"替换完整列表"语义，
+// 共用一份会让用户手动记的待办被 AI 覆盖掉。
+try {
+  require('../../tools/UserTodoStore').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化用户待办存储失败:', err.message);
+}
+
 // 初始化插件系统（状态存储 + 宿主）
 // 注意：必须在 registerIpcHandlers() 之前加载，否则插件贡献的工具不会进入 IPC 可达范围
 try {

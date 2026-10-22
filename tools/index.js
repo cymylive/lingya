@@ -31,6 +31,7 @@ const { ViewImageTool } = require('./ViewImageTool');
 const { BashBackgroundTool, BashOutputTool, BashKillTool } = require('./BackgroundTaskTool');
 const { NameConversationTool } = require('./NameConversationTool');
 const { ListPluginsTool } = require('./ListPluginsTool');
+const { PurgeTool } = require('./PurgeTool');
 
 // 创建全局工具注册表
 const registry = new ToolRegistry();
@@ -68,6 +69,7 @@ registry.register(new BashOutputTool());
 registry.register(new BashKillTool());
 registry.register(new NameConversationTool());
 registry.register(new ListPluginsTool());
+registry.register(new PurgeTool());
 
 // 导出
 module.exports = {
@@ -100,6 +102,7 @@ module.exports = {
   BashKillTool,
   NameConversationTool,
   ListPluginsTool,
+  PurgeTool,
   // 便捷方法
   getAllTools: () => registry,
   getToolDescriptions: () => registry.getDescriptions(),

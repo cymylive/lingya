@@ -11,6 +11,8 @@
  *   aiEndpoint / aiKey / aiModel  LLM 接口配置（OpenAI 兼容）
  *   mockResponse         内置替换提示文本
  *   customKeywords       自定义拒绝关键词 { zh: [], en: [] }
+ *   purgeEnabled         Purge 破甲规则集是否启用
+ *   purgeRuleset         当前启用的规则集 ID（见 src/prompt/purge/manifest.json）
  */
 const fs = require('fs');
 const path = require('path');
@@ -43,6 +45,16 @@ const DEFAULT_CONFIG = {
   aiModel: '',
   mockResponse: DEFAULT_MOCK_RESPONSE,
   customKeywords: {},
+  // ===== Purge 破甲系统 =====
+  // 独立于 ctfInjectionEnabled：CTF 是「场景声明」，purge 是「Harness 层清洗」
+  // 两者可同时启用（purge 提供强指令块，ctf 提供安全测试工作流）
+  purgeEnabled: false,
+  purgeRuleset: 'default',
+  // ===== 本地规则改写（零 LLM 依赖）=====
+  // 拒绝时优先用本地规则改写原请求（动词降级 + 框架软化）后重发。
+  // 不需要任何外部 API、不多花一轮对话，零成本零延迟。
+  // 只有本地改写无效时才回退到 AI 改写 / 固定文本。
+  localRewriteEnabled: true,
 };
 
 let STORE_FILE = null;
@@ -113,7 +125,7 @@ function updateConfig(patch) {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
     } else if (key === 'autoContinueMax' || key === 'planContinueMax' || key === 'stallThresholdMs' || key === 'stallContinueMax') {
       next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）

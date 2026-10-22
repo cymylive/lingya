@@ -13,17 +13,32 @@ function deepseekHookInstaller() {
   if (window[MARKER]) return;
   window[MARKER] = true;
 
+  // 主路径（已知的 DeepSeek 流式补全端点）
   var COMPLETION_PATH = '/api/v0/chat/completion';
 
+  /**
+   * 判断是否为「AI 回复流式请求」。
+   *
+   * 为什么不用严格等值：DeepSeek 会改端点细节（版本号 / 子路径 / trailing slash）。
+   * 严格等值一旦不匹配，isCompletion 永远 false → 事件永不派发 → 整个 Agent 循环
+   * 静默失效，且没有任何报错。这是不可接受的失败模式（0.6.94 排查时的重要盲区）。
+   *
+   * 放宽为：POST + 路径以 /api/v 开头 + 含 chat + 含 completion。
+   * 保留了足够的特异性（不会误匹配 share/feedback 等其它端点），
+   * 又能容忍版本号与子路径变化。
+   */
   function isCompletion(url, method) {
     if (!url) return false;
     if (String(method || 'GET').toUpperCase() !== 'POST') return false;
+    var pathname;
     try {
-      var u = new URL(url, document.baseURI);
-      return u.pathname === COMPLETION_PATH;
+      pathname = new URL(url, document.baseURI).pathname;
     } catch (e) {
-      return String(url).indexOf(COMPLETION_PATH) !== -1;
+      pathname = String(url).split('?')[0];
     }
+    if (pathname === COMPLETION_PATH) return true;
+    // 放宽匹配：/api/v{N}/chat/**completion**
+    return /^\/api\/v[\d.]+\/chat\//.test(pathname) && /completion/i.test(pathname);
   }
 
   function dispatch(text, finished, tokenUsage, msgIds, interrupted) {
@@ -338,6 +353,17 @@ function deepseekHookInstaller() {
       localStorage.setItem('lingya-ds-headers', JSON.stringify(lower));
     } catch (e) { /* ignore */ }
   }
+
+  // ---------- 自检探针：确认 hook 已生效且事件通道贯通 ----------
+  // 主世界派发的 CustomEvent 若因隔离世界/时序问题收不到，整个 Agent 循环会静默失效。
+  // 这里在注入完成后延迟派发一个自检事件，由 preload 侧记录日志（用户可见）。
+  setTimeout(function () {
+    try {
+      window.dispatchEvent(new CustomEvent('lingya-hook-ready', {
+        detail: { provider: 'deepseek', at: Date.now() }
+      }));
+    } catch (e) { /* ignore */ }
+  }, 0);
 
   // ---------- fetch 拦截 ----------
   var origFetch = window.fetch;
