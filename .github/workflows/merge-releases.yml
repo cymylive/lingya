@@ -1,0 +1,58 @@
+name: Merge macOS assets into main release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: '要搬运的源 Release tag（搬完会删除）'
+        required: true
+        default: 'v0.6.100-macos'
+      target_tag:
+        description: '目标 Release tag'
+        required: true
+        default: 'v0.6.100'
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download assets from source release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC: ${{ inputs.source_tag }}
+        run: |
+          mkdir -p /tmp/assets
+          gh release download "$SRC" --repo "${{ github.repository }}" --dir /tmp/assets --pattern '*'
+          echo "--- downloaded ---"
+          ls -lh /tmp/assets
+
+      - name: Upload assets to target release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DST: ${{ inputs.target_tag }}
+        run: |
+          gh release upload "$DST" /tmp/assets/* --repo "${{ github.repository }}" --clobber
+          echo "--- target assets now ---"
+          gh release view "$DST" --repo "${{ github.repository }}" --json assets --jq '.assets[].name'
+
+      - name: Verify then delete source release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SRC: ${{ inputs.source_tag }}
+          DST: ${{ inputs.target_tag }}
+        run: |
+          set -e
+          COUNT=$(gh release view "$DST" --repo "${{ github.repository }}" --json assets --jq '.assets | length')
+          echo "target asset count = $COUNT"
+          if [ "$COUNT" -lt 14 ]; then
+            echo "::error::target release only has $COUNT assets, expected >= 14. Abort, source kept."
+            exit 1
+          fi
+          # 确认 mac 资产确实到位
+          gh release view "$DST" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -q 'lingya-mac-v' || { echo "::error::mac assets missing"; exit 1; }
+          echo "OK, deleting source release $SRC"
+          gh release delete "$SRC" --repo "${{ github.repository }}" --yes --cleanup-tag
+          echo "DONE"
