@@ -2,10 +2,10 @@
  * 工具/JS 脚本执行器（与回复获取方式无关）
  * 拦截模式和 DOM 模式共用的执行逻辑：执行工具调用、执行 JS 脚本、通知 UI。
  */
-const { showToast, setTaskStatus, addHistory, truncate, flashBadge } = require('../overlay/ui');
+const { showToast, setTaskStatus, addHistory, truncate, flashBadge, setTaskbarDetail, addBackgroundTask, removeBackgroundTask } = require('../overlay/ui');
 const { sendToolResultToChat } = require('./chat-input');
 const state = require('./state');
-const { renderToolCard } = require('../overlay/tool-card');
+const { upsertToolCard } = require('../overlay/tool-card');
 const { withTimeout, TIMEOUTS } = require('./timeout');
 const idempotency = require('./idempotency');
 
@@ -29,18 +29,33 @@ function clipForHistory(text) {
 /**
  * 通知用户检测到工具调用（闪烁状态徽章 + 更新预览）
  */
-/** 渲染工具结果卡片（仿 dsh ui-tool）：追加到 #lingya-tool-cards 顶部，最多保留 20 张 */
-function renderResultCard(name, args, ok, output) {
+/**
+ * 渲染/更新工具卡片（仿 dsh ui-tool）。
+ *
+ * 【BUG 修复】原实现只在「执行完成后」调一次，且卡片所在的 #lingya-result-section 默认带
+ * lingya-hidden，用户要手动展开覆盖层「日志」页签才看得到，执行过程中完全无反馈 —— 表现为
+ * 「AI 说了要调工具，界面上什么都没有」，误以为工具没跑。
+ * 现在：执行前先插入 running 卡片（并自动展开结果区），完成后按 cardId 原地替换。
+ *
+ * @param {string} cardId 卡片唯一 id，用于原地更新
+ * @param {string} name 工具名
+ * @param {*} args 参数
+ * @param {'running'|'success'|'error'} status 状态
+ * @param {*} output 输出（running 时为空）
+ */
+function renderResultCard(cardId, name, args, status, output) {
   const box = document.getElementById('lingya-tool-cards');
   if (!box) return;
-  const html = renderToolCard({
+  // 有卡片了就把结果区展开，保证用户立刻能看到执行反馈
+  const section = document.getElementById('lingya-result-section');
+  if (section) section.classList.remove('lingya-hidden');
+  upsertToolCard(box, {
+    cardId: cardId,
     name: name,
     args: args,
-    status: ok ? 'success' : 'error',
+    status: status,
     output: output
   });
-  box.insertAdjacentHTML('afterbegin', html);
-  while (box.children.length > 20) box.removeChild(box.lastElementChild);
 }
 
 function notifyToolCallDetected(toolCall) {
@@ -81,6 +96,9 @@ async function handleJsToolScript(code) {
 
   const callId = 'js_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
   console.log('[LingYa] [诊断] 即将执行的代码(JSON转义): ' + JSON.stringify(code));
+  // 执行前先出卡片：让用户立刻看到「正在跑」，而不是等结束后才出现
+  renderResultCard(callId, 'JS 脚本', code.slice(0, 60), 'running', '执行中…');
+  try { setTaskbarDetail('正在执行 JS 脚本…'); } catch (_) {}
   try {
     // 幂等检查：同一份代码重复执行大概率是重试，复用上次结果，
     // 配合状态机/DOM 兜底的重试机制，让重试不会造成重复副作用。
@@ -117,7 +135,7 @@ async function handleJsToolScript(code) {
       if (resultOutput) {
         resultOutput.textContent = result.output || '(脚本执行完成，无输出)';
       }
-      renderResultCard('JS 脚本', code.slice(0, 60), true, result.output || '(无输出)');
+      renderResultCard(callId, 'JS 脚本', code.slice(0, 60), 'success', result.output || '(无输出)');
     } else {
       if (resultStatus) {
         resultStatus.textContent = '❌ JS 脚本执行失败';
@@ -126,7 +144,7 @@ async function handleJsToolScript(code) {
       if (resultOutput) {
         resultOutput.textContent = result.error || '未知错误';
       }
-      renderResultCard('JS 脚本', code.slice(0, 60), false, result.error || '未知错误');
+      renderResultCard(callId, 'JS 脚本', code.slice(0, 60), 'error', result.error || '未知错误');
     }
 
     addHistory({
@@ -154,6 +172,7 @@ async function handleJsToolScript(code) {
     return { code, result: { success: false, error: '系统异常: ' + (err.message || String(err)) } };
   } finally {
     isExecuting = false;
+    try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
   }
 }
@@ -172,6 +191,10 @@ async function handleToolCall(toolCall) {
   console.log('[LingYa] 执行工具: ' + toolName, params);
 
   isExecuting = true;
+  // 执行前先出卡片：用户能立刻看到哪个工具在跑
+  renderResultCard(callId || ('tool_' + toolName + '_' + Date.now()), toolName, params, 'running', '执行中…');
+  // 状态条显示具体工具名（比「正在执行工具」有信息量）
+  try { setTaskbarDetail('正在执行 ' + toolName + '…'); } catch (_) {}
   setTaskStatus(true);
   showToast('开始执行命令');
 
@@ -216,7 +239,24 @@ async function handleToolCall(toolCall) {
       if (resultOutput) {
         resultOutput.textContent = JSON.stringify(result.data, null, 2);
       }
-      renderResultCard(toolName, params, true, result.data);
+      renderResultCard(callId || ('tool_' + toolName), toolName, params, 'success', result.data);
+
+      // 后台任务登记：AI 这一轮结束后任务可能还在跑，状态条要能继续显示。
+      // bash_background 的返回文本里带「任务 ID: bg_xxx」，从中提取。
+      if (toolName === 'bash_background') {
+        try {
+          const txt = typeof result.data === 'string' ? result.data : JSON.stringify(result.data || '');
+          const m = txt.match(/任务\s*ID:\s*(bg_[A-Za-z0-9_]+)/);
+          if (m) {
+            addBackgroundTask(m[1], (params && params.command) || '');
+            console.log('[LingYa] 已登记后台任务到状态条: ' + m[1]);
+          }
+        } catch (_) {}
+      }
+      // 结束/终止后台任务时注销
+      if (toolName === 'bash_kill' && params && params.task_id) {
+        try { removeBackgroundTask(params.task_id); } catch (_) {}
+      }
     } else {
       if (resultStatus) {
         resultStatus.textContent = '❌ 工具 ' + toolName + ' 执行失败';
@@ -225,7 +265,15 @@ async function handleToolCall(toolCall) {
       if (resultOutput) {
         resultOutput.textContent = result.error || '未知错误';
       }
-      renderResultCard(toolName, params, false, result.error || '未知错误');
+      renderResultCard(callId || ('tool_' + toolName), toolName, params, 'error', result.error || '未知错误');
+    }
+
+    // bash_output 返回里若显示任务已完成，同步从状态条注销
+    if (toolName === 'bash_output' && params && params.task_id && result && result.success) {
+      try {
+        const t = typeof result.data === 'string' ? result.data : JSON.stringify(result.data || '');
+        if (/\[\s*已完成\s*\(退出码/.test(t)) removeBackgroundTask(params.task_id);
+      } catch (_) {}
     }
 
     addHistory({
@@ -253,11 +301,13 @@ async function handleToolCall(toolCall) {
       resultStatus.className = 'lingya-result-status error';
     }
     if (resultOutput) resultOutput.textContent = err.message || String(err);
+    renderResultCard(callId || ('tool_' + toolName), toolName, params, 'error', err.message || String(err));
     if (!state.stopped) {
       sendToolResultToChat(toolCall, { success: false, error: '系统异常: ' + (err.message || String(err)) });
     }
   } finally {
     isExecuting = false;
+    try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
   }
 }

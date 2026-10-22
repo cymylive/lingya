@@ -4,16 +4,11 @@
  */
 const { ToolRegistry } = require('./ToolRegistry');
 const { JsRunner } = require('./JsRunner');
-const { FileWriteTool } = require('./FileWriteTool');
 const { WriteTool } = require('./WriteTool');
-const { FileReadTool } = require('./FileReadTool');
 const { ReadTool } = require('./ReadTool');
 const { ReadLinesTool } = require('./ReadLinesTool');
-const { FileEditTool } = require('./FileEditTool');
 const { EditTool } = require('./EditTool');
-const { GlobTool } = require('./GlobTool');
 const { GlobToolNew } = require('./GlobToolNew');
-const { GrepTool } = require('./GrepTool');
 const { GrepToolNew } = require('./GrepToolNew');
 const { TodoWriteTool } = require('./TodoWriteTool');
 const { BashTool } = require('./BashTool');
@@ -76,15 +71,10 @@ module.exports = {
   ToolRegistry,
   JsRunner,
   registry,
-  FileWriteTool,
   WriteTool,
-  FileReadTool,
   ReadLinesTool,
-  FileEditTool,
   EditTool,
-  GlobTool,
   GlobToolNew,
-  GrepTool,
   GrepToolNew,
   TodoWriteTool,
   BashTool,

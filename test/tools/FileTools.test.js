@@ -3,9 +3,6 @@ const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { FileWriteTool } = require('../../tools/FileWriteTool');
-const { FileReadTool } = require('../../tools/FileReadTool');
-const { FileEditTool } = require('../../tools/FileEditTool');
 const { FileDeleteTool } = require('../../tools/FileDeleteTool');
 const { WriteTool } = require('../../tools/WriteTool');
 const { ReadTool } = require('../../tools/ReadTool');
@@ -20,85 +17,6 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
-});
-
-test('FileWriteTool 写入新文件', async () => {
-  const tool = new FileWriteTool();
-  const r = await tool.execute({ file_path: 'sub/a.txt', content: 'hello', projectDir: tmpRoot });
-  assert.strictEqual(r.success, true);
-  assert.strictEqual(fs.readFileSync(path.join(tmpRoot, 'sub', 'a.txt'), 'utf8'), 'hello');
-  assert.ok(fs.statSync(path.join(tmpRoot, 'sub', 'a.txt')).isFile());
-});
-
-test('FileWriteTool 覆盖已有文件', async () => {
-  const f = path.join(tmpRoot, 'a.txt');
-  fs.writeFileSync(f, 'old');
-  const tool = new FileWriteTool();
-  const r = await tool.execute({ file_path: 'a.txt', content: 'new', projectDir: tmpRoot });
-  assert.strictEqual(r.success, true);
-  assert.strictEqual(fs.readFileSync(f, 'utf8'), 'new');
-});
-
-test('FileReadTool 读取文件', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'hello');
-  const tool = new FileReadTool();
-  const r = await tool.execute({ file_path: 'a.txt', projectDir: tmpRoot });
-  assert.strictEqual(r.success, true);
-  assert.strictEqual(r.data, 'hello');
-});
-
-test('FileReadTool 文件不存在', async () => {
-  const tool = new FileReadTool();
-  const r = await tool.execute({ file_path: 'missing.txt', projectDir: tmpRoot });
-  assert.strictEqual(r.success, false);
-  assert.match(r.error, /文件不存在/);
-});
-
-test('FileReadTool 路径是目录', async () => {
-  const tool = new FileReadTool();
-  const r = await tool.execute({ file_path: '.', projectDir: tmpRoot });
-  assert.strictEqual(r.success, false);
-  assert.match(r.error, /不是文件/);
-});
-
-test('FileEditTool 替换文本', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'hello world');
-  const tool = new FileEditTool();
-  const r = await tool.execute({ file_path: 'a.txt', old_string: 'world', new_string: 'lingya', projectDir: tmpRoot });
-  assert.strictEqual(r.success, true);
-  assert.strictEqual(fs.readFileSync(path.join(tmpRoot, 'a.txt'), 'utf8'), 'hello lingya');
-});
-
-test('FileEditTool old_string 未找到', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'hello');
-  const tool = new FileEditTool();
-  const r = await tool.execute({ file_path: 'a.txt', old_string: 'zzz', new_string: 'yyy', projectDir: tmpRoot });
-  assert.strictEqual(r.success, false);
-  assert.match(r.error, /未找到要替换的文本/);
-});
-
-test('FileEditTool 多次匹配且未 replace_all', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'x x x');
-  const tool = new FileEditTool();
-  const r = await tool.execute({ file_path: 'a.txt', old_string: 'x', new_string: 'y', projectDir: tmpRoot });
-  assert.strictEqual(r.success, false);
-  assert.match(r.error, /出现 3 次/);
-});
-
-test('FileEditTool replace_all 全部替换', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'x x x');
-  const tool = new FileEditTool();
-  const r = await tool.execute({ file_path: 'a.txt', old_string: 'x', new_string: 'y', replace_all: true, projectDir: tmpRoot });
-  assert.strictEqual(r.success, true);
-  assert.strictEqual(fs.readFileSync(path.join(tmpRoot, 'a.txt'), 'utf8'), 'y y y');
-});
-
-test('FileEditTool 空 old_string', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'a.txt'), 'x');
-  const tool = new FileEditTool();
-  const r = await tool.execute({ file_path: 'a.txt', old_string: '', new_string: 'y', projectDir: tmpRoot });
-  assert.strictEqual(r.success, false);
-  assert.match(r.error, /old_string 不能为空/);
 });
 
 test('FileDeleteTool 删除文件', async () => {

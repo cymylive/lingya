@@ -3,7 +3,7 @@
  * 由原 preload.js 拆分而来，逻辑保持不变。
  */
 const state = require('../dom/state');
-const { hideOverlay, showOverlay, renderHistory, commandHistory, showToast, showConfirmDialog, hideFirstTimeDialog, setStopped } = require('./ui');
+const { hideOverlay, showOverlay, renderHistory, commandHistory, showToast, showConfirmDialog, hideFirstTimeDialog, setStopped, clearBackgroundTasks } = require('./ui');
 const { handleInitProject, renderSessions } = require('../dom/session-list');
 const { sendToChat } = require('../dom/chat-input');
 const { runCompaction, checkPendingInit } = require('../dom/compaction');
@@ -171,6 +171,8 @@ async function stopTask(silent) {
     if (io.resetGenerating) io.resetGenerating();
   } catch (_) {}
   setStopped(true);
+  // 停止时清空后台任务登记（主进程已 kill 全部子进程），否则状态条会一直挂着不消失
+  try { clearBackgroundTasks(); } catch (_) {}
   if (!silent) showToast('已停止。发送任意消息即可恢复自动执行', 3000);
 }
 

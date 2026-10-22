@@ -84,101 +84,6 @@ function renderTodos(todos, archived) {
   if (float) float.classList.remove('lingya-hidden');
 }
 
-// ===================== 计划执行前人工确认 =====================
-// AI 制定计划后暂停，等用户点按钮或回复确认词。
-
-// 确认词白名单（严格匹配，避免误判）
-const CONFIRM_KEYWORDS = /^(确认执行|确认|执行吧|开始执行|开始吧|执行|ok|好的|可以|继续执行)[\s。！!，,]*$/i;
-
-/** 查询当前是否等待确认，控制按钮显隐 */
-async function refreshConfirmStatus() {
-  try {
-    if (!window.electronAPI || !window.electronAPI.planConfirmStatus) return;
-    const r = await window.electronAPI.planConfirmStatus();
-    const btn = document.getElementById('lingya-plan-confirm-btn');
-    if (!btn) return;
-    const awaiting = !!(r && r.success && r.awaiting);
-    btn.classList.toggle('lingya-hidden', !awaiting);
-  } catch (e) {
-    console.warn('[LingYa] 查询确认状态失败:', e && e.message);
-  }
-}
-
-/**
- * 确认执行计划。
- * @param {boolean} silent true = 用户已自己发消息（关键词触发），无需程序代发
- */
-async function confirmPlanExec(silent) {
-  try {
-    const btn = document.getElementById('lingya-plan-confirm-btn');
-    if (btn) btn.disabled = true;
-    const r = await window.electronAPI.planConfirm({ silent: !!silent });
-    if (r && r.success) {
-      if (btn) btn.classList.add('lingya-hidden');
-    } else {
-      console.warn('[LingYa] 确认失败:', r && r.error);
-    }
-  } catch (e) {
-    console.error('[LingYa] 确认执行异常:', e && e.message);
-  } finally {
-    const btn = document.getElementById('lingya-plan-confirm-btn');
-    if (btn) btn.disabled = false;
-  }
-}
-
-/** 绑定确认按钮与事件 */
-function bindPlanConfirm() {
-  const btn = document.getElementById('lingya-plan-confirm-btn');
-  if (btn && !btn.__lingyaBound) {
-    btn.__lingyaBound = true;
-    btn.addEventListener('click', confirmPlanExec);
-  }
-  refreshConfirmStatus();
-
-  // 用户点确认后，主进程通知 AI 继续（这里只负责刷新按钮状态）
-  try {
-    if (!window.__lingyaConfirmSubscribed && window.electronAPI.onPlanConfirmedContinue) {
-      window.__lingyaConfirmSubscribed = true;
-      window.electronAPI.onPlanConfirmedContinue(() => {
-        refreshConfirmStatus();
-        // 【关键】用户点了按钮但没发消息 → AI 停在那里不会自己动，必须程序代发一条。
-        // 这是「点确认后 AI 真的开始执行」的最后一环。
-        try {
-          const { sendMessageToChat } = require('../dom/chat-input');
-          sendMessageToChat(
-            '【用户已确认执行】计划已获得授权。请立即开始执行第一项，不要再询问确认、不要重复说明计划。',
-            '计划确认',
-            { auto: true }
-          );
-          console.log('[LingYa] 已代发「计划已确认，开始执行」指令');
-        } catch (e) {
-          console.error('[LingYa] 代发确认指令失败:', e && e.message);
-        }
-      });
-    }
-  } catch (_) {}
-
-  // 用户直发消息时检查确认词（通过 lastUserMessage 变化检测）
-  if (!window.__lingyaConfirmKeywordTimer) {
-    let lastSeen = '';
-    window.__lingyaConfirmKeywordTimer = setInterval(() => {
-      try {
-        // 读 chat-input 的共享 state（同进程，模块缓存，开销可忽略）
-        const st = require('./../dom/state');
-        const msg = String(st.lastUserMessage || '').trim();
-        if (msg && msg !== lastSeen) {
-          lastSeen = msg;
-          if (CONFIRM_KEYWORDS.test(msg)) {
-            console.log('[LingYa] 检测到确认关键词: ' + msg);
-            // silent=true：用户自己发的这条消息已经会到达 AI，无需程序代发
-            confirmPlanExec(true);
-          }
-        }
-      } catch (_) {}
-    }, 1000);
-  }
-}
-
 /** 拉取一次当前计划 */
 async function refreshTodos() {
   try {
@@ -186,7 +91,6 @@ async function refreshTodos() {
     if (r && r.success) {
       planSessionId = r.sessionId || null;
       renderTodos(r.todos, r.archived);
-      refreshConfirmStatus();   // 计划更新后同步按钮显隐
       const el = document.getElementById('lingya-plan-session');
       if (el) el.textContent = r.sessionId ? String(r.sessionId).slice(0, 10) : '(新会话)';
     }
@@ -333,6 +237,7 @@ function renderUserTodos(todos) {
     return '<div class="' + cls + '" data-id="' + escapeHtml(t.id) + '">' +
       '<span class="lingya-utodo-check" data-act="toggle" title="' + (t.done ? '标记未完成' : '标记完成') + '">✓</span>' +
       '<span class="lingya-utodo-text" data-act="edit" title="双击编辑">' + escapeHtml(t.text) + '</span>' +
+      '<span class="lingya-utodo-start" data-act="start" title="发送给 AI 开始处理">▶</span>' +
       '<span class="lingya-utodo-del" data-act="del" title="删除">×</span>' +
     '</div>';
   }).join('');
@@ -359,6 +264,33 @@ function renderUserTodos(todos) {
       text.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         startEditUserTodo(el, item);
+      });
+    }
+
+    const start = el.querySelector('[data-act="start"]');
+    if (start) {
+      start.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (start.dataset.busy === '1') return;  // 防重复点击
+        start.dataset.busy = '1';
+        start.style.opacity = '0.4';
+        try {
+          const { sendMessageToChat } = require('../dom/chat-input');
+          sendMessageToChat(
+            '【待办任务】' + item.text + String.fromCharCode(10) + String.fromCharCode(10) +
+            '请开始处理这个任务。',
+            '待办任务',
+            { auto: true }
+          );
+          console.log('[LingYa] 待办已发送给 AI: ' + item.text.slice(0, 40));
+        } catch (err) {
+          console.warn('[LingYa] 发送待办失败:', err && err.message);
+        } finally {
+          setTimeout(() => {
+            start.dataset.busy = '';
+            start.style.opacity = '';
+          }, 3000);
+        }
       });
     }
 
@@ -432,12 +364,30 @@ async function refreshUserTodos() {
 }
 
 /** 提交输入框内容（支持多行粘贴，拆条在主进程做） */
+// 系统消息前缀（与 tools/UserTodoStore.js 的 SYSTEM_PREFIXES 保持一致）
+// 前端预检只为给出友好提示，真正的硬防线在存储层。
+const SYSTEM_PREFIXES_UI = [
+  '【监督续跑】', '【自动续跑】', '【系统提示】', '【工具执行结果】',
+  '【JS 执行结果', '【计划续跑】', '【兜底续跑】', '【中断续跑】',
+];
+
 async function submitUserTodo() {
   const input = document.getElementById('lingya-utodo-input');
   const btn = document.getElementById('lingya-utodo-add-btn');
   if (!input) return;
   const text = String(input.value || '').trim();
   if (!text) return;
+
+  // 预检：避免把系统消息当待办（存储层也会拒，这里只是给更友好的提示）
+  const hit = SYSTEM_PREFIXES_UI.find((p) => text.startsWith(p));
+  if (hit) {
+    console.warn('[LingYa] 拒绝添加系统消息作为待办: ' + hit);
+    try {
+      const { showToast } = require('./ui');
+      if (showToast) showToast('这看起来是系统消息，不能作为待办', 3000);
+    } catch (_) {}
+    return;
+  }
 
   if (btn) btn.disabled = true;
   try {
@@ -501,7 +451,6 @@ function bindUserTodoPanel() {
 function bindPlanPanelEvents() {
   refreshTodos();
   bindUserTodoPanel();
-  bindPlanConfirm();
   if (!unsubscribe) {
     // 收到变更通知：若带 sessionId 且与当前会话不符 → 忽略（防跨会话串扰）。
     // payload 里已带 todos/archived，直接渲染，不再多发一次 get-todos IPC。

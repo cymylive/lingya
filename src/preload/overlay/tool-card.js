@@ -95,6 +95,7 @@ const STATUS_LABEL = {
 function renderToolCard(opts) {
   const o = opts || {};
   const name = escapeHtml(o.name || 'tool');
+  const cardId = o.cardId ? ' data-card-id="' + escapeHtml(o.cardId) + '"' : '';
   const status = STATUS_LABEL[o.status] ? o.status : 'pending';
   const label = STATUS_LABEL[status];
   const summary = escapeHtml(summarizeArgs(o.args));
@@ -105,7 +106,7 @@ function renderToolCard(opts) {
   })();
 
   const parts = [];
-  parts.push('<div class="lingya-tool-card" data-status="' + status + '" data-collapsed="' + collapsed + '">');
+  parts.push('<div class="lingya-tool-card" data-status="' + status + '" data-collapsed="' + collapsed + '"' + cardId + '>');
   parts.push('  <div class="lingya-tool-card__head" role="button" tabindex="0" aria-expanded="' + (!collapsed) + '">');
   parts.push('    <span class="lingya-tool-card__icon" aria-hidden="true">&#9654;</span>');
   parts.push('    <span class="lingya-tool-card__name">' + name + '</span>');
@@ -142,4 +143,29 @@ function injectToolCardCSS(doc) {
   return style;
 }
 
-module.exports = { TOOL_CARD_CSS, renderToolCard, escapeHtml, summarizeArgs, formatOutput, injectToolCardCSS };
+/**
+ * 把工具卡片渲染到指定容器顶部；同 cardId 的卡片会被原地替换（用于 running -> success 更新）。
+ * @param {HTMLElement} box 容器
+ * @param {object} opts renderToolCard 的选项（可含 cardId）
+ */
+function upsertToolCard(box, opts) {
+  if (!box) return null;
+  const o = opts || {};
+  const id = o.cardId;
+  if (id) {
+    const found = box.querySelector('[data-card-id="' + String(id).replace(/"/g, '\\"') + '"]');
+    if (found) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = renderToolCard(o);
+      const next = tmp.firstElementChild;
+      if (next) { found.replaceWith(next); return next; }
+    }
+  }
+  box.insertAdjacentHTML('afterbegin', renderToolCard(o));
+  const inserted = box.firstElementChild;
+  // 最多保留 20 张
+  while (box.children.length > 20) box.removeChild(box.lastElementChild);
+  return inserted;
+}
+
+module.exports = { TOOL_CARD_CSS, renderToolCard, upsertToolCard, escapeHtml, summarizeArgs, formatOutput, injectToolCardCSS };

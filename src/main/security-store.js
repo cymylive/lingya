@@ -55,10 +55,6 @@ const DEFAULT_CONFIG = {
   // 不需要任何外部 API、不多花一轮对话，零成本零延迟。
   // 只有本地改写无效时才回退到 AI 改写 / 固定文本。
   localRewriteEnabled: true,
-  // ===== 计划执行前人工确认 =====
-  // AI 制定计划后暂停执行，等用户点「确认执行」按钮或回复确认词。
-  // 默认开启（用户明确要求），可在计划面板关闭。
-  planConfirmEnabled: true,
 };
 
 let STORE_FILE = null;
@@ -129,7 +125,7 @@ function updateConfig(patch) {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
     } else if (key === 'autoContinueMax' || key === 'planContinueMax' || key === 'stallThresholdMs' || key === 'stallContinueMax') {
       next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled' || key === 'planConfirmEnabled') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）

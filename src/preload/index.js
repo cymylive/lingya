@@ -118,6 +118,9 @@ function init() {
   try {
     ui.injectCSS();
     ui.injectOverlay();
+    // 启动统一任务状态条：订阅状态机，任何「进行中」状态都持续显示（含秒级计时）。
+    // 放在 injectOverlay 之后，确保 #lingya-taskbar 已存在。
+    ui.startTaskbar();
     projectDir.initProjectDirSection();
     bindEvents();
     ui.updateHomeMode();

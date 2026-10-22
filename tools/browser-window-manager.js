@@ -137,7 +137,22 @@ class BrowserWindowManager {
     } else {
       wrapped = '(async () => {\n  try {\n    const __result = await (' + jsCode + ');\n    return { ok: true, value: __result };\n  } catch (err) {\n    return { ok: false, error: err && err.message ? err.message : String(err) };\n  }\n})()';
     }
-    const result = await wc.executeJavaScript(wrapped, true);
+    // 【挂死修复】executeJavaScript 在目标 webContents 被遮挡/最小化/渲染进程卡住时
+    // 可能永不 resolve（用户看到的 "The tool call seems to not be returning" 就是它）。
+    // 加超时后最坏情况只是这次注入失败，Agent 循环能继续。
+    const INJECT_TIMEOUT_MS = 60 * 1000;
+    let timer = null;
+    const timeout = new Promise((_res, rej) => {
+      timer = setTimeout(() => {
+        rej(new Error('injectJS 超时（' + Math.round(INJECT_TIMEOUT_MS / 1000) + ' 秒无响应），目标窗口可能已卡死或被遮挡'));
+      }, INJECT_TIMEOUT_MS);
+    });
+    let result;
+    try {
+      result = await Promise.race([wc.executeJavaScript(wrapped, true), timeout]);
+    } finally {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
     if (result && result.ok === false) throw new Error(result.error);
     return result ? result.value : undefined;
   }

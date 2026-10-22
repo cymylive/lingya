@@ -4,6 +4,7 @@
  */
 const { ipcRenderer } = require('electron');
 const { OVERLAY_HTML, OVERLAY_CSS } = require('./template');
+const { TOOL_CARD_CSS } = require('./tool-card');
 const { getProviderByUrl } = require('../../../src/providers');
 const state = require('../dom/state');
 
@@ -15,6 +16,17 @@ function injectCSS() {
   const style = document.createElement('style');
   style.textContent = OVERLAY_CSS;
   document.head.appendChild(style);
+
+  // 工具调用卡片样式（独立模块）。
+  // 【BUG 修复】此前 TOOL_CARD_CSS 只在 tool-card.js 里定义并导出，从未被任何地方注入，
+  // 导致卡片 div 渲染出来了但 border/background/字号/折叠全部失效 —— 视觉上与普通文字无异，
+  // 在深色 AI 页面上几乎不可见，用户误判为「工具没执行」。
+  if (!document.getElementById('lingya-tool-card-style')) {
+    const ts = document.createElement('style');
+    ts.id = 'lingya-tool-card-style';
+    ts.textContent = TOOL_CARD_CSS;
+    document.head.appendChild(ts);
+  }
 }
 
 // ========== 注入覆盖层 HTML ==========
@@ -208,6 +220,150 @@ function setFabState(next) {
 /** 获取当前悬浮球状态 */
 function getFabState() {
   return fabState;
+}
+
+// ===== 统一任务状态条 =====
+// 状态机（task-state）是唯一真相源；本函数只是它的一个渲染器。
+// 无论任务在进行中、等待 AI 响应、还是后台任务未结束，只要状态机非 IDLE，
+// 状态条就持续显示，并且秒级刷新已用时 —— 不再因为「等了很久」而消失。
+let taskbarUnsub = null;
+
+/** 把毫秒格式化成 12s / 3m24s / 1h02m */
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm' + String(s % 60).padStart(2, '0') + 's';
+  return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0') + 'm';
+}
+
+/**
+ * 渲染任务状态条
+ * @param {object} snap 状态机快照
+ */
+function renderTaskbar(snap) {
+  const bar = document.getElementById('lingya-taskbar');
+  const textEl = document.getElementById('lingya-taskbar-text');
+  const elapsedEl = document.getElementById('lingya-taskbar-elapsed');
+  if (!bar) return;
+
+  const bgCount = backgroundTasks.size;
+  if ((!snap || snap.state === 'IDLE') && bgCount === 0) {
+    bar.classList.add('lingya-hidden');
+    return;
+  }
+  bar.classList.remove('lingya-hidden');
+
+  // 状态 → 文案 + 配色
+  const state = snap ? snap.state : 'IDLE';
+  let text = '';
+  let kind = 'busy';
+  if (state === 'SENT') { text = '已发送，等待 AI 响应…'; kind = 'busy'; }
+  else if (state === 'AWAITING') { text = 'AI 正在思考 / 生成中…'; kind = 'busy'; }
+  else if (state === 'RESPONDED') { text = '正在解析回复…'; kind = 'busy'; }
+  else if (state === 'EXECUTING') {
+    // 带上具体工具名/后台任务信息（由 setTaskbarDetail 注入）
+    text = taskbarDetail || '正在执行工具…';
+    kind = 'executing';
+  }
+
+  // 后台任务：即使 AI 这一轮已经结束（IDLE），只要还有后台任务在跑就继续显示
+  if (bgCount > 0) {
+    const first = backgroundTasks.values().next().value;
+    const bgText = bgCount === 1
+      ? ('后台任务运行中：' + (first.command || '(未知命令)'))
+      : (bgCount + ' 个后台任务运行中');
+    if (!text) { text = bgText; kind = 'background'; }
+    else { text += '　|　' + bgText; }
+  }
+  if (taskbarExtraCount > 0) text += '（另有 ' + taskbarExtraCount + ' 个进行中）';
+  bar.setAttribute('data-kind', kind);
+  if (textEl) textEl.textContent = text;
+
+  // 计时：优先显示当前状态的停留时长；只有后台任务时显示最早那个任务的运行时长
+  let ms = 0;
+  if (snap && state !== 'IDLE') {
+    ms = Date.now() - (Number(snap.enteredAt) || Date.now());
+  } else if (bgCount > 0) {
+    let oldest = Date.now();
+    for (const t of backgroundTasks.values()) {
+      if (t.startedAt < oldest) oldest = t.startedAt;
+    }
+    ms = Date.now() - oldest;
+  }
+  if (elapsedEl) elapsedEl.textContent = ms > 0 ? formatElapsed(ms) : '';
+}
+
+// 状态条的可选明细（工具名 / 后台任务描述）与并行计数
+let taskbarDetail = '';
+let taskbarExtraCount = 0;
+
+// ===== 后台任务登记表 =====
+// 为什么单独维护：后台任务（bashBackground 起的服务/爬虫）在 AI 一轮对话结束后
+// 仍可能在跑，但状态机会回到 IDLE。只靠状态机，状态条会在任务还活着时消失 ——
+// 用户就看不到「还有个 npm run dev 在跑」。
+// 这里按 taskId 登记，只要表非空，状态条就保持可见（即使状态机是 IDLE）。
+const backgroundTasks = new Map();  // taskId -> { command, startedAt }
+
+/** 登记一个后台任务（bashBackground 成功后调用） */
+function addBackgroundTask(taskId, command) {
+  if (!taskId) return;
+  backgroundTasks.set(String(taskId), {
+    command: String(command || '').slice(0, 60),
+    startedAt: Date.now(),
+  });
+  try { renderTaskbar(require('../dom/task-state').snapshot()); } catch (_) {}
+}
+
+/** 注销一个后台任务（已完成/被终止时调用） */
+function removeBackgroundTask(taskId) {
+  if (!taskId) return;
+  if (!backgroundTasks.delete(String(taskId))) return;
+  try { renderTaskbar(require('../dom/task-state').snapshot()); } catch (_) {}
+}
+
+/** 当前后台任务数量（测试/诊断用） */
+function backgroundTaskCount() {
+  return backgroundTasks.size;
+}
+
+/** 清空（用户点停止时调用） */
+function clearBackgroundTasks() {
+  backgroundTasks.clear();
+  try { renderTaskbar(require('../dom/task-state').snapshot()); } catch (_) {}
+}
+
+/**
+ * 设置状态条明细（由 tool-executor / 后台任务调用），空字符串表示清除。
+ * 只在状态机为 EXECUTING 时生效，避免和「AI 生成中」文案打架。
+ */
+function setTaskbarDetail(detail, extraCount) {
+  taskbarDetail = String(detail || '');
+  taskbarExtraCount = Number(extraCount) > 0 ? Math.floor(Number(extraCount)) : 0;
+  try {
+    const taskState = require('../dom/task-state');
+    renderTaskbar(taskState.snapshot());
+  } catch (_) { /* ignore */ }
+}
+
+/**
+ * 订阅状态机：状态一变（或每秒心跳）就刷新状态条。
+ * 幂等，重复调用只保留一个订阅。
+ */
+function startTaskbar() {
+  if (taskbarUnsub) return;
+  let taskState;
+  try { taskState = require('../dom/task-state'); } catch (_) { return; }
+  taskbarUnsub = taskState.onChange((snap) => {
+    try { renderTaskbar(snap); } catch (_) {}
+  });
+  try { taskState.startTicker(); } catch (_) {}
+}
+
+/** 停止订阅（测试/销毁时用） */
+function stopTaskbar() {
+  if (taskbarUnsub) { taskbarUnsub(); taskbarUnsub = null; }
+  try { require('../dom/task-state').stopTicker(); } catch (_) {}
 }
 
 
@@ -483,6 +639,14 @@ module.exports = {
   markTaskDone,
   setFabState,
   getFabState,
+  startTaskbar,
+  stopTaskbar,
+  setTaskbarDetail,
+  renderTaskbar,
+  addBackgroundTask,
+  removeBackgroundTask,
+  clearBackgroundTasks,
+  backgroundTaskCount,
   setStopped,
   isStopped,
   showOverlay,

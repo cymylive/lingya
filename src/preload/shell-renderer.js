@@ -3,15 +3,8 @@
  * 项目文件树（SVG 图标 / 语言角标 / 搜索高亮）+ 分栏预览 + 拖拽调宽
  */
 (function () {
-  // ===== 常量 =====
-  var CARET_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>';
-  var FOLDER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
-  var FILE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
-  var IMG_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-
-  var EXT_COLOR = { ts:'ts',tsx:'ts',mts:'ts',cts:'ts', js:'js',jsx:'js',mjs:'js',cjs:'js', json:'json',json5:'json', md:'md',markdown:'md',mdx:'md', css:'css',scss:'css',less:'css',sass:'css', html:'html',htm:'html',vue:'html',svelte:'html', py:'py',pyw:'py', java:'java',kt:'java',kts:'java', go:'go', rs:'rs', rb:'rb', php:'php', c:'c',h:'c',cc:'c',cpp:'c',hpp:'c',cxx:'c', cs:'cs', sh:'sh',bash:'sh',zsh:'sh',bat:'sh',cmd:'sh',ps1:'sh', yml:'yml',yaml:'yml',toml:'yml',ini:'yml',conf:'yml',env:'yml', xml:'xml',svg:'xml', sql:'sql', png:'img',jpg:'img',jpeg:'img',gif:'img',webp:'img',bmp:'img',ico:'img',avif:'img',mp4:'img',mp3:'img',wav:'img',mov:'img',webm:'img', txt:'txt',log:'txt',text:'txt', lock:'lock' };
-  var EXT_BADGE = { ts:'TS',tsx:'TS',mts:'TS',cts:'TS', js:'JS',jsx:'JS',mjs:'JS',cjs:'JS', json:'{}',json5:'{}', md:'MD',markdown:'MD',mdx:'MD', css:'CSS',scss:'CSS',less:'CSS',sass:'CSS', html:'<>',htm:'<>',vue:'VUE',svelte:'SVE', py:'PY',pyw:'PY', java:'JV',kt:'KT',kts:'KT', go:'GO',rs:'RS',rb:'RB',php:'PHP', c:'C',h:'H',cc:'C+',cpp:'C+',hpp:'C+',cxx:'C+', cs:'C#', sh:'>_',bash:'>_',zsh:'>_',bat:'>_',cmd:'>_',ps1:'>_', yml:'YML',yaml:'YML',toml:'TML',ini:'INI',conf:'CFG',env:'ENV', xml:'XML',svg:'SVG',sql:'SQL', txt:'TXT',log:'LOG',text:'TXT',lock:'LCK' };
-  var MEDIA_EXTS = { png:1,jpg:1,jpeg:1,gif:1,webp:1,bmp:1,ico:1,avif:1,mp4:1,mp3:1,wav:1,mov:1,webm:1 };
+  // 常量（SVG 图标 / 扩展名映射）已迁至 shell-utils.js，
+  // 通过 window.__lyShellUtils 访问，此处不再重复定义。
 
   var MIN_W = 240, MAX_W = 640, DEFAULT_W = 320, COLLAPSED = 46;
   var WIDTH_KEY = 'lingya-sidebar-width', OPEN_KEY = 'lingya-sidebar-open';
@@ -29,25 +22,19 @@
 
   var width = (function () { try { var v=Number(localStorage.getItem(WIDTH_KEY)); if(isFinite(v)&&v>=MIN_W&&v<=MAX_W) return Math.round(v);}catch(_){} return DEFAULT_W; })();
 
-  function esc(t){ var d=document.createElement('div'); d.textContent=t==null?'':String(t); return d.innerHTML; }
-  function attr(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function extOf(name){ var i=name.lastIndexOf('.'); return i>=0?name.slice(i+1).toLowerCase():''; }
-  function highlight(text, kw){
-    var e = esc(text);
-    if (!kw) return e;
-    var ek = esc(kw).replace(/[.*+?^$^{}()|[\]\\]/g,'\\$&');
-    try { return e.replace(new RegExp('('+ek+')','gi'), '<mark class="ck-ft-hl">$1</mark>'); } catch(_){ return e; }
+  // 纯函数从 shell-utils.js 复用（审计后提取，已有 29 个单测覆盖）
+  // 该模块经 <script src> 先行加载，挂到 window.__lyShellUtils
+  var U = window.__lyShellUtils || {};
+  if (!U.esc) {
+    console.error('[LingYa Shell] shell-utils.js 未加载，文件树功能将不可用');
   }
-  function colorClass(name, type){ if(type==='dir') return ''; var ex=extOf(name); return EXT_COLOR[ex] ? 'ck-ft-c-'+EXT_COLOR[ex] : 'ck-ft-c-file'; }
-  function nameClass(name, type){ return type==='dir' ? 'ck-ft-name' : 'ck-ft-name '+colorClass(name,type); }
-  function iconHtml(name, type){
-    if(type==='dir') return '<span class="ck-ft-icon ck-ft-i-dir">'+FOLDER_SVG+'</span>';
-    var ex=extOf(name);
-    if(MEDIA_EXTS[ex]) return '<span class="ck-ft-icon ck-ft-i-media">'+IMG_SVG+'</span>';
-    var b=EXT_BADGE[ex];
-    if(b) return '<span class="ck-ft-icon ck-ft-badge '+colorClass(name,'file')+'">'+b+'</span>';
-    return '<span class="ck-ft-icon ck-ft-i-file">'+FILE_SVG+'</span>';
-  }
+  function esc(t){ return U.esc ? U.esc(t) : String(t == null ? '' : t); }
+  function attr(t){ return U.attr ? U.attr(t) : String(t == null ? '' : t); }
+  function extOf(name){ return U.extOf ? U.extOf(name) : ''; }
+  function highlight(text, kw){ return U.highlight ? U.highlight(text, kw) : String(text == null ? '' : text); }
+  function colorClass(name, type){ return U.colorClass ? U.colorClass(name, type) : ''; }
+  function nameClass(name, type){ return U.nameClass ? U.nameClass(name, type) : 'ck-ft-name'; }
+  function iconHtml(name, type){ return U.iconHtml ? U.iconHtml(name, type) : ''; }
 
   // ===== 开合 =====
   function applyState(notify) {
@@ -88,25 +75,17 @@
   }
 
   // ===== 树渲染 =====
+  // renderNodes / flatten 也来自 shell-utils（递归 + 转义逻辑，已有测试）
   function renderNodes(nodes, depth) {
-    var html='';
-    for (var k=0;k<nodes.length;k++){
-      var n=nodes[k], pad=6+depth*14;
-      if(n.type==='dir'){
-        var op=!!expanded[n.path];
-        html+='<div class="ck-ft-row ck-ft-dir'+(op?' open':'')+'" data-path="'+attr(n.path)+'" data-type="dir" style="padding-left:'+pad+'px">'+
-          '<span class="ck-ft-caret">'+CARET_SVG+'</span>'+iconHtml(n.name,'dir')+
-          '<span class="'+nameClass(n.name,'dir')+'">'+esc(n.name)+'</span></div>';
-        if(op&&n.children) html+=renderNodes(n.children,depth+1);
-      } else {
-        html+='<div class="ck-ft-row ck-ft-file" data-path="'+attr(n.path)+'" data-type="file" title="'+attr(n.path)+'" style="padding-left:'+pad+'px">'+
-          '<span class="ck-ft-caret"></span>'+iconHtml(n.name,'file')+
-          '<span class="'+nameClass(n.name,'file')+'">'+esc(n.name)+'</span></div>';
-      }
-    }
-    return html;
+    return U.renderNodes ? U.renderNodes(nodes, depth, expanded) : '';
   }
-  function flatten(nodes,out){ for(var i=0;i<nodes.length;i++){ out.push(nodes[i]); if(nodes[i].children) flatten(nodes[i].children,out); } return out; }
+  function flatten(nodes, out){
+    if (U.flatten) { U.flatten(nodes, out); return out; }
+    out = out || [];
+    if (!Array.isArray(nodes)) return out;
+    for(var i=0;i<nodes.length;i++){ out.push(nodes[i]); if(nodes[i].children) flatten(nodes[i].children,out); }
+    return out;
+  }
   function renderSearch(kw){
     var all=flatten(cachedTree,[]), low=kw.toLowerCase();
     var m=[]; for(var i=0;i<all.length;i++){ if(all[i].path.toLowerCase().indexOf(low)!==-1) m.push(all[i]); }
@@ -1054,6 +1033,7 @@
         h+='<div class="sh-utodo-item" data-id="'+esc(t.id)+'" style="display:flex;gap:6px;align-items:flex-start;padding:3px 2px;border-radius:4px;">'+
              '<span class="sh-utodo-check" data-act="toggle" style="flex-shrink:0;width:13px;height:13px;margin-top:2px;border:1.5px solid '+(t.done?'#4ade80':'var(--ck-text-dim)')+';border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;color:'+(t.done?'#0b0e10':'transparent')+';background:'+(t.done?'#4ade80':'transparent')+';">✓</span>'+
              '<span class="sh-utodo-text" data-act="edit" style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word;font-size:12px;cursor:text;'+deco+'">'+esc(t.text)+'</span>'+
+             '<span class="sh-utodo-start" data-act="start" style="flex-shrink:0;cursor:pointer;color:var(--ck-primary);font-size:11px;padding:0 3px;opacity:.6;">▶</span>'+
              '<span class="sh-utodo-del" data-act="del" style="flex-shrink:0;cursor:pointer;color:var(--ck-text-dim);font-size:13px;opacity:.5;">×</span>'+
            '</div>';
       }
@@ -1069,6 +1049,22 @@
           if(ck) ck.addEventListener('click', function(e){ e.stopPropagation(); if(window.shellAPI) window.shellAPI.userTodosUpdate(id, {done:!item.done})['catch'](function(){}); });
           var tx = row.querySelector('[data-act="edit"]');
           if(tx) tx.addEventListener('dblclick', function(e){ e.stopPropagation(); startEdit(row, item); });
+          var st = row.querySelector('[data-act="start"]');
+          if(st) st.addEventListener('click', function(e){
+            e.stopPropagation();
+            if(st.getAttribute('data-busy')==='1') return;
+            st.setAttribute('data-busy','1');
+            st.style.opacity='0.3';
+            var msg = '【待办任务】' + item.text + String.fromCharCode(10) + String.fromCharCode(10) + '请开始处理这个任务。';
+            var p = (window.shellAPI && window.shellAPI.sendToChat)
+              ? window.shellAPI.sendToChat(msg, '待办任务')
+              : Promise.reject(new Error('sendToChat 不可用'));
+            p.then(function(r){
+              if (r && r.success) toast2('已发送给 AI');
+              else toast2('发送失败');
+            })['catch'](function(){ toast2('发送失败'); })
+             .then(function(){ setTimeout(function(){ st.setAttribute('data-busy',''); st.style.opacity='0.6'; }, 3000); });
+          });
           var dl = row.querySelector('[data-act="del"]');
           if(dl) dl.addEventListener('click', function(e){ e.stopPropagation(); if(window.shellAPI) window.shellAPI.userTodosDelete(id)['catch'](function(){}); });
         })(rows[j]);
@@ -1105,13 +1101,24 @@
       })['catch'](function(){});
     }
 
+    // 系统消息前缀（与 tools/UserTodoStore.js 保持一致，前端只为友好提示）
+    var SYSTEM_PREFIXES_UI = ['【监督续跑】','【自动续跑】','【系统提示】','【工具执行结果】','【JS 执行结果','【计划续跑】','【兜底续跑】','【中断续跑】'];
+
     function submitUserTodo(){
       var inp = document.getElementById('sh-utodo-input');
       if(!inp || !window.shellAPI || !window.shellAPI.userTodosAdd) return;
       var text = String(inp.value||'').trim();
       if(!text) return;
+      // 预检：避免把系统消息当待办（存储层也会拒，这里给出更友好的提示）
+      for(var si=0; si<SYSTEM_PREFIXES_UI.length; si++){
+        if(text.indexOf(SYSTEM_PREFIXES_UI[si])===0){
+          toast2('这看起来是系统消息，不能作为待办');
+          return;
+        }
+      }
       window.shellAPI.userTodosAdd(text).then(function(r){
         if(r && r.success){ inp.value=''; inp.rows=1; if(Array.isArray(r.todos)) drawUserTodos(r.todos); }
+        else if(r && r.error){ toast2('添加失败：' + r.error); }
       })['catch'](function(){});
     }
 

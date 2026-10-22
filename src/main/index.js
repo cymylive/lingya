@@ -139,15 +139,6 @@ try {
 try {
   const secStore = require('./security-store');
   secStore.init(app.getPath('userData'));
-  // 计划确认开关：把持久化配置同步到 plan-gate
-  // 默认开启（DEFAULT_CONFIG.planConfirmEnabled = true）
-  try {
-    const cfg = secStore.getConfig();
-    require('../../tools/plan-gate').setRequireConfirmEnabled(cfg.planConfirmEnabled !== false);
-    console.log('[LingYa] 计划确认开关: ' + (cfg.planConfirmEnabled !== false ? '开启' : '关闭'));
-  } catch (e) {
-    console.error('[LingYa] 同步计划确认开关失败:', e.message);
-  }
 } catch (err) {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }
@@ -995,6 +986,20 @@ ipcMainForProfile.handle('shell-sidebar-drag', async (event, { phase } = {}) => 
 });
 
 // 侧边栏 → AI 视图：把文本插入到聊天输入框（跨 webContents 转发）
+// 侧边栏 → AI 视图：发送消息并**自动提交**（区别于 insert-to-chat 的只填入）
+ipcMainForProfile.handle('shell-send-to-chat', async (event, { text, tag } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    const wc = ctx.win.webContents;
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+    wc.send('lingya-send-to-chat', { text: String(text || ''), tag: tag || '' });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMainForProfile.handle('shell-insert-to-chat', async (event, { text, tag, delay } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);

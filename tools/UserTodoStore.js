@@ -21,6 +21,31 @@ const STORE_FILENAME = 'lingya-user-todos.json';
 /** 单条文本长度上限 */
 const MAX_TEXT_LEN = 500;
 
+/**
+ * 系统消息前缀黑名单。
+ *
+ * 【为什么必须有】
+ *   LingYa 会向对话里发送大量程序消息（【监督续跑】【自动续跑】【系统提示】等）。
+ *   这些内容绝不应该变成用户的待办项 —— 但 AI 有可能被催促消息搞混，
+ *   误把它们当成"用户要求记录的任务"；用户也可能误粘贴。
+ *   在存储层直接拒绝，是最可靠的最后一道防线。
+ */
+const SYSTEM_PREFIXES = [
+  '【监督续跑】',
+  '【自动续跑】',
+  '【系统提示】',
+  '【工具执行结果】',
+  '【JS 执行结果',
+  '【计划续跑】',
+  '【兜底续跑】',
+  '【中断续跑】',
+  '【队列异常重试】',
+  '【拒绝改写',
+  '【用户已确认执行】',
+  '【计划已建立',
+  '【计划已全部完成',
+];
+
 let STORE_FILE = null;
 let store = {};
 
@@ -77,6 +102,12 @@ function normalizeText(text, action) {
   if (!t) throw new Error('todo text must not be empty');
   if (t.length > MAX_TEXT_LEN) {
     throw new Error('todo text too long (max ' + MAX_TEXT_LEN + ' chars, got ' + t.length + ')');
+  }
+  // 拒绝系统消息：它们不是用户的任务，混进来会污染清单
+  for (const p of SYSTEM_PREFIXES) {
+    if (t.startsWith(p)) {
+      throw new Error('todo text must not be a system message (matched "' + p + '")');
+    }
   }
   return t;
 }
@@ -213,6 +244,7 @@ function parseBulk(text) {
 module.exports = {
   STORE_FILENAME,
   MAX_TEXT_LEN,
+  SYSTEM_PREFIXES,
   init,
   list,
   add,

@@ -174,6 +174,7 @@ async function handleTaskStateStall(now, max) {
 async function checkOnce() {
   if (state.stopped) return;                       // 用户已停止
   if (state.awaitingRefusalRewrite) return;        // 正在等改写回复
+
   // 【关键】AI 已明确声明任务完成 → 不催。
   // 这是最高优先级的停止信号：todo 里残留的未完成项可能只是 AI 判断不需要做的，
   // 或 todoWrite 更新失败。继续催会形成「AI 说完成 → 被催 → 再说完成」的死循环。

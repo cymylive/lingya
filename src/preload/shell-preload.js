@@ -32,14 +32,12 @@ const api = {
   // ===== 功能面板 API（v0.6.36 迁移自覆盖层）=====
   // 跨上下文：插入文本到聊天输入框 / 新会话
   insertToChat: (text, tag, delay) => ipcRenderer.invoke('shell-insert-to-chat', { text, tag, delay }),
+  sendToChat: (text, tag) => ipcRenderer.invoke('shell-send-to-chat', { text, tag }),
   newChat: () => ipcRenderer.invoke('shell-new-chat'),
   runAction: (action) => ipcRenderer.invoke('shell-run-action', { action }),
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
-  // 计划执行前人工确认
-  planConfirm: (opts) => ipcRenderer.invoke('plan-confirm', opts || {}),
-  planConfirmStatus: () => ipcRenderer.invoke('plan-confirm-status'),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },
   // 用户手动待办（与 AI 计划完全独立）
   userTodosList: () => ipcRenderer.invoke('user-todos-list'),

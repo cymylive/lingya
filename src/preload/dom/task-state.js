@@ -56,6 +56,52 @@ let current = {
 
 let saveTimer = null;
 
+// ===== 订阅机制：状态机是唯一真相源，UI 由它驱动 =====
+// 为什么需要：原来 setTaskStatus() / setFabState() 散落在 intercept-observer、
+// tool-executor、supervisor 各处手动调用，任何一处漏调 UI 就停在上一个状态。
+// 现在所有 UI 订阅 transition/touch/reset，状态机变了 UI 必然跟着变。
+const listeners = new Set();
+let tickTimer = null;
+
+/** 订阅状态变化（返回取消订阅函数） */
+function onChange(cb) {
+  if (typeof cb !== 'function') return function () {};
+  listeners.add(cb);
+  // 新订阅者立刻收到当前快照，避免 UI 空白
+  try { cb(snapshot(), 'init'); } catch (_) {}
+  return function () { listeners.delete(cb); };
+}
+
+/** 通知所有订阅者 */
+function notify(reason) {
+  const snap = snapshot();
+  for (const cb of listeners) {
+    try { cb(snap, reason); } catch (err) {
+      console.error('[LingYa][状态机] 订阅者回调异常:', err && err.message);
+    }
+  }
+}
+
+/**
+ * 启动秒级心跳：只做 UI 刷新（让「已执行 3m24s」这类计时持续走）。
+ * 不改变状态，不触发业务逻辑，代价可忽略。
+ */
+function startTicker() {
+  if (tickTimer) return;
+  tickTimer = setInterval(() => {
+    // 有订阅者就刷新。
+    // 【不要在这里判断 IDLE】状态机可能已回 IDLE，但后台任务（bashBackground 起的
+    // 服务/爬虫）仍在跑，UI 需要继续走计时。是否显示由 renderTaskbar 自己决定。
+    if (listeners.size === 0) return;
+    notify('tick');
+  }, 1000);
+}
+
+/** 停止心跳 */
+function stopTicker() {
+  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+}
+
 /** 持久化（节流 500ms，避免高频写 localStorage） */
 function persist() {
   if (saveTimer) return;
@@ -91,6 +137,7 @@ function transition(next, extra) {
   console.log('[LingYa][状态机] ' + prev + ' -> ' + next +
     (extra && extra.lastSentTag ? '（' + extra.lastSentTag + '）' : ''));
   persist();
+  notify('transition:' + prev + '->' + next);
   return snapshot();
 }
 
@@ -98,6 +145,7 @@ function transition(next, extra) {
 function touch() {
   current.enteredAt = Date.now();
   persist();
+  notify('touch');
 }
 
 /** 读取当前快照 */
@@ -136,6 +184,7 @@ function reset(reason) {
   current.lastResponsePreview = '';
   console.log('[LingYa][状态机] 重置为 IDLE' + (reason ? '（' + reason + '）' : ''));
   persistNow();
+  notify('reset');
   return snapshot();
 }
 
@@ -158,6 +207,27 @@ function checkStall() {
   return { stalled: false, state: snap.state, elapsedMs: elapsed, thresholdMs: threshold, reason: '' };
 }
 
+/** 状态的中文描述（供 UI 直接显示） */
+function describe(state) {
+  switch (state) {
+    case STATES.SENT: return '已发送，等待 AI 响应';
+    case STATES.AWAITING: return 'AI 正在思考/生成';
+    case STATES.RESPONDED: return '正在解析回复';
+    case STATES.EXECUTING: return '正在执行工具';
+    default: return '';
+  }
+}
+
+/** 当前状态是否「进行中」（UI 据此决定是否持续显示） */
+function isBusy() {
+  return current.state !== STATES.IDLE;
+}
+
+/** 已停留时长（毫秒） */
+function elapsedMs() {
+  return Date.now() - (current.enteredAt || Date.now());
+}
+
 module.exports = {
   STATES,
   STALL_THRESHOLDS,
@@ -167,4 +237,10 @@ module.exports = {
   restore,
   reset,
   checkStall,
+  onChange,
+  startTicker,
+  stopTicker,
+  describe,
+  isBusy,
+  elapsedMs,
 };

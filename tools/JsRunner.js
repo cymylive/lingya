@@ -197,6 +197,7 @@ const BOOTSTRAP = [
   "  globalThis.purge = async function (ruleset, enable) {",
   "    return await __call('purge', { ruleset: ruleset, enable: enable });",
   "  };",
+
 "  globalThis.openBrowserWindow = async function (url, options) {",
 "    options = options || {};",
 "    return await __call('open_browser_window', {",

@@ -102,20 +102,3 @@ test('renderSessions 有会话渲染并绑定', async () => {
   if (captured) origErr('[captured]', captured);
   assert.match(el._html, /abc/);
 });
-
-test('FileReadTool line_numbers 与 escaped format', async () => {
-  const fs = require('fs');
-  const path = require('path');
-  const { FileReadTool } = require('../../tools/FileReadTool');
-  const tmp = path.join(process.cwd(), 'test', 'tmp', 'fileread-extra');
-  fs.mkdirSync(tmp, { recursive: true });
-  fs.writeFileSync(path.join(tmp, 'a.txt'), 'line1\nline2');
-  const tool = new FileReadTool();
-  const r1 = await tool.execute({ file_path: 'a.txt', projectDir: tmp, line_numbers: true });
-  assert.match(r1.data, /1: line1/);
-  assert.match(r1.data, /2: line2/);
-  const r2 = await tool.execute({ file_path: 'a.txt', projectDir: tmp, format: 'escaped' });
-  assert.strictEqual(typeof r2.data, 'string');
-  assert.ok(r2.data.startsWith('"'));
-  fs.rmSync(tmp, { recursive: true, force: true });
-});

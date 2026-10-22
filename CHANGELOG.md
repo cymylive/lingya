@@ -1,5 +1,189 @@
 # Changelog
 
+## [0.6.100] - 2026-10-22
+
+### Fixed
+
+- **工具调用在界面上完全不可见**（用户报「工具在调用但面板没有任何提示」）
+  - 根因一：`tool-card.js` 定义并导出了 `TOOL_CARD_CSS`，但**全项目零处注入**——
+    卡片 div 渲染出来了却没有边框/背景/字号/折叠，在深色 AI 页面上与普通文字无异
+  - 根因二：卡片只在 `await executeJs()` **返回之后**渲染一次；而卡片容器
+    `#lingya-result-section` 初始带 `lingya-hidden`，用户必须手动展开「日志」页签才看得到。
+    执行过程中零反馈
+  - 根因三：`browser-window-manager.injectJS()` 裸 `await wc.executeJavaScript()`，
+    目标 webContents 卡死/被遮挡时**永不 resolve**，整个 Agent 循环就此停摆
+    （表现为 `The tool call seems to not be returning`）
+  - 修复：`injectCSS()` 补注入 `TOOL_CARD_CSS`；新增 `upsertToolCard()` 支持按
+    `cardId` 原地替换；执行**前**先插 `running` 卡片并自动展开结果区，完成后原地翻
+    success/error；`injectJS` 加 60s `Promise.race` 超时
+
+### Added
+
+- **统一任务状态条**（面板底部常驻，秒级刷新已用时）
+  - 状态机 `task-state.js` 升级为**唯一真相源**：新增 `onChange()` 订阅、`startTicker()`
+    秒级心跳、`describe()`/`isBusy()`/`elapsedMs()`
+  - 新增 `#lingya-taskbar`：SENT/AWAITING/RESPONDED/EXECUTING 四态各有文案与配色，
+    到 EXECUTING 时显示具体工具名
+  - **进行中就一定显示**：不再因为「等待时间长」或「是后台任务」而消失
+  - 后台任务单独登记：`bashBackground` 起的服务在 AI 一轮结束后仍在跑时，
+    即使状态机已回 IDLE，状态条也保持可见（紫色），直到任务完成/被 kill/用户点停止
+
+### Changed
+
+- **UI 状态不再由各处手动开关**：原先 `setTaskStatus()`/`setFabState()` 散落在
+  `intercept-observer`、`tool-executor`、`supervisor` 四处各调各的，任一处漏调
+  UI 就停在上一个状态。现在统一订阅状态机，任何检测机制（拦截器/监督者/DOM 兜底/超时复位）
+  走 `transition/touch/reset` 都会同步刷新 UI
+- 生成超时定时器不再「静默打回 idle」，保留日志并交由监督者兜底
+- 用户点「停止」时一并清空后台任务登记
+
+### Notes
+
+- 全量测试 **631/631 通过**
+- 版本号 0.6.99 → 0.6.100；`portable.unpackDirName` 同步更新（避免复用 %TEMP% 旧目录跑旧代码）
+
+---
+
+## [0.6.99] - 2026-10-22
+
+### Removed
+
+- **删除「计划执行前人工确认」机制**（用户要求：不需要这个设计）
+  - AI 制定计划后**直接执行**，不再停下等待用户点按钮或回复确认词
+  - 移除覆盖层与侧边栏的「▶ 确认执行」按钮
+  - 移除 `plan_confirm` 自救工具（AI 主动解锁门禁的通道）
+  - 移除配置项 `planConfirmEnabled`
+  - 移除 `supervisor` / `continueIfPlanUnfinished` 的「确认期跳过催促」分支
+  - 删除 5 个相关测试文件
+
+- **删除 642 行死代码**（项目审计发现）
+  - `tools/{FileWrite,FileRead,FileEdit,Glob,Grep}Tool.js` —— 5 个旧版工具类，早已不再注册
+  - `test/tools/LegacyGlobGrep.test.js`
+  - 同步清理 `index.js` 的 import/export 与两处测试文件里的旧类测试
+
+### Added
+
+- **侧边栏补齐「▶ 开始处理」按钮**
+  - 覆盖层早就有，侧边栏漏了 —— 现在两端一致
+  - 点击后**自动发送** `【待办任务】<内容>\n\n请开始处理这个任务。` 给 AI
+  - 新增 IPC 通道 `shell-send-to-chat`（区别于 `insertToChat` 的只填入不发送）
+  - 3 秒防重复点击
+
+- **提取 `src/preload/shell-utils.js`**（项目审计）
+  - 从 2107 行的 `shell-renderer.js` 里剥离 16 个纯函数
+  - `esc` / `attr`（HTML 转义）、`extOf`（扩展名）、`highlight`（搜索高亮）
+  - `colorClass` / `nameClass` / `iconHtml`（文件类型映射）
+  - `renderNodes`（递归渲染树）/ `flatten`（递归拍平）
+  - UMD 双模式：Node（测试用 `module.exports`）+ 浏览器（`window.__lyShellUtils`）
+
+### 项目审计
+
+- **补 `active-processes` 测试覆盖**（0 → 18 个断言）
+  - 该模块负责「用户点停止时 kill 进程树」，此前零覆盖
+  - 覆盖 register/unregister、killAll 按 key 隔离、aborted 三语义、多窗口隔离
+  - 顺带修了测试自身会真调 `taskkill.exe` 的问题（2.4s → 165ms）
+
+- **补 `shell-utils` 测试**（29 个断言）
+  - 覆盖 XSS 转义、递归边界、正则元字符、大小写不敏感
+
+### Changed
+
+- **打包配置精简**：`build.files` 新增排除 `test/`、`scripts/`、`docs/`、`.lingyaCode/`、`.github/`
+  - 安装包体积 **132.7 MB → 126.43 MB**（减少 6.27 MB）
+  - 顺带删除 3 个遗留临时脚本（`test/test.js`、`test/test_js_runner.js`、`test/test.md`），
+    它们还在引用早已删除的 `FileWriteTool` 等旧类
+
+### Notes
+
+- 全量测试 **631/631 通过**
+- 保留功能：计划门禁（建计划前拦一次写操作）、我的待办、系统消息三层防护
+
+---
+
+## [0.6.98] - 2026-10-22
+
+### Added
+
+- **待办项「开始处理」一键派发**
+  - 每个待办项右侧新增 `▶` 按钮（hover 显示）
+  - 点击后自动发送 `【待办任务】<内容>\n\n请开始处理这个任务。` 给 AI 并立即发送
+  - 与「插入到对话框」的区别：后者只填入不发送，本功能一键直达
+  - 防重复点击（发送后 3 秒内禁用）
+
+- **AI 自救通道 `plan_confirm` 工具**
+  - 解决 v0.6.97 引入的致命死锁：AI 无法从自己建立的计划门禁中脱身
+  - 当用户已明确授权、但系统未识别到时，AI 可主动调用 `planConfirm()` 解锁
+  - 工具描述写明使用条件，防止滥用（无授权时不得调用）
+
+### Fixed
+
+- **侧边栏补齐「确认执行」与「开始处理」按钮**（覆盖层有、侧边栏漏了）
+  - 「确认执行」：出现在「任务计划」标题下方（仅等待确认时显示），点击后调 `planConfirm`
+  - 「▶ 开始处理」：待办项右侧按钮，点击后**自动发送**给 AI（不是只填入）
+  - 新增 IPC 通道 `shell-send-to-chat`（主进程转发到 AI 视图 → `sendMessageToChat({auto:true})`）
+  - 与既有 `insertToChat`（只填入不发送）区分开
+
+- **监督机制与计划确认互相卡死**（严重）
+  - 现象：AI 建计划后停下等确认 → supervisor 30 秒后判定「停滞」催它干活
+    → plan-gate 拒绝 → AI 又停下 → 又被催，无限循环
+  - 修复：`supervisor.checkOnce()` 和 `continueIfPlanUnfinished()` 开头
+    查询 `planConfirmStatus`，等待确认期间直接跳过所有催促
+
+- **关键词检测读错数据源，导致「回复确认」无效**（严重）
+  - 根因：旧实现轮询 `state.lastUserMessage`，但该字段只在程序调用
+    `sendToChat` 时更新 —— 用户直接在 DeepSeek 输入框打字根本不经过它
+  - 修复：改为监听主世界 hook 派发的 `lingya-user-message` 事件
+    （从请求体提取真实用户输入，覆盖所有来源）
+
+- **确认词正则过严，只有纯「确认」二字才生效**
+  - 旧：`/^(确认执行|确认|...)$/` 整条完全匹配
+  - 新：短消息纯确认词 OR 长消息含「确认执行」「开始执行」「执行计划」等明确指令
+  - 「好的，确认执行」「确认执行，另外帮我改个东西」现在都能识别
+
+### Removed
+
+- **删除「计划执行前人工确认」机制**（用户要求：不需要这个设计）
+  - 移除 `plan-gate` 的 `awaitingConfirm` 状态机（回退到只有「建计划前拦一次」的原版）
+  - 移除 `PlanConfirmTool`（AI 自救通道）及其在 `index.js` / `JsRunner` / `tool-names` / `d.ts` 的接线
+  - 移除 IPC 通道 `plan-confirm` / `plan-confirm-status` 与对应 preload API
+  - 移除覆盖层与侧边栏的「▶ 确认执行」按钮
+  - 移除 `supervisor` / `continueIfPlanUnfinished` 的「确认期跳过」分支
+  - 移除配置项 `planConfirmEnabled`
+  - 移除 `TodoWriteTool` 返回值里的「等待用户确认」提示
+  - 删除 5 个相关测试文件，保留「开始处理」「系统消息防护」的测试（重命名为 `todo-start-and-guard.test.js`）
+  - **保留**：计划门禁本身（建计划前拦一次写操作）、「我的待办 → 开始处理」功能
+
+### 项目审计（第一项）
+
+- **补 `active-processes` 测试覆盖**（0 → 18 个断言）
+  - 该模块负责「用户点停止时 kill 进程树」，此前零测试覆盖，出错后果严重
+  - 覆盖：register/unregister 正确性、killAll 按 key 隔离、aborted 三语义（无参/具体 key/全局）、多窗口隔离
+  - 顺带修了测试自身的问题：假 pid 会真的调起 taskkill.exe（2.4s 耗时 + 误杀风险），
+    改用 mock `child_process` 后降到 165ms
+
+- **删除 642 行死代码**
+  - `tools/{FileWrite,FileRead,FileEdit,Glob,Grep}Tool.js`（5 个旧版工具类，早就不再注册）
+  - `test/tools/LegacyGlobGrep.test.js`
+  - 同步清理 `index.js` 的 import/export 与两处测试文件里的旧类测试
+  - 搜索确认全项目无残留引用
+
+- **提取 shell-renderer 纯函数到独立模块 + 补测试**（审计项 3）
+  - 新建 `src/preload/shell-utils.js`（16 个导出，UMD 双模式）
+    - `esc` / `attr`（HTML 转义）、`extOf`（扩展名）、`highlight`（搜索高亮）
+    - `colorClass` / `nameClass` / `iconHtml`（文件类型映射）
+    - `renderNodes`（递归渲染树）/ `flatten`（递归拍平）
+  - **29 个新测试**，覆盖 XSS 转义、递归边界、正则元字符、大小写不敏感等
+  - `shell-renderer.js` 改为复用该模块，删除重复的常量表与 7 个函数实现
+  - UMD 尾巴兼容两种加载方式：
+    - Node 环境（测试用）走 `module.exports`
+    - 浏览器环境（`<script src>`）挂 `window.__lyShellUtils`
+
+### Notes
+
+- 全量测试 **644/644 通过**（新增 20 个断言，删除 19 个测旧类的断言）
+
+---
+
 ## [0.6.97] - 2026-10-22
 
 ### Added

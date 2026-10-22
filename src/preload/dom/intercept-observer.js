@@ -763,7 +763,12 @@ function startInterceptObserver() {
       }
       if (generateTimeout) clearTimeout(generateTimeout);
       generateTimeout = setTimeout(() => {
+        // 【修复】原来只把悬浮球打回 idle，状态机仍停在 AWAITING →
+        // 状态条一直显示「AI 正在生成」直到监督者 120s 后才发现停滞。
+        // 现在同步交给状态机判断：超时说明事件可能丢了，状态条应转为「等待响应」并保持可见。
         if (getFabState() === 'generating') setFabState('idle');
+        console.log('[LingYa][拦截] 生成超时（' + Math.round(GENERATE_TIMEOUT_MS / 1000) +
+          's），状态机保持在 AWAITING 由监督者兜底');
       }, GENERATE_TIMEOUT_MS);
     } catch (err) {
       console.error('[LingYa][拦截] 处理生成开始事件出错:', err);

@@ -584,6 +584,19 @@ ipcRenderer.on('lingya-run-action', async (_event, payload) => {
   } catch (e) { console.error('[LingYa] run-action 失败:', e.message); }
 });
 
+// 侧边栏「发送并提交」：填入 + 自动发送（区别于 insert-to-chat 的只填入）
+ipcRenderer.on('lingya-send-to-chat', async (_event, payload) => {
+  try {
+    const text = String((payload && payload.text) || '');
+    const tag = String((payload && payload.tag) || '侧边栏发送');
+    if (!text.trim()) return;
+    await sendMessageToChat(text, tag, { auto: false });
+    console.log('[LingYa] 侧边栏发送已提交: ' + tag + ', 长度=' + text.length);
+  } catch (e) {
+    console.error('[LingYa] 侧边栏发送失败:', e.message);
+  }
+});
+
 ipcRenderer.on('lingya-insert-to-chat', async (_event, payload) => {
   try {
     const p = payload || {};
