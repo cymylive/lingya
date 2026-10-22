@@ -1,7 +1,0 @@
-v0.6.96: 修复串行队列被长等待堵死 + 多窗口停止串扰
-
-修复：
-- 串行处理队列被 bashOutput 长等待堵死，导致整窗口"看起来没拦截到代码块"
-  - MAX_WAIT_MS 从 600000(10min) 降到 120000(2min)
-  - 新增 QUEUE_WAIT_WARN_MS(3min) 队列看门狗，阻塞超阈值时打印明确警告
-- BackgroundTaskTool.waitForDone 调 isAborted() 未传 profileId，导致多窗口停止串扰
