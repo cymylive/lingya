@@ -35,9 +35,25 @@ const QUEUE_ERROR_MAX = 3;
 // 期间若又有 lingya-ai-response 事件到达（用户手动发消息、页面重试等），
 // 事件监听器不会等待前一个 async 完成 → 并发重入，导致状态错乱、回复丢失。
 // 用 Promise 链把处理强制串行，后到的事件排队执行。
+// 队列等待告警阈值：超过这么久才轮到执行，说明前面有长任务堵住了。
+// 典型场景：bashOutput 的 wait 很长，导致后续回复全部排队、UI 无反馈。
+const QUEUE_WAIT_WARN_MS = 180000; // 3 分钟
+
 let processingChain = Promise.resolve();
 function enqueueProcessing(taskFn) {
-  processingChain = processingChain.then(taskFn).catch((err) => {
+  const enqueuedAt = Date.now();
+  processingChain = processingChain.then(() => {
+    // 实际轮到执行时，先报告等了多久 —— 队列阻塞必须可见，不能静默
+    const waited = Date.now() - enqueuedAt;
+    if (waited > QUEUE_WAIT_WARN_MS) {
+      console.warn('[LingYa][拦截] ⚠️ 处理队列阻塞：本条回复排队等待了 ' +
+        Math.round(waited / 1000) + 's 才开始处理（阈值 ' +
+        Math.round(QUEUE_WAIT_WARN_MS / 1000) + 's）。' +
+        '常见原因：上一条回复里有耗时很长的工具（如 bashOutput 的长等待）。' +
+        '期间 AI 新输出的代码块都不会被执行，UI 也不会有反应。');
+    }
+    return taskFn();
+  }).catch((err) => {
     console.error('[LingYa][拦截] 队列处理出错:', err);
     // 异常不能让任务静默死掉：把错误回传给 AI，让它知道发生了什么并重试。
     // 注意：本 catch 内部必须再包 try/catch —— 若异常本身就来自 sendMessageToChat，
