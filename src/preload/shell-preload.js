@@ -47,6 +47,8 @@ const api = {
   onUserTodosUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-user-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-user-todos-updated',h); },
   onSessionChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-session-changed',h); return ()=>ipcRenderer.removeListener('lingya-session-changed',h); },
   onHistoryUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-history-updated',h); return ()=>ipcRenderer.removeListener('lingya-history-updated',h); },
+  // 任务状态（AI 视图上报 → 主进程转发 → 侧边栏渲染状态条）
+  onTaskStateUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-task-state-updated',h); return ()=>ipcRenderer.removeListener('lingya-task-state-updated',h); },
   // 记忆
   listMemories: () => ipcRenderer.invoke('memory-list'),
   saveMemory: (memory) => ipcRenderer.invoke('memory-save', { memory }),

@@ -273,6 +273,10 @@ let electronAPI = {
   feishuReport: (payload) => {
     return ipcRenderer.invoke('feishu-report', payload);
   },
+  // 任务状态上报（AI 视图 → 主进程 → 壳窗口侧边栏）
+  // 侧边栏和 AI 视图是两个独立 webContents，状态真相源在 AI 视图侧，
+  // 必须显式上报才能让侧边栏也看到「进行中」。
+  reportTaskState: (payload) => ipcRenderer.send('lingya-report-task-state', payload),
   // 主进程 → 渲染进程的事件监听（监听器注册，返回取消函数）
   onFeishuMode: (cb) => {
     const handler = (_e, payload) => cb(payload);

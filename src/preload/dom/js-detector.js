@@ -8,7 +8,10 @@
 const BT = String.fromCharCode(96);
 const FENCE = BT + BT + BT;
 // 工具调用特征：必须出现 "await 工具函数名(" 形式的调用（防止 fs.readFile 等普通示例误判）
-const JS_TOOL_CALL_RE = /\bawait\s+(?:read|write|edit|glob|grep|bash|pwsh|todoWrite|deleteFile|webFetch|openBrowserWindow|injectJS|readFile|readFileWithLines|writeFile|editFile)\s*\(/;
+// 必须与 tools/JsRunner.js 的 globalThis.xxx 注册保持同步。
+// 曾经漏掉 bashOutput / bashKill / bashBackground —— 导致 AI 裸写 await bashOutput(...)
+// 时不被识别为工具脚本（只有 log(await xxx()) 包裹才能被第三条规则兜住）。
+const JS_TOOL_CALL_RE = /\bawait\s+(?:read|readLines|write|edit|glob|grep|bash|bashBackground|bashOutput|bashKill|pwsh|todoWrite|deleteFile|webFetch|webSearch|viewImage|mysql|openBrowserWindow|injectJS|readFile|readFileWithLines|writeFile|editFile|memorySave|memoryUpdate|memoryDelete|memoryList|nameConversation|listPlugins|purge)\s*\(/;
 /**
  * 判断一段 JS 代码是否调用了工具函数
  */

@@ -1053,6 +1053,20 @@ ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {})
 // 侧边栏 → AI 视图：读偏好（返回 Promise，主进程转发后由 AI 视图回填）
 // 简化：不实现读回，侧边栏用固定默认值展示
 
+// AI 视图 → 壳窗口：转发任务状态（供侧边栏状态条展示）
+// 为什么需要：侧边栏与 AI 视图是两个独立 webContents，状态真相源（task-state +
+// backgroundTasks）在 AI 视图侧。不上报的话，侧边栏完全看不到「AI 正在跑」。
+ipcMain.on('lingya-report-task-state', (event, payload) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return;
+    const rawWin = ctx.rawWin || ctx.win;
+    if (rawWin && !rawWin.isDestroyed() && rawWin.webContents) {
+      rawWin.webContents.send('lingya-task-state-updated', payload);
+    }
+  } catch (_) {}
+});
+
 // AI 视图 → 壳窗口：转发命令历史（供侧边栏日志面板展示）
 ipcMain.on('lingya-report-history', (event, payload) => {
   try {

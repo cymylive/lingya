@@ -250,6 +250,7 @@ function renderTaskbar(snap) {
   const bgCount = backgroundTasks.size;
   if ((!snap || snap.state === 'IDLE') && bgCount === 0) {
     bar.classList.add('lingya-hidden');
+    reportTaskState({ visible: false });   // 同步隐藏到侧边栏
     return;
   }
   bar.classList.remove('lingya-hidden');
@@ -292,6 +293,32 @@ function renderTaskbar(snap) {
     ms = Date.now() - oldest;
   }
   if (elapsedEl) elapsedEl.textContent = ms > 0 ? formatElapsed(ms) : '';
+
+  // 上报给主进程 → 转发到壳窗口侧边栏。
+  // 侧边栏是独立 webContents，拿不到这里的 task-state / backgroundTasks，
+  // 必须显式上报。放在 renderTaskbar 末尾是因为它是唯一的状态汇聚点 ——
+  // 所有状态变化最终都会走到这里，不用在每处 transition 里重复上报。
+  reportTaskState({ visible: true, text: text, kind: kind, elapsedMs: ms });
+}
+
+// 上报节流：内容不变就不重发（秒级心跳会每秒触发 renderTaskbar）
+let lastReportedSig = '';
+
+/**
+ * 把当前任务状态上报给主进程（主进程转发到壳窗口侧边栏）
+ * @param {object} payload { visible, text, kind, elapsedMs }
+ */
+function reportTaskState(payload) {
+  try {
+    const api = window.electronAPI;
+    if (!api || typeof api.reportTaskState !== 'function') return;
+    const sig = payload.visible
+      ? (payload.kind + '|' + payload.text + '|' + Math.floor(payload.elapsedMs / 1000))
+      : 'hidden';
+    if (sig === lastReportedSig) return;   // 内容没变（含计时秒数），不重发
+    lastReportedSig = sig;
+    api.reportTaskState(payload);
+  } catch (_) { /* 上报失败不影响本地渲染 */ }
 }
 
 // 状态条的可选明细（工具名 / 后台任务描述）与并行计数
@@ -643,6 +670,7 @@ module.exports = {
   stopTaskbar,
   setTaskbarDetail,
   renderTaskbar,
+  reportTaskState,
   addBackgroundTask,
   removeBackgroundTask,
   clearBackgroundTasks,

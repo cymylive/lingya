@@ -999,6 +999,13 @@
   // ---- 计划面板 ----
   function renderPlanView(el){
     el.innerHTML = panel('任务计划',
+      // ===== 任务状态条（AI 视图上报，见 ui.js 的 reportTaskState）=====
+      // 侧边栏与 AI 视图是两个独立 webContents，状态真相源在 AI 视图侧，
+      // 这里只负责显示主进程转发过来的内容。
+      '<div id="sh-taskbar" style="display:none;margin-bottom:10px;padding:6px 10px;border-radius:8px;font-size:11.5px;line-height:16px;background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.28);color:var(--ck-text);align-items:center;gap:6px;">'+
+        '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="sh-taskbar-text">处理中</span>'+
+        '<span style="flex-shrink:0;font-family:monospace;color:var(--ck-text-dim);" id="sh-taskbar-elapsed"></span>'+
+      '</div>'+
       // ===== Agent 模式切换（Plan / Build）=====
       // 放在计划视图顶部：模式决定「AI 能不能动手改东西」，和计划是同一件事的两面
       // —— 在 Plan 里排好步骤，切到 Build 立刻执行，不用再跑去设置页翻。
@@ -1300,6 +1307,47 @@
       }
       load();
     })();
+
+    // ===== 任务状态条订阅（AI 视图 → 主进程 → 这里）=====
+    // 全局只注册一次：renderPlanView 每次切视图都会重执行，无守卫会累积监听器。
+    // 用 window 级回调转发，让订阅始终指向当前活跃视图的 DOM。
+    window.__lingyaTaskbarDraw = function(p){
+      var bar = document.getElementById('sh-taskbar');
+      var tx = document.getElementById('sh-taskbar-text');
+      var el2 = document.getElementById('sh-taskbar-elapsed');
+      if(!bar) return;
+      if(!p || !p.visible){
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+      // 配色随类型变化：执行中偏暖，后台任务偏紫
+      var kind = p.kind || 'busy';
+      if(kind === 'executing'){
+        bar.style.background = 'rgba(245,158,11,.10)';
+        bar.style.borderColor = 'rgba(245,158,11,.30)';
+      } else if(kind === 'background'){
+        bar.style.background = 'rgba(168,85,247,.10)';
+        bar.style.borderColor = 'rgba(168,85,247,.30)';
+      } else {
+        bar.style.background = 'rgba(59,130,246,.10)';
+        bar.style.borderColor = 'rgba(59,130,246,.28)';
+      }
+      if(tx) tx.textContent = p.text || '处理中';
+      if(el2){
+        var ms = Number(p.elapsedMs) || 0;
+        var s = Math.floor(ms / 1000);
+        el2.textContent = s < 60 ? (s + 's')
+          : (s < 3600 ? (Math.floor(s/60) + 'm' + String(s%60).padStart(2,'0') + 's')
+          : (Math.floor(s/3600) + 'h' + String(Math.floor(s%3600/60)).padStart(2,'0') + 'm'));
+      }
+    };
+    if(!window.__lingyaTaskStateSubscribed && window.shellAPI && window.shellAPI.onTaskStateUpdated){
+      window.__lingyaTaskStateSubscribed = true;
+      window.shellAPI.onTaskStateUpdated(function(p){
+        if(typeof window.__lingyaTaskbarDraw === 'function') window.__lingyaTaskbarDraw(p);
+      });
+    }
   }
 
   // ---- 记忆面板 ----
