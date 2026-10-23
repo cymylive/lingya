@@ -261,7 +261,12 @@ function renderTaskbar(snap) {
   let kind = 'busy';
   if (state === 'SENT') { text = '已发送，等待 AI 响应…'; kind = 'busy'; }
   else if (state === 'AWAITING') { text = 'AI 正在思考 / 生成中…'; kind = 'busy'; }
-  else if (state === 'RESPONDED') { text = '正在解析回复…'; kind = 'busy'; }
+  else if (state === 'RESPONDED') {
+    // 队列被长任务占住时，回复已到但还没轮到处理。
+    // 不区分会导致「正在解析」挂几分钟，看起来像卡死。
+    text = snap.queued ? '已收到回复，排队等待处理…' : '正在解析回复…';
+    kind = 'busy';
+  }
   else if (state === 'EXECUTING') {
     // 带上具体工具名/后台任务信息（由 setTaskbarDetail 注入）
     text = taskbarDetail || '正在执行工具…';

@@ -40,9 +40,35 @@ const QUEUE_ERROR_MAX = 3;
 const QUEUE_WAIT_WARN_MS = 180000; // 3 分钟
 
 let processingChain = Promise.resolve();
+// 队列繁忙标记：当前是否有任务正在执行（不含「排队等待中」的那些）。
+// UI 与监督者据此区分「真的在处理」和「还在排队」——
+// 队列被长任务堵住时，状态机停在 RESPONDED，看起来像「解析卡住」，
+// 实际是「还没轮到解析」。不区分会导致误判与误提示。
+let queueBusy = false;
+let queueDepth = 0;
+
+/** 当前队列状态（供 UI / 监督者查询） */
+function getQueueState() {
+  return { busy: queueBusy, depth: queueDepth };
+}
+
 function enqueueProcessing(taskFn) {
   const enqueuedAt = Date.now();
+  queueDepth++;
+  // 入队即标记：此时回复已到但还没轮到处理，UI 应显示「排队等待」而非「正在解析」
+  try { taskState.setQueued(queueDepth > 0); } catch (_) {}
   processingChain = processingChain.then(() => {
+    queueDepth--;
+    queueBusy = true;
+    // 轮到自己了 → 不再是「排队」，如实标记为「正在处理」。
+    //
+    // 【为什么不写 setQueued(queueDepth > 0)】
+    // queued 是全局单值，但队列里可能有多个任务。若用 queueDepth 判断，
+    // 「A 正在解析 + B 已入队」时会把 queued 置 true —— 状态机是 A 的，
+    // UI 会误说「A 在排队」，实际排队的是 B。状态机单例无法区分是谁。
+    // 解析是毫秒级、几乎瞬间过渡，这个歧义在实践中影响可忽略；
+    // 但语义上「我已在执行」就该是 false，不要用别人的状态污染自己。
+    try { taskState.setQueued(false); } catch (_) {}
     // 实际轮到执行时，先报告等了多久 —— 队列阻塞必须可见，不能静默
     const waited = Date.now() - enqueuedAt;
     if (waited > QUEUE_WAIT_WARN_MS) {
@@ -53,6 +79,8 @@ function enqueueProcessing(taskFn) {
         '期间 AI 新输出的代码块都不会被执行，UI 也不会有反应。');
     }
     return taskFn();
+  }).finally(() => {
+    queueBusy = false;
   }).catch((err) => {
     console.error('[LingYa][拦截] 队列处理出错:', err);
     // 异常不能让任务静默死掉：把错误回传给 AI，让它知道发生了什么并重试。
@@ -742,8 +770,21 @@ function startInterceptObserver() {
   // 从 localStorage 恢复上次的状态机快照（页面刷新 / 渲染进程崩溃重载后走这里）。
   // 不恢复的话，状态机会归零回 IDLE，supervisor 就不知道「上次停在 AWAITING」，
   // 崩溃后无法接着判断该不该兜底。
+  // 【会话隔离】恢复前必须先确定当前会话，否则会把别的会话的状态捞回来。
+  // 典型症状：从「正在执行工具」的旧会话切到新对话首页，界面却显示
+  // 「正在执行工具 7m20s」——实际什么都没在跑。
   try {
-    const restored = taskState.restore();
+    let curSid = null;
+    try {
+      const { getProviderByUrl } = require('../../providers');
+      const provider = getProviderByUrl(window.location.href);
+      if (provider && typeof provider.extractSessionId === 'function') {
+        curSid = provider.extractSessionId(window.location.href) || null;
+      }
+    } catch (_) { /* 无 provider：当作首页/新对话 */ }
+
+    taskState.setSession(curSid);
+    const restored = taskState.restore(curSid);
     if (restored && restored.state !== 'IDLE') {
       console.log('[LingYa][拦截] 状态机已恢复，当前 ' + restored.state +
         '，交由 supervisor 判断是否停滞');
@@ -811,6 +852,26 @@ function startInterceptObserver() {
       // 回复完成：清除「生成中」状态与兜底定时器（随后工具执行会再切到「执行中」）
       if (generateTimeout) { clearTimeout(generateTimeout); generateTimeout = null; }
       if (getFabState() === 'generating') setFabState('idle');
+
+      // 【同步修复】状态机必须在事件到达时就切出 AWAITING，不能等队列。
+      //
+      // 根因：状态切换写在 processInterceptedResponse 里，而它排在串行队列后面。
+      // 若前一个任务还在跑（典型：bashOutput 等 120 秒），队列堵住 →
+      // 回复早已完整显示在界面上，状态条却还停在「AI 正在思考」，看起来像没同步。
+      //
+      // 事件到达 = 回复已完整 = 事实已确定，状态应立刻反映，与后续处理解耦。
+      try {
+        const snap = taskState.snapshot();
+        if (snap.state === taskState.STATES.AWAITING || snap.state === taskState.STATES.SENT) {
+          taskState.transition(taskState.STATES.RESPONDED, {
+            lastResponsePreview: String(detail.text || '').slice(0, 120),
+          });
+        } else {
+          taskState.touch();
+        }
+        // 队列若正忙，本次回复要排队 → 标记 queued，UI 显示「排队等待」而非「正在解析」
+        taskState.setQueued(queueBusy || queueDepth > 0);
+      } catch (_) { /* ignore */ }
       // 缓存最近一次完整回复文本，供手动解析复用（不依赖 DOM）
       lastInterceptedText = detail.text || '';
       // 计算本次请求往返耗时：从消息发出 → 回复完成（含 AI 思考 + 生成回复）。
@@ -858,6 +919,40 @@ function startInterceptObserver() {
     console.log('[LingYa][拦截] ✅ hook 自检通过：provider=' + (d.provider || '?') +
       '，事件通道贯通');
   });
+
+  // ===== 会话切换：重置状态机 =====
+  // DeepSeek 是 SPA，切换会话不重新加载页面，上面的 restore() 不会再跑。
+  // 若不主动重置，从「正在执行工具」的会话切到新对话后，状态条会一直挂着旧状态。
+  // 用 URL 轮询兜底（pushState 不触发 popstate）。
+  (function watchSessionForStateReset() {
+    let lastSid = null;
+    function readSid() {
+      try {
+        const { getProviderByUrl } = require('../../providers');
+        const p = getProviderByUrl(window.location.href);
+        if (p && typeof p.extractSessionId === 'function') {
+          return p.extractSessionId(window.location.href) || null;
+        }
+      } catch (_) {}
+      return null;
+    }
+    lastSid = readSid();
+    taskState.setSession(lastSid);
+
+    function check() {
+      const sid = readSid();
+      if (sid === lastSid) return;
+      console.log('[LingYa][状态机] 会话切换 ' +
+        (lastSid ? lastSid.slice(0, 8) : '(首页)') + ' → ' +
+        (sid ? sid.slice(0, 8) : '(首页)') + '，重置为 IDLE');
+      lastSid = sid;
+      taskState.setSession(sid);
+      try { taskState.reset('会话切换'); } catch (_) {}
+    }
+    window.addEventListener('popstate', check);
+    window.addEventListener('hashchange', check);
+    setInterval(check, 800);
+  })();
 
   console.log('[LingYa][拦截] 已启动 lingya-ai-response 事件监听');
   // 5 秒后仍未收到 hook 自检 → 打印明确警告（不阻断，但要让问题可见）
@@ -970,4 +1065,4 @@ function resetGenerating() {
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, manualRewrite, onInterceptedResponse, onToolCall, resetGenerating, DONE_HINT_RE };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, manualRewrite, onInterceptedResponse, onToolCall, resetGenerating, getQueueState, DONE_HINT_RE };

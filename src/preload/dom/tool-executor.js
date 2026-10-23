@@ -174,6 +174,22 @@ async function handleJsToolScript(code) {
     isExecuting = false;
     try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
+    // 【状态机复位】工具跑完就该切出 EXECUTING，不能等 AI 回复来推动。
+    //
+    // 原实现的死区：EXECUTING 只有 ai-start / ai-response 事件能切走。
+    // 若 AI 不回复（已停止、撞风控、网络断），状态机会一直挂在 EXECUTING，
+    // 要等监督者 720 秒（12 分钟）后才发现「工具卡死」——实际工具早就跑完了，
+    // 界面白白显示 12 分钟「正在执行工具」。
+    //
+    // 正常路径下 sendToolResultToChat 已把结果发出去，语义就是「等 AI 响应」，
+    // 切到 SENT（阈值 30s）比留在 EXECUTING（阈值 720s）准确得多。
+    try {
+      const ts = require('./task-state');
+      if (ts.snapshot().state === ts.STATES.EXECUTING) {
+        if (state.stopped) ts.reset('已停止，工具结果未回传');
+        else ts.transition(ts.STATES.SENT, { lastSentTag: '工具结果回传' });
+      }
+    } catch (_) {}
   }
 }
 
@@ -309,6 +325,15 @@ async function handleToolCall(toolCall) {
     isExecuting = false;
     try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
+    // 同 handleJsToolScript：工具跑完必须切出 EXECUTING，否则状态机会挂到
+    // 监督者 720 秒超时才发现（那时工具早已完成，界面白显示 12 分钟）。
+    try {
+      const ts = require('./task-state');
+      if (ts.snapshot().state === ts.STATES.EXECUTING) {
+        if (state.stopped) ts.reset('已停止，工具结果未回传');
+        else ts.transition(ts.STATES.SENT, { lastSentTag: '工具结果回传' });
+      }
+    } catch (_) {}
   }
 }
 

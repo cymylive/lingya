@@ -145,7 +145,14 @@ async function handleTaskStateStall(now, max) {
   }
 
   // RESPONDED 停滞：收到了回复但处理卡住（解析/执行阶段抛异常）
+  // 【排除排队态】队列被前一个长任务占住时，回复还没轮到处理 ——
+  // 这不是「处理卡住」，重置反而会丢掉待处理的回复。交给队列自己消化。
   if (stallInfo.state === taskState.STATES.RESPONDED) {
+    const snap = taskState.snapshot();
+    if (snap.queued) {
+      console.log('[LingYa][监督] 回复在排队等待处理（' + sec + 's），不算卡住，继续等');
+      return true;
+    }
     console.log('[LingYa][监督] 回复处理卡住 ' + sec + 's，重置状态让流程继续');
     try { showToast('⚠️ 回复处理异常，已重置状态', 4000); } catch (_) {}
     try { taskState.reset('RESPONDED 处理卡住'); } catch (_) {}

@@ -52,6 +52,16 @@ let current = {
   lastSentTag: '',
   // 最近一次收到的回复文本摘要
   lastResponsePreview: '',
+  // 该状态所属的会话 ID（DeepSeek 的 /a/chat/s/<uuid>）。
+  // 作用：页面加载时 restore() 只在「同一个会话」下恢复状态，
+  // 否则用户从「正在执行工具」的旧会话切到新对话，会把旧状态捞回来，
+  // 表现为新会话首页却显示「正在执行工具 7m20s」。
+  sessionId: null,
+  // 是否在排队等待处理。
+  // 场景：AI 回复已到，但串行队列被上一个长任务占着（典型 bashOutput 等 120s）。
+  // 此时状态机停在 RESPONDED，看起来像「解析卡住」，实际是「还没轮到」。
+  // UI 据此显示「等待处理」而非「正在解析」，避免误导。
+  queued: false,
 };
 
 let saveTimer = null;
@@ -153,13 +163,62 @@ function snapshot() {
   return Object.assign({}, current);
 }
 
-/** 从持久化恢复（页面刷新/重载后调用） */
-function restore() {
+/**
+ * 记录当前会话 ID。
+ * 在 restore() 之前调用，用于判断持久化里的状态是否属于当前会话。
+ */
+function setSession(sessionId) {
+  current.sessionId = sessionId ? String(sessionId) : null;
+}
+
+/**
+ * 标记是否在排队等待处理。
+ * @param {boolean} queued
+ */
+function setQueued(queued) {
+  const next = !!queued;
+  if (current.queued === next) return;
+  current.queued = next;
+  notify('queued:' + next);
+}
+
+/**
+ * 从持久化恢复（页面刷新/重载后调用）
+ *
+ * 【会话隔离】只在 sessionId 一致时恢复。
+ * 为什么：状态存 localStorage 是跨会话共享的。用户从「正在执行工具」的旧会话
+ * 切到新对话（或直接打开首页）时，若无条件恢复，新页面上会显示旧会话的
+ * 「正在执行工具 7m20s」—— 界面在说谎，实际什么都没在跑。
+ *
+ * 规则：
+ *   - 持久化里没有 sessionId（旧版数据）→ 不恢复，保守处理
+ *   - 当前也没有 sessionId（首页/新对话）→ 不恢复
+ *   - 两者都有但不一致（切换了会话）→ 不恢复
+ *   - 两者一致（同一会话刷新页面）→ 恢复，让 supervisor 能接着兜底
+ *
+ * @param {string} [sessionId] 当前会话 ID；不传则用 setSession 记录的值
+ */
+function restore(sessionId) {
   try {
+    const sid = sessionId !== undefined ? sessionId : current.sessionId;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return snapshot();
     const obj = JSON.parse(raw);
     if (!obj || typeof obj !== 'object') return snapshot();
+
+    // 会话比对（见上方注释里的四条规则）
+    const savedSid = obj.sessionId ? String(obj.sessionId) : null;
+    const curSid = sid ? String(sid) : null;
+    if (!savedSid || !curSid || savedSid !== curSid) {
+      console.log('[LingYa][状态机] 跳过恢复：' +
+        (savedSid ? '持久化会话=' + savedSid.slice(0, 8) : '持久化无会话') +
+        '，当前会话=' + (curSid ? curSid.slice(0, 8) : '(首页/无)'));
+      // 清掉陈旧持久化，避免下次再命中
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+      current.sessionId = curSid;
+      return snapshot();
+    }
+
     // 只接受已知状态，防止脏数据
     if (obj.state && STATES[obj.state]) {
       current = Object.assign(current, {
@@ -168,9 +227,11 @@ function restore() {
         round: Number(obj.round) || 0,
         lastSentTag: String(obj.lastSentTag || ''),
         lastResponsePreview: String(obj.lastResponsePreview || ''),
+        sessionId: curSid,
       });
       console.log('[LingYa][状态机] 已从持久化恢复: ' + current.state +
-        '（已停留 ' + Math.round((Date.now() - current.enteredAt) / 1000) + 's）');
+        '（同会话 ' + curSid.slice(0, 8) + '，已停留 ' +
+        Math.round((Date.now() - current.enteredAt) / 1000) + 's）');
     }
   } catch (_) { /* 脏数据忽略 */ }
   return snapshot();
@@ -182,6 +243,8 @@ function reset(reason) {
   current.enteredAt = Date.now();
   current.lastSentTag = '';
   current.lastResponsePreview = '';
+  // 注意：不清 sessionId —— 会话没变，只是状态重置。
+  // 清掉会导致同会话内 reset 后无法再 restore（虽然实际用不到，但语义更准确）。
   console.log('[LingYa][状态机] 重置为 IDLE' + (reason ? '（' + reason + '）' : ''));
   persistNow();
   notify('reset');
@@ -212,7 +275,7 @@ function describe(state) {
   switch (state) {
     case STATES.SENT: return '已发送，等待 AI 响应';
     case STATES.AWAITING: return 'AI 正在思考/生成';
-    case STATES.RESPONDED: return '正在解析回复';
+    case STATES.RESPONDED: return current.queued ? '已收到回复，排队等待处理' : '正在解析回复';
     case STATES.EXECUTING: return '正在执行工具';
     default: return '';
   }
@@ -231,6 +294,8 @@ function elapsedMs() {
 module.exports = {
   STATES,
   STALL_THRESHOLDS,
+  setSession,
+  setQueued,
   transition,
   touch,
   snapshot,

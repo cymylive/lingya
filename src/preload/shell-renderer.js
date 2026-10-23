@@ -625,7 +625,9 @@
   function panel(title, bodyHtml){
     return '<div class="sh-panel-head"><span class="sh-panel-title">'+title+'</span></div>'+'<div class="sh-panel-body">'+(bodyHtml||'')+'</div>';
   }
-  function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  // 注意：esc 已在文件顶部定义（委托给 shell-utils.js 的 U.esc，有单测覆盖）。
+  // 这里曾有一份手写的重复实现，同作用域内函数声明后者覆盖前者 —— 虽然功能等价，
+  // 但会让「改一处漏一处」：修了顶部那版，这里的旧实现继续生效。已删除。
   function toast2(m){ toast(m); }
   function renderView(name){
     var el = document.querySelector('.sh-view[data-view="'+name+'"]');
