@@ -609,20 +609,42 @@ async function processInterceptedResponse(text, force, interrupted) {
     return;
   }
 
-  // 3. XML 格式工具调用提示
-  const hasAntmlXml = /^<\s*｜｜DSML｜｜/i.test(raw);
+  // 3. XML / DSML 格式工具调用提示
+  //
+  // 【历史 BUG】原实现三个正则全部失效，导致 AI 输出 DSML 格式时静默丢弃、Agent 循环停摆：
+  //   hasAntmlXml  = /^<\s*｜｜DSML｜｜/   —— ^ 锚定开头，AI 只要前面说一句"让我重试"就不匹配
+  //   hasXmlInvoke = /<\s*[\w-]*:?invoke\s+name=/ —— 只认 <invoke>/<antml:invoke>，
+  //                                                  不认 ｜｜DSML｜｜ invoke（中间是竖线不是冒号）
+  //   hasXmlParam  = 同上，也不认 ｜｜DSML｜｜ parameter
+  // 结果：条件恒为 false → 不提示 → 不执行 → 用户看到"AI 不说话了"。
+  //
+  // 修复：只要出现 ｜｜DSML｜｜ 特征串就判定（不管前后是 < 、</ 还是空格），
+  // 同时保留标准 <invoke> 的检测作为兜底。
+  const hasDsmlMark = /｜｜\s*DSML\s*｜｜/i.test(raw);
   const hasXmlInvoke = /<\s*(?:[\w-]+:)?invoke\s+name=/i.test(raw);
   const hasXmlClose = /<\s*\/\s*(?:[\w-]+:)?invoke\s*>/i.test(raw);
   const hasXmlParam = /<\s*(?:[\w-]+:)?parameter\s+name=/i.test(raw);
-  if (hasAntmlXml || (hasXmlInvoke && (hasXmlClose || hasXmlParam))) {
+  if (hasDsmlMark || (hasXmlInvoke && (hasXmlClose || hasXmlParam))) {
     if (xmlHintCount >= XML_HINT_MAX) {
       console.log('[LingYa][拦截] 已连续提示 ' + xmlHintCount + ' 次 XML 格式，停止发送');
+      // 【修复】原实现直接 return 静默丢弃，用户完全不知道为什么停了。
+      // 这里给出可见提示，至少让人知道发生了什么、该怎么办。
+      try {
+        const { showToast } = require('../overlay/ui');
+        if (showToast) showToast('AI 连续 ' + XML_HINT_MAX + ' 次使用 XML 格式调用工具，已停止自动纠正。请手动发一条消息让它改用 lingya 代码块。', 8000);
+      } catch (_) {}
       return;
     }
     xmlHintCount++;
-    console.log('[LingYa][拦截] 检测到 XML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
+    console.log('[LingYa][拦截] 检测到 XML/DSML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
     sendMessageToChat(
-      '请使用' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 代码块进行工具调用，不要使用 XML invoke 格式。',
+      '请使用' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 代码块进行工具调用，不要使用 XML invoke 格式。' +
+      String.fromCharCode(10) + String.fromCharCode(10) +
+      '正确写法示例：' + String.fromCharCode(10) +
+      BT + BT + BT + 'lingya' + String.fromCharCode(10) +
+      'const out = await bashOutput("TASK_ID", { wait: 60000 });' + String.fromCharCode(10) +
+      'log(out);' + String.fromCharCode(10) +
+      BT + BT + BT,
       'XML工具调用提示',
       { auto: true }
     );
