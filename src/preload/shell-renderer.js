@@ -2003,14 +2003,18 @@
         var list=(r&&r.success&&r.profiles)||[];
         if(!list.length){ box.innerHTML='<div class="sh-empty">暂无窗口</div>'; return; }
         var h='';
-        for(var i=0;i<list.length;i++){ var w=list[i];
-          h+='<div class="sh-list-item"><div style="display:flex;align-items:center;gap:6px;"><span class="sh-win-open" data-id="'+esc(w.id)+'" style="font-weight:600;color:var(--ck-title);flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;">'+esc(w.name)+'</span>';
+        for(var i=0;i<list.length;i++){ var w=list[i]; var isMain=(i===0);
+          h+='<div class="sh-list-item sh-win-row" draggable="true" data-id="'+esc(w.id)+'" data-idx="'+i+'"><div style="display:flex;align-items:center;gap:6px;">';
+          if(isMain) h+='<span class="sh-win-main" style="font-size:9px;padding:1px 4px;border-radius:3px;background:#2dd4bf;color:#0b0e14;font-weight:700;flex-shrink:0;">主</span>';
+          h+='<span class="sh-win-num" data-id="'+esc(w.id)+'" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;flex-shrink:0;min-width:14px;" title="点击修改编号">'+esc(String(w.number||(i+1)))+'</span>';
+          h+='<span class="sh-win-open" data-id="'+esc(w.id)+'" style="font-weight:600;color:var(--ck-title);flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;">'+esc(w.name)+'</span>';
           h+='<span style="font-size:10px;color:var(--ck-text-dim);">'+esc(w.providerId||'平台')+'</span>';
           h+='<span class="sh-win-rename" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:var(--ck-text);">改名</span>';
           h+='<span class="sh-win-del" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:#f87171;">删除</span></div></div>';
         }
         box.innerHTML=h;
         var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(e2.getAttribute('data-id'),e2.getAttribute('data-name')); }); })(els[x]); } };
+        q('.sh-win-num',function(id){ var cur=null; for(var k=0;k<list.length;k++) if(list[k].id===id) cur=list[k].number; var nv=prompt('新编号',String(cur||'')); if(nv==null) return; var n=parseInt(nv,10); if(!n||n<1){ toast2('编号需为正整数'); return; } window.shellAPI.updateProfileNumber(id,n).then(function(r2){ toast2(r2&&r2.success?'编号已更新':'更新失败'); load(); })['catch'](function(){}); });
         q('.sh-win-open',function(id){ window.shellAPI.openProfileWindow(id).then(function(r2){ toast2(r2&&r2.success?(r2.focused?'已切换':'已打开'):'打开失败'); })['catch'](function(){}); });
         q('.sh-win-rename',function(id,name){ var nn=prompt('新名称',name); if(nn==null) return; window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); });
         q('.sh-win-del',function(id,name){ if(!confirm('确定删除窗口「'+name+'」？')) return; window.shellAPI.deleteProfileWindow(id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
