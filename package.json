@@ -71,18 +71,21 @@
   "build": {
     "appId": "com.lingya.lingya",
     "productName": "LingYa",
-    "publish": null,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "cymylive",
+        "repo": "lingya"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
+        "nsis",
+        "portable",
+        "zip"
       ],
       "icon": "assets/icon.ico",
       "artifactName": "lingya-win-v${version}-${arch}.${ext}"
