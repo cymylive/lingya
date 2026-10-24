@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/cymylive/lingya/releases/latest"><img src="https://img.shields.io/github/v/release/cymylive/lingya?style=flat-square&color=2dd4bf" alt="Latest Release"></a>
-  <a href="https://github.com/cymylive/lingya/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/cymylive/lingya/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/release.yml?style=flat-square&label=Build" alt="Build Status"></a>
   <a href="https://github.com/cymylive/lingya/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/github/stars/cymylive/lingya?style=flat-square&color=yellow" alt="Stars"></a>
   <a href="https://github.com/cymylive/lingya/releases"><img src="https://img.shields.io/github/downloads/cymylive/lingya/total?style=flat-square&color=green" alt="Downloads"></a>
@@ -103,6 +103,18 @@ npm start
 ### Direct Download
 
 Windows portable build: see [Releases](https://github.com/cymylive/lingya/releases).
+
+---
+
+## Community
+
+Questions, feedback, or just curious how others use it — you're welcome to join the group.
+
+<p align="center">
+  <img src="assets/qq-group-qrcode.jpg" alt="LingYa community QR code" width="260">
+</p>
+
+> If the QR code has expired, please open an [Issue](https://github.com/cymylive/lingya/issues) to remind us to update it.
 
 ---
 

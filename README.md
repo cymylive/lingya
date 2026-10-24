@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/cymylive/lingya/releases/latest"><img src="https://img.shields.io/github/v/release/cymylive/lingya?style=flat-square&color=2dd4bf" alt="Latest Release"></a>
-  <a href="https://github.com/cymylive/lingya/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/build.yml?style=flat-square&label=Build" alt="Build Status"></a>
+  <a href="https://github.com/cymylive/lingya/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/cymylive/lingya/release.yml?style=flat-square&label=Build" alt="Build Status"></a>
   <a href="https://github.com/cymylive/lingya/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/cymylive/lingya"><img src="https://img.shields.io/github/stars/cymylive/lingya?style=flat-square&color=yellow" alt="Stars"></a>
   <a href="https://github.com/cymylive/lingya/releases"><img src="https://img.shields.io/github/downloads/cymylive/lingya/total?style=flat-square&color=green" alt="Downloads"></a>
@@ -106,6 +106,18 @@ npm start
 ### 直接下载
 
 Windows 便携版：见 [Releases](https://github.com/cymylive/lingya/releases)。
+
+---
+
+## 交流群
+
+使用中遇到问题、想反馈建议，或只是来看看别人怎么用，都欢迎加群聊聊。
+
+<p align="center">
+  <img src="assets/qq-group-qrcode.jpg" alt="LingYa 交流群二维码" width="260">
+</p>
+
+> 二维码若已过期，请提 [Issue](https://github.com/cymylive/lingya/issues) 提醒更新。
 
 ---
 

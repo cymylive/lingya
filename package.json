@@ -187,7 +187,9 @@
       "!_*.cmd",
       "!_*.txt",
       "!_*.log",
-      "!_*.prev"
+      "!_*.prev",
+      "!assets/qq-group-qrcode.jpg",
+      "!assets/wechat-group.jpg"
     ],
     "asar": true
   },
