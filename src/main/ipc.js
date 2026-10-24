@@ -1028,7 +1028,14 @@ function registerIpcHandlers() {
         return { success: false, error: '导出内容为空' };
       }
       const win = windowState.getMainWindow();
-      const fallback = 'lingya-conversation-' + new Date().toISOString().slice(0, 10) + '.md';
+      // 兜底文件名：渲染进程没传 suggestedName 时用。
+      // 主进程拿不到 document.title，所以只能给通用名，但时间格式与渲染进程保持一致
+      // （YYYYMMDD-HHmm），避免两处命名风格割裂。
+      const _d = new Date();
+      const _pad = (n) => String(n).padStart(2, '0');
+      const _stamp = _d.getFullYear() + _pad(_d.getMonth() + 1) + _pad(_d.getDate()) +
+        '-' + _pad(_d.getHours()) + _pad(_d.getMinutes());
+      const fallback = 'lingya-conversation-' + _stamp + '.md';
       const result = dialog.showSaveDialogSync(win, {
         defaultPath: suggestedName || fallback,
         filters: [{ name: 'Markdown', extensions: ['md'] }],

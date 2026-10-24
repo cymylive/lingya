@@ -10,6 +10,11 @@ module.exports = {
   initialPromptChunks: null,
   // 当前正在发送第几段（0-based）
   initialPromptChunkIndex: 0,
+  // 本批次已实际发出的段索引集合（Set<number>），用于幂等防护。
+  // 曾出现「## 工具使用指导」段被发送两次：组装层确认只出现 1 次，
+  // 是发送层重复 —— sendNextInitialPromptChunk 与 waitForInitialPromptAndSend
+  // 的轮询可能同时拿到输入框、各自发起一次发送。用这个集合兜住。
+  initialPromptSentChunks: null,
   // 分批模式下：已发完一段，正等本轮回复结束后发下一段。
   // 为 true 时暂停自动续跑/监督者，否则会和分批发送抢着发消息。
   awaitingNextInitialChunk: false,
@@ -75,6 +80,20 @@ module.exports = {
   taskDeclaredDone: false,
   // awaitingUserInput 置位的时刻。监督者用它在「等太久且计划未完成」时判定为误判，强制催。
   awaitingUserInputAt: 0,
+  // ===== 监督者激活闸门 =====
+  // 背景：初始化项目时，systemPrompt 会分多段自动发出（都是 auto 消息），
+  // AI 读完回一句「已就绪」，此时用户还没派任何任务。但监督者看到
+  // 「sessionHadToolExecution=true（AI 初始化时读过 skill）+ 长时间无活动」
+  // 就判定为「无计划任务停滞」，开始反复发「停了一会儿了，接着往下做吧」。
+  // 实测会一直卡在这个循环里，因为初始化本来就没有任务可做。
+  //
+  // 解法：监督者只在「用户已真实派过任务」后才允许发催促消息。
+  // initializationDone：systemPrompt 全部分段已发送完毕
+  initializationDone: false,
+  // userTaskStarted：用户发过至少一条真实消息（非 auto 催促/工具回传）。
+  // 会话切换时重置（见 intercept-observer 的 watchSessionForStateReset）。
+  userTaskStarted: false,
+
   // 是否为「强等待」：AI 明确列出多个方案让用户挑（A./B. 列表、「你有两个选项」等）。
   // 这种等多久都合理 —— supervisor 不做超时催促。
   // 弱等待（结尾问号等）仍会在 3 分钟后被判误判并催，避免 AI 随口一句「要吗」卡死流程。

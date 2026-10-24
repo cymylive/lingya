@@ -705,10 +705,10 @@ function bindEvents() {
     }
     try {
       const markdown = log.exportMarkdown();
-      const d = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      const name = 'lingya-conversation-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
-        '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.md';
+      // 文件名用会话标题：<标题>_<YYYYMMDD-HHmm>.md
+      // 取不到标题时回退到 lingya-conversation-<时间戳>.md
+      const { buildExportFilename } = require('../dom/export-filename');
+      const name = buildExportFilename();
       if (!window.electronAPI || typeof window.electronAPI.conversationExportMd !== 'function') {
         showToast('导出 API 不可用，请重启应用', 3000);
         return;

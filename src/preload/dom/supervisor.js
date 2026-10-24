@@ -27,6 +27,26 @@ const STALL_THRESHOLD_DEFAULT = 120 * 1000;
 const STALL_MAX_DEFAULT = 5;
 const STALL_WINDOW_MS = 300 * 1000;
 
+/**
+ * 是否允许发送催促消息（闸门）。
+ *
+ * 【为什么需要】初始化项目时 systemPrompt 分多段自动发出（都是 auto 消息），
+ * AI 读完回一句「已就绪」，用户还没开口。此时：
+ *   - sessionHadToolExecution = true（AI 初始化时读过 skill / 调过工具）
+ *   - lastActivityAt 停在「AI 回复已就绪」那一刻
+ *   - 120 秒后 idleMs 超阈值 → 命中「无计划任务停滞」分支
+ * → 反复发「停了一会儿了，接着往下做吧」，AI 只能回「没有任务」，再被催……死循环。
+ *
+ * userTaskStarted 只在用户发真实消息（非 auto）时置 true，
+ * 因此「初始化完 → 用户开口前」这段空窗期不会催。
+ *
+ * 注意：只挡「发消息」的动作。fab 卡死自愈、DOM 兜底、状态机重置
+ * 这些不发消息的修复动作必须照常执行（否则初始化期间出错就没人救了）。
+ */
+function canNudge() {
+  return state.userTaskStarted === true;
+}
+
 let timer = null;
 let stallCount = 0;
 let lastStallAt = 0;
@@ -128,7 +148,13 @@ async function handleTaskStateStall(now, max) {
       console.log('[LingYa][监督] DOM 兜底异常：' + (err && err.message) + '，改为催促 AI 继续');
     }
 
-    // DOM 兜底失败 → 催 AI 继续
+    // DOM 兜底失败 → 催 AI 继续（用户还没派任务时不催，见 canNudge 注释）
+    if (!recovered && !canNudge()) {
+      console.log('[LingYa][监督] AWAITING 停滞但用户尚未派任务，只重置状态不催促');
+      try { taskState.reset('AWAITING 停滞（初始化期不催）'); } catch (_) {}
+      state.touch();
+      return true;
+    }
     if (!recovered) {
       try { showToast('回复好像断了，已提醒继续', 4000); } catch (_) {}
       sendMessageToChat(
@@ -158,8 +184,14 @@ async function handleTaskStateStall(now, max) {
     return true;
   }
 
-  // EXECUTING 停滞：工具卡死 → 提示并催
+  // EXECUTING 停滞：工具卡死 → 提示并催（用户还没派任务时只重置，不催）
   if (stallInfo.state === taskState.STATES.EXECUTING) {
+    if (!canNudge()) {
+      console.log('[LingYa][监督] EXECUTING 停滞但用户尚未派任务，只重置状态不催促');
+      try { taskState.reset('EXECUTING 停滞（初始化期不催）'); } catch (_) {}
+      state.touch();
+      return true;
+    }
     try { showToast('⚠️ 工具执行超时（' + sec + 's），已中断并催促继续', 5000); } catch (_) {}
     sendMessageToChat(
       '刚才那个操作卡了 ' + sec + ' 秒没反应，可能没成。' +
@@ -254,6 +286,12 @@ async function checkOnce() {
     //   计划 7/7 全完成 + AI 明说"任务已完成" → 仍在催（用户实测反馈的 bug）
     // 主防护在 intercept-observer 收尾处（命中 DONE_HINT 就 resetTaskFlags），
     // 这里再加一道：检查最近一次拦截到的回复文本是否声明完成。
+    // 用户还没真实派过任务 → 不催（初始化期 AI 读 skill 也会置 sessionHadToolExecution，
+    // 不挡的话初始化完就开始反复催「接着往下做」，见 canNudge 注释）
+    if (state.sessionHadToolExecution && !canNudge()) {
+      console.log('[LingYa][监督] 无计划任务停滞但用户尚未派任务，跳过催促（初始化期）');
+      return;
+    }
     if (state.sessionHadToolExecution) {
       const snap = taskState.snapshot();
       if (snap.state === taskState.STATES.IDLE) {
@@ -290,6 +328,12 @@ async function checkOnce() {
     return;
   }
 
+  // 用户还没真实派过任务 → 不催（有计划也一样，初始化期不该催）
+  if (!canNudge()) {
+    console.log('[LingYa][监督] 计划未完成但用户尚未派任务，跳过催促（初始化期）');
+    return;
+  }
+
   // 停滞计数（时间窗口内累加，超窗口重置）
   if (now - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
 
@@ -323,6 +367,12 @@ async function checkOnce() {
       return;
     }
   } catch (_) { /* ignore */ }
+
+  // 双保险：上面的通用闸门在计数递增前，这里发送前再确认一次
+  if (!canNudge()) {
+    console.log('[LingYa][监督] 有计划但用户尚未派任务，跳过催促（初始化期）');
+    return;
+  }
 
   const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];
   console.log('[LingYa][监督] 检测到停滞 ' + Math.round(idleMs / 1000) + 's，任务剩 ' +

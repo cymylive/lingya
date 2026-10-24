@@ -263,10 +263,18 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '注意：MCP server 可能未连接或未启用，以 mcpListServers() 的实时返回为准。'
   ].join('\n');
 
+  // 相关性打分用的 prompt 文本：项目路径 + 项目目录名。
+  // 【为什么必须传】buildMemorySectionMinimal / buildSkillSectionMinimal 内部
+  // 用 opts.prompt 做关键词匹配打分（memory-store.js:101 keywordScore）。
+  // 之前这里传的是 {}，opts.prompt 为 undefined → promptWords=[] → keywordScore 恒为 0，
+  // 打分退化成「pinned 优先 + 时间衰减」，注入的 3 条记忆与当前项目毫无关系
+  // （实测：AI 音乐项目初始化时注入了「好分数题库采集 CPU 跑满」）。
+  const relevancePrompt = [selectedDir, path.basename(selectedDir) || ''].join(' ').trim();
+
   // 长期记忆注入块（全局记忆，按 token 预算选择）
   let memorySection = '';
   try {
-    memorySection = memoryStore.buildMemorySectionMinimal({});
+    memorySection = memoryStore.buildMemorySectionMinimal({ prompt: relevancePrompt });
     console.log('[LingYa] 记忆注入块长度(minimal):', memorySection.length);
   } catch (err) {
     console.error('[LingYa] 构建记忆注入块失败:', err.message);
@@ -275,7 +283,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // 技能注入块（仅已启用技能，按 token 预算选择）
   let skillSection = '';
   try {
-    skillSection = skillStore.buildSkillSectionMinimal({});
+    skillSection = skillStore.buildSkillSectionMinimal({ prompt: relevancePrompt });
     console.log('[LingYa] 技能注入块长度(minimal):', skillSection.length);
   } catch (err) {
     console.error('[LingYa] 构建技能注入块失败:', err.message);
@@ -290,11 +298,18 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     const routerPath = path.join(spRoot, 'router.md');
     if (fs.existsSync(routerPath)) {
       let routerText = fs.readFileSync(routerPath, 'utf-8');
-      // 把 skill 根目录的真实绝对路径注入进去（AI 要用 read 读全文）
+      // 两个占位符语义不同，不能混用：
+      //   {{SKILL_ROOT}} → skills 目录（用于 sp-tools.js 等 skill 内部脚本路径）
+      //   <程序目录>     → 程序根目录（router.md 里拼的是 <程序目录>/src/prompt/superpowers/skills/...）
+      // 曾把 <程序目录> 也替换成 skillRoot，导致路径重复成
+      //   .../superpowers/skills/src/prompt/superpowers/skills/<name>/SKILL.md
       const skillRoot = path.join(spRoot, 'skills').replace(/\\/g, '/');
+      const appRoot = path.join(__dirname, '..', '..').replace(/\\/g, '/');
       routerText = routerText.replace(/\{\{SKILL_ROOT\}\}/g, skillRoot);
-      // router.md 里的 <程序目录> 占位也换掉
-      routerText = routerText.replace(/<程序目录>/g, skillRoot);
+      // 尖括号写法 <SKILL_ROOT> / <plan> / <N> / <cmd> 里，只有 <SKILL_ROOT> 是路径占位，
+      // 其余是命令参数说明，必须原样保留。只替换 <SKILL_ROOT> 这一种。
+      routerText = routerText.replace(/<SKILL_ROOT>/g, skillRoot);
+      routerText = routerText.replace(/<程序目录>/g, appRoot);
       superpowersSection = '---\n' + routerText;
       console.log('[LingYa] Superpowers 注入块长度:', superpowersSection.length, '| skill 根目录:', skillRoot);
     }
@@ -387,8 +402,38 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     ? '---\n## 项目介绍\n' + projectIntro
     : '';
 
+  // 工具名速查表：只列名字，不列签名，体积小（几百字符），
+  // 保证它会出现在 systemPrompt 的**第一段**里。
+  //
+  // 【为什么必须有】systemPrompt 会按 15000 字符切成多段逐段发送，
+  // 而 `{{TOOLS_LIST}}`（34 个工具的完整签名）和 `{{TOOL_API_TYPES}}`（18KB 的 d.ts）
+  // 都排在模板很靠后的位置 —— 实测会落到第 2~3 段。
+  // AI 收到第 1 段（身份 + 记忆 + 技能）就开始回复，此时它根本不知道
+  // 有 nameConversation / memoryList 这些工具，于是写下
+  // 「我没有 nameConversation 这个工具」「当前环境只暴露了 shell、文件读写和搜索」，
+  // 后续段到达也无法纠正这个已形成的错误结论。
+  // 这里把工具名清单前置到第一段，确保 AI 一开始就知道有哪些工具。
+  let toolNamesQuickref = '';
+  try {
+    const names = toolRegistry.listNames().filter((n) => !deniedTools.has(n));
+    if (names.length > 0) {
+      toolNamesQuickref = [
+        '## 你当前可用的工具（只列名字，完整签名见后文）',
+        '',
+        names.map((n) => '`' + n + '`').join('、'),
+        '',
+        '> 上面是**全部**可用工具。后文（可能在后续分段里）会给出每个工具的完整签名和用法。',
+        '> 在读到签名之前，也请先知道这些工具**存在**——不要说"我没有这个工具"或"当前环境只暴露了 shell/文件读写"。',
+        '> 需要调用时，按后文给出的签名写 ```lingya``` 代码块即可。'
+      ].join('\n');
+    }
+  } catch (err) {
+    console.error('[LingYa] 构建工具名速查表失败:', err.message);
+  }
+
   // 统一替换模板中的双花括号占位符（全量替换，支持同一占位符多次出现）
   const placeholders = {
+    '{{TOOL_NAMES_QUICKREF}}': toolNamesQuickref,
     '{{TOOL_API_TYPES}}': toolApiTypes,
     '{{TOOLS_LIST}}': toolsDescription,
     '{{TOOL_SECTIONS}}': promptSections,

@@ -456,6 +456,10 @@ async function continueIfPlanUnfinished(raw) {
 
   // ===== 分支 A：有未完成计划 → 催促继续 =====
   if (unfinished.length > 0) {
+    // 用户还没真实派过任务 → 不催。
+    // 初始化期 AI 读 skill 也可能建 todo，此时催「接着做：xxx」纯属添乱。
+    // 详细背景见 supervisor.js 的 canNudge 注释。
+    if (!state.userTaskStarted) return false;
     const now = Date.now();
     // 【关键】窗口只按「上次实际催促的时刻」计算，不能在超限分支之前就刷新时间戳。
     // 原实现先刷新时间戳再判上限，导致 AI 每回一条就重置窗口，
@@ -489,6 +493,9 @@ async function continueIfPlanUnfinished(raw) {
   //   3) AI 本轮未明说"任务已完成"
   if (cfg && cfg.unplannedContinueEnabled === false) return false;
   if (!state.sessionHadToolExecution) return false;
+  // 用户还没真实派过任务 → 不催（初始化期 AI 读 skill 会置 sessionHadToolExecution，
+  // 不挡的话初始化一结束就开始反复发「接着往下做吧，别停」）
+  if (!state.userTaskStarted) return false;
   if (raw && DONE_HINT_RE.test(String(raw))) {
     unplannedContinueCount = 0; // AI 说做完了 → 视为收尾，重置兜底预算
     return false;
@@ -1053,6 +1060,9 @@ function startInterceptObserver() {
       lastSid = sid;
       taskState.setSession(sid);
       try { taskState.reset('会话切换'); } catch (_) {}
+      // 新会话：监督者闸门复位，等用户真实派任务后才允许催促
+      state.userTaskStarted = false;
+      state.initializationDone = false;
     }
     window.addEventListener('popstate', check);
     window.addEventListener('hashchange', check);

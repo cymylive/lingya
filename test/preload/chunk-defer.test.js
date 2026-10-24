@@ -76,7 +76,15 @@ test('sendInitialPromptToInput 必须用快照而非实时读 state（防切会�
 
 test('初始化发送延迟必须随机抖动（固定节拍是 bot 指纹）', () => {
   const src = fs.readFileSync(CHAT_INPUT, 'utf-8');
-  const start = src.indexOf('async function sendInitialPromptToInput');
-  const body = src.slice(start, start + 2600);
-  assert.ok(/Math\.random\(\)/.test(body), '初始延迟缺少随机抖动');
+  // 抖动逻辑已抽到 resolveInitialChunkDelay（支持侧边栏配置随机区间），
+  // 因此要检查两点：① 发送函数调用了解析器；② 解析器内部有随机。
+  const callStart = src.indexOf('async function sendInitialPromptToInput');
+  const callBody = src.slice(callStart, callStart + 2600);
+  assert.ok(/resolveInitialChunkDelay\(\)/.test(callBody),
+    '发送函数必须调用 resolveInitialChunkDelay() 取延迟');
+
+  const fnStart = src.indexOf('async function resolveInitialChunkDelay');
+  assert.ok(fnStart > 0, '缺少 resolveInitialChunkDelay 函数');
+  const fnBody = src.slice(fnStart, fnStart + 1600);
+  assert.ok(/Math\.random\(\)/.test(fnBody), '初始延迟缺少随机抖动');
 });

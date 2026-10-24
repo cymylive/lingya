@@ -162,6 +162,29 @@ function buildSkillSectionMinimal(options = {}) {
   const BS = String.fromCharCode(92);
   const topN = Math.max(1, Math.min(10, Number(options.topN || 5)));
   function byUpdated(a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); }
+
+  // 相关性打分：传了 options.prompt 时，按 name/description 的关键词命中数排序，
+  // 命中数相同再按 updatedAt 倒序。不传 prompt（旧调用方）时行为与原来完全一致。
+  // 【为什么需要】原来只按 updatedAt 取最近 5 个，与当前项目毫无关系——
+  // 173 个技能里挑出来的往往和用户手上在干的事完全不相干。
+  const promptWords = String(options.prompt || '')
+    .toLowerCase()
+    .split(/[^a-z0-9\u4e00-\u9fff]+/)
+    .filter(function (w) { return w.length >= 2; });
+  function relevanceScore(s) {
+    if (promptWords.length === 0) return 0;
+    const hay = (String(s.name || '') + ' ' + String(s.description || '')).toLowerCase();
+    let hit = 0;
+    for (let i = 0; i < promptWords.length; i++) {
+      if (hay.indexOf(promptWords[i]) !== -1) hit++;
+    }
+    return hit;
+  }
+  function byRelevance(a, b) {
+    const d = relevanceScore(b) - relevanceScore(a);
+    return d !== 0 ? d : byUpdated(a, b);
+  }
+  const sorter = promptWords.length > 0 ? byRelevance : byUpdated;
   function stripSkillMd(p) {
     p = String(p);
     const up = p.toUpperCase();
@@ -171,8 +194,8 @@ function buildSkillSectionMinimal(options = {}) {
   }
   const localSkills = skills.filter(function (s) { return s.source === "local" && s.localPath; });
   const inlineSkills = skills.filter(function (s) { return !(s.source === "local" && s.localPath); });
-  const selectedLocal = localSkills.slice().sort(byUpdated).slice(0, topN);
-  const selectedInline = inlineSkills.slice().sort(byUpdated).slice(0, Math.max(0, topN - selectedLocal.length));
+  const selectedLocal = localSkills.slice().sort(sorter).slice(0, topN);
+  const selectedInline = inlineSkills.slice().sort(sorter).slice(0, Math.max(0, topN - selectedLocal.length));
   const prefix = (typeof chooseDominantPathPrefix === "function" && localSkills.length > 1) ? chooseDominantPathPrefix(localSkills.map(function (s) { return s.localPath; })) : "";
   const localLines = selectedLocal.map(function (s) {
     const desc = firstSentence(s.description, 40);

@@ -23,6 +23,35 @@ function initialDelay() {
   const d = Number(state.initialSendDelay);
   return (Number.isFinite(d) && d >= 0) ? d : 1000;
 }
+
+/**
+ * 计算初始提示分段发送的间隔（毫秒）。
+ *
+ * 优先用侧边栏「安全」面板配置的随机区间 [min, max]：
+ *   - 区间必须合法（min > 0 且 max >= min），否则回退
+ *   - 在区间内均匀随机，避免固定节拍被平台判定为机器人
+ *
+ * 回退路径（未配置或配置非法）：沿用旧行为 —— initialDelay() × 0.6~1.8 抖动。
+ * 这条路径保证老用户配置（localStorage 里的 lingya-initial-send-delay）仍然生效。
+ */
+async function resolveInitialChunkDelay() {
+  try {
+    const cfg = await window.electronAPI.getSecurityConfig();
+    const min = Number(cfg && cfg.promptChunkDelayMin);
+    const max = Number(cfg && cfg.promptChunkDelayMax);
+    if (Number.isFinite(min) && Number.isFinite(max) && min > 0 && max >= min) {
+      // +1 让 max 本身也能被取到（Math.random() 永远 < 1）
+      const d = Math.floor(min + Math.random() * (max - min + 1));
+      console.log('[LingYa] 分段间隔：配置区间 [' + min + ', ' + max + '] → 本次 ' + d + 'ms');
+      return d;
+    }
+  } catch (_) { /* 读配置失败走回退 */ }
+  const baseDelay = initialDelay();
+  const jitter = 0.6 + Math.random() * 1.2;
+  const d = Math.round(baseDelay * jitter);
+  console.log('[LingYa] 分段间隔：回退到 initialDelay() × 抖动 → 本次 ' + d + 'ms');
+  return d;
+}
 // 启动时从 localStorage 恢复「思考耗时自适应延迟」配置
 (function restoreThinkDelayConfig() {
   try {
@@ -403,6 +432,10 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
       try {
         state.lastUserMessage = String(msg || '');
         state.lastUserMessageAt = Date.now();
+        // 用户真实派过任务 → 解锁监督者催促。
+        // 初始化期间发的都是 auto 消息，不会走到这里，所以监督者不会在
+        // 「刚初始化完、用户还没开口」的空窗期乱催。
+        state.userTaskStarted = true;
       } catch (_) {}
     }
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
@@ -623,10 +656,11 @@ async function sendInitialPromptToInput() {
   // 分批发送的段间间隔必须随机化。
   // 固定节拍（如每次都精确 1 秒）是最强的 bot 指纹 —— 记忆 #422 已把普通消息的
   // globalSendDelay 从固定 3000 改成 2500~9000 随机，初始化这里不能漏。
-  // 基础值仍取 initialDelay()，在此基础上叠加 0.6~1.8 倍的随机抖动。
-  const baseDelay = initialDelay();
-  const jitter = 0.6 + Math.random() * 1.2;
-  const sendDelay = Math.round(baseDelay * jitter);
+  //
+  // 延迟来源（按优先级）：
+  //   1) 侧边栏「安全」面板配置的 [promptChunkDelayMin, promptChunkDelayMax] 区间随机
+  //   2) 未配置时回退到 initialDelay() 叠加 0.6~1.8 倍抖动（旧行为）
+  const sendDelay = await resolveInitialChunkDelay();
   // 把分段数组和序号"快照"到本地常量。
   // 不能在 setTimeout 回调里再去读 state.initialPromptChunks ——
   // 这中间用户可能切会话，新的 initial-prompt 会把 state.initialPromptChunks 置 null，
@@ -646,6 +680,15 @@ async function sendInitialPromptToInput() {
       state.initialPromptChunks = null;
       return;
     }
+    // 【幂等防护】同一段绝不重复发送。
+    // 触发路径：sendNextInitialPromptChunk 与 waitForInitialPromptAndSend 的轮询
+    // 可能同时拿到输入框、各自发起一次发送（实测「## 工具使用指导」段被发了两遍，
+    // 白占一段上下文，还可能让 AI 误以为提示词本身就重复）。
+    if (isChunked && state.initialPromptSentChunks &&
+        state.initialPromptSentChunks.has(chunkIdxSnapshot)) {
+      console.log('[LingYa] 第 ' + chunkNo + '/' + chunkTotal + ' 段已发送过，跳过重复发送');
+      return;
+    }
     console.log('[LingYa] 等待结束，开始发送初始提示' +
       (isChunked ? '（第 ' + chunkNo + '/' + chunkTotal + ' 段）' : ''));
     let sent = false;
@@ -653,6 +696,14 @@ async function sendInitialPromptToInput() {
       console.error('[LingYa] 初始提示发送异常:', err && err.message);
     }
     state.pendingInitialPrompt = false;
+    // 记录已实际发出的段（只在确实发出后记，发送失败允许重试）
+    if (sent && isChunked && state.initialPromptSentChunks) {
+      state.initialPromptSentChunks.add(chunkIdxSnapshot);
+    }
+    // 单段模式：发完即视为初始化完成
+    if (sent && !isChunked) {
+      state.initializationDone = true;
+    }
     if (!sent) {
       // 发送失败：清掉分批状态，避免 awaitingNextInitialChunk 永久挂起屏蔽续跑
       console.error('[LingYa] 初始提示发送失败，放弃本批次剩余分段');
@@ -681,6 +732,7 @@ async function sendInitialPromptToInput() {
       state.awaitingNextInitialChunk = false;
       state.initialChunkDeferCount = 0;
       state.initialChunkDeferAt = 0;
+      state.initializationDone = true;
     }
   }, sendDelay);
 
@@ -908,8 +960,9 @@ ipcRenderer.on('lingya-run-action', async (_event, payload) => {
       const cnt = log.getCount ? log.getCount() : 0;
       if (cnt === 0) { try { const { showToast } = require('../overlay/ui'); showToast('本窗口尚无对话记录', 3000); } catch (_) {} return; }
       const md = log.exportMarkdown ? log.exportMarkdown() : '';
-      const d = new Date(); const pad = (n) => String(n).padStart(2, '0');
-      const nm = 'lingya-conversation-' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.md';
+      // 文件名用会话标题：<标题>_<YYYYMMDD-HHmm>.md
+      const { buildExportFilename } = require('./export-filename');
+      const nm = buildExportFilename();
       await ipcRenderer.invoke('conversation-export-md', { markdown: md, suggestedName: nm });
     }
   } catch (e) { console.error('[LingYa] run-action 失败:', e.message); }
@@ -948,6 +1001,8 @@ ipcRenderer.on('initial-prompt', (_event, content) => {
       content.chunks.length + ' 段, 总长度=' + content.chunks.join('').length);
     state.initialPromptChunks = content.chunks.slice();
     state.initialPromptChunkIndex = 0;
+    state.initialPromptSentChunks = new Set();   // 新批次，重置已发送记录
+    state.initializationDone = false;            // 新一轮初始化开始
     state.awaitingNextInitialChunk = false;   // 新一轮分批，先复位挂起标志
     state.initialPromptContent = content.chunks[0] || '';
     state.pendingInitialPrompt = true;
@@ -964,6 +1019,7 @@ ipcRenderer.on('initial-prompt', (_event, content) => {
   state.initialPromptChunks = null;
   state.initialPromptChunkIndex = 0;
   state.awaitingNextInitialChunk = false;   // 单段模式，清掉可能残留的挂起标志
+  state.initializationDone = false;          // 新一轮初始化开始，等发完再置 true
   console.log('[' + new Date().toISOString() + '] [LingYa] 收到 initial-prompt 事件, content长度=' + (content || '').length);
   state.initialPromptContent = content || '';
   state.pendingInitialPrompt = true;

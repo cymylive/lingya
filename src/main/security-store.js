@@ -42,6 +42,12 @@ const DEFAULT_CONFIG = {
   // 调大：段数更少、初始化更快，但太大会被平台拒收（DeepSeek 实测约 3 万上限）；
   // 调小：更保险，但段数变多、初始化变慢。
   promptChunkSize: 15000,
+  // 初始提示分段之间的发送间隔（毫秒随机区间）。
+  // 为什么要随机：固定节拍是最强的机器人指纹，平台风控容易识别。
+  // 为什么需要配置：默认区间偏短，段数多时看起来像连着刷屏；用户可自行调大。
+  // 实际发送时在 [min, max] 内均匀随机取值。
+  promptChunkDelayMin: 1500,
+  promptChunkDelayMax: 6000,
   refusalEnabled: false,
   aiRewriteEnabled: false,
   aiRewriteViaChat: false,
@@ -128,6 +134,9 @@ function updateConfig(patch) {
     if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
     if (key === 'customKeywords') {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
+    } else if (key === 'promptChunkDelayMin' || key === 'promptChunkDelayMax') {
+      // 区间端点单独归一化；保存后若 min > max 会被 normalizeChunkDelayRange 交换
+      next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
     } else if (key === 'autoContinueMax' || key === 'planContinueMax' || key === 'stallThresholdMs' || key === 'stallContinueMax') {
       next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
     } else if (key === 'promptChunkSize') {
@@ -144,6 +153,12 @@ function updateConfig(patch) {
     } else {
       next[key] = String(patch[key] == null ? '' : patch[key]);
     }
+  }
+  // 区间端点写反时自动交换，避免用户填 8000/2000 后行为异常
+  if (next.promptChunkDelayMin > next.promptChunkDelayMax) {
+    const t = next.promptChunkDelayMin;
+    next.promptChunkDelayMin = next.promptChunkDelayMax;
+    next.promptChunkDelayMax = t;
   }
   writeRaw(next);
   console.log('[SecurityStore] 配置已更新');

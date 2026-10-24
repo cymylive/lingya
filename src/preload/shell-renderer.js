@@ -1561,6 +1561,9 @@
       h+='<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--ck-border);font-size:12px;font-weight:600;color:var(--ck-title);">初始提示分片</div>';
       h+=num('sh-sec-chunksize','单段字符上限（2000~100000，默认 15000）',c.promptChunkSize!=null?c.promptChunkSize:15000);
       h+='<div style="font-size:10.5px;color:var(--ck-text-dim);margin-top:2px;line-height:1.5;">系统提示词太长会拆成多段依次发送，每段不超过此值。调大=段数少但可能被平台拒收；调小=更保险但初始化变慢。下次初始化项目时生效。</div>';
+      h+=num('sh-sec-chunkdelay-min','分段间隔最小值（毫秒，默认 1500）',c.promptChunkDelayMin!=null?c.promptChunkDelayMin:1500);
+      h+=num('sh-sec-chunkdelay-max','分段间隔最大值（毫秒，默认 6000）',c.promptChunkDelayMax!=null?c.promptChunkDelayMax:6000);
+      h+='<div style="font-size:10.5px;color:var(--ck-text-dim);margin-top:2px;line-height:1.5;">每段发出后在 [最小值, 最大值] 内随机等待，再发下一段。随机化是为了避免固定节拍被平台判定为机器人。最小值写反了会自动交换。下次初始化项目时生效。</div>';
       h+=ta('sh-sec-mock','模拟响应（调试用）',c.mockResponse);
       h+='</div>';
       h+='<div style="display:flex;gap:6px;margin-top:8px;"><button class="sh-btn primary" id="sh-sec-save">保存</button><button class="sh-btn" id="sh-sec-reset">重置</button><button class="sh-btn" id="sh-sec-inject">立即注入CTF</button></div>';
@@ -1569,7 +1572,7 @@
       if(sv) sv.addEventListener('click',function(){
         function v(id){ var e=document.getElementById(id); return e?e.value:''; }
         function ck(id){ var e=document.getElementById(id); return !!(e&&e.checked); }
-        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), promptChunkSize:v('sh-sec-chunksize'), mockResponse:v('sh-sec-mock') };
+        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), promptChunkSize:v('sh-sec-chunksize'), promptChunkDelayMin:v('sh-sec-chunkdelay-min'), promptChunkDelayMax:v('sh-sec-chunkdelay-max'), mockResponse:v('sh-sec-mock') };
         var ky=v('sh-sec-key'); if(ky) patch.aiKey=ky;
         window.shellAPI.updateSecurityConfig(patch).then(function(){ toast2('已保存'); })['catch'](function(){ toast2('保存失败'); });
       });
