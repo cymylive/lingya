@@ -36,6 +36,7 @@ const IDEMPOTENT_TOOLS = new Set([
   'web_fetch', 'web_search',
   // 记忆/插件/工具的查询（list 是读，save/update/delete 不是）
   'memory_list',
+  'skill_list',
   'listPlugins',
   'mcp_list_servers', 'mcp_get_tools',
   // 图片查看（纯读）

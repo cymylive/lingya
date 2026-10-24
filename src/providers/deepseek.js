@@ -5,12 +5,51 @@
  * - preload：输入框/发送按钮选择器、用户信息选择器、首页判断正则
  */
 
+/**
+ * 判断元素是否由 LingYa 覆盖层/侧边栏注入（非站点原生元素）。
+ *
+ * 为什么必须排除：LingYa 往页面里注入了一批 textarea
+ * （lingya-utodo-input「我的待办」、lingya-mcp-json、lingya-schedule-prompt 等），
+ * 它们都挂在 body 下、位于 DOM 末尾。若站点原生输入框在导航瞬间尚未渲染，
+ * findInput() 的兜底选择器 'textarea' 会先命中这些注入元素，
+ * 导致 sendToChat 把消息填进「我的待办」并按 Enter 提交 —— 凭空生成待办。
+ *
+ * 实测事故：定时任务触发时把任务文本写进了待办（2026-10-24）。
+ */
+function isLingyaInjected(el) {
+  if (!el) return true;
+  try {
+    // id / class / 祖先链任一含 lingya 前缀即视为注入元素
+    if (el.id && /^lingya-|^sh-/.test(el.id)) return true;
+    if (el.className && typeof el.className === 'string' && /\blingya-|\bsh-/.test(el.className)) return true;
+    if (typeof el.closest === 'function' && el.closest('#lingya-root, .lingya-overlay, #lingya-sidebar, .lingya-sidebar')) return true;
+  } catch (_) { /* 判定失败时保守放行（宁可误选也不 throw） */ }
+  return false;
+}
+
 // ========== 网络拦截器（内联，注入主世界执行）==========
 // 说明：hook 源码直接内联在 provider 中，保证 provider 单文件自包含，
 // 便于自定义 provider 上传与整体移除。函数体必须自包含（不引用模块级变量）。
 function deepseekHookInstaller() {
-  var MARKER = '__lingyaDeepseekHookInstalled__';
+  var MARKER = Symbol.for('l.hook.ds');
   if (window[MARKER]) return;
+
+  /**
+   * 把被包裹的原生函数伪装成 native code。
+   * 平台常用 Function.prototype.toString.call(fn).includes('[native code]') 判断劫持。
+   * 这里覆盖 fn.toString()，让直接调用 fn.toString() 的检测拿不到真实源码。
+   * 注意：Function.prototype.toString.call(fn) 仍会拿到真实源码 —— 那需要替换
+   * Function.prototype.toString 本身，侵入性太大且容易弄坏站点，不做。
+   */
+  function spoofNative(fn, name) {
+    try {
+      Object.defineProperty(fn, 'toString', {
+        value: function () { return 'function ' + name + '() { [native code] }'; },
+        configurable: true,
+        writable: true,
+      });
+    } catch (e) { /* 属性不可配置时忽略，不影响功能 */ }
+  }
   window[MARKER] = true;
 
   // 主路径（已知的 DeepSeek 流式补全端点）
@@ -401,6 +440,7 @@ function deepseekHookInstaller() {
         return response;
       });
     };
+    spoofNative(window.fetch, 'fetch');
   }
 
   // ---------- XHR 拦截（被动读取 responseText）----------
@@ -418,10 +458,12 @@ function deepseekHookInstaller() {
     } catch (e) { /* ignore */ }
     return origSetRequestHeader.apply(this, arguments);
   };
+  spoofNative(XMLHttpRequest.prototype.setRequestHeader, 'setRequestHeader');
   XMLHttpRequest.prototype.open = function (method, url) {
     try { xhrInfo.set(this, { url: url, method: method }); } catch (e) { /* ignore */ }
     return origOpen.apply(this, arguments);
   };
+  spoofNative(XMLHttpRequest.prototype.open, 'open');
   XMLHttpRequest.prototype.send = function (body) {
     var info = xhrInfo.get(this);
     if (info && isCompletion(info.url, info.method)) {
@@ -432,6 +474,7 @@ function deepseekHookInstaller() {
     }
     return origSend.apply(this, arguments);
   };
+  spoofNative(XMLHttpRequest.prototype.send, 'send');
 
 
   function observeXhr(xhr) {
@@ -483,6 +526,13 @@ module.exports = {
   sessionUrlBase: 'https://chat.deepseek.com/a/chat/s/',
 
   // 查找可见的聊天输入框
+  //
+  // 【必须排除 LingYa 注入的元素】
+  // 覆盖层注入了一批 textarea（lingya-utodo-input / lingya-mcp-json /
+  // lingya-schedule-prompt 等），且它们位于 body 末尾。若 DeepSeek 原生输入框
+  // 延迟渲染（导航到首页的瞬间），裸选择器 'textarea' 会先命中覆盖层的输入框，
+  // 导致系统提示词被填进「我的待办」并触发 Enter → 待办被凭空创建。
+  // 实测已发生：定时任务触发时把任务文本写进了待办。
   findInput() {
     const selectors = [
       'textarea[placeholder*="message"]',
@@ -503,8 +553,12 @@ module.exports = {
     ];
     for (const sel of selectors) {
       try {
-        const el = document.querySelector(sel);
-        if (this.isElementVisible(el)) return el;
+        const els = document.querySelectorAll(sel);
+        for (const el of els) {
+          if (!this.isElementVisible(el)) continue;
+          if (isLingyaInjected(el)) continue;   // 排除 LingYa 自己的输入框
+          return el;
+        }
       } catch (_) {}
     }
     return null;

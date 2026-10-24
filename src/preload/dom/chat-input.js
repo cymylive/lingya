@@ -42,11 +42,22 @@ function initialDelay() {
       if (Number.isFinite(n) && n >= 0) state.thinkMaxDelay = n;
     }
     // 双策略延迟配置
-    const g = localStorage.getItem('lingya-global-send-delay');
+    // 快请求延迟区间：优先读新键；只有旧键时迁移为 min=max（老用户配置不丢）
+    const gmin = localStorage.getItem('lingya-global-send-delay-min');
+    const gmax = localStorage.getItem('lingya-global-send-delay-max');
+    const gold = localStorage.getItem('lingya-global-send-delay');
     const t = localStorage.getItem('lingya-adaptive-threshold');
-    if (g !== null) {
-      const n = parseInt(g, 10);
-      if (Number.isFinite(n) && n >= 0) state.globalSendDelay = n;
+    if (gmin !== null || gmax !== null) {
+      const a = parseInt(gmin, 10);
+      const b = parseInt(gmax, 10);
+      if (Number.isFinite(a) && a >= 0) state.globalSendDelayMin = a;
+      if (Number.isFinite(b) && b >= 0) state.globalSendDelayMax = b;
+    } else if (gold !== null) {
+      const n = parseInt(gold, 10);
+      if (Number.isFinite(n) && n >= 0) {
+        state.globalSendDelayMin = n;
+        state.globalSendDelayMax = n;
+      }
     }
     if (t !== null) {
       const n = parseInt(t, 10);
@@ -71,21 +82,113 @@ function computeThinkAdaptiveDelay() {
 }
 
 /**
+ * 计算快请求发送延迟：在 [globalSendDelayMin, globalSendDelayMax] 闭区间内均匀随机。
+ * min === max 时退化为固定值（与旧行为一致）。
+ * min > max 时自动交换（UI 已校验，此处兜底，避免卡死发送）。
+ */
+function pickGlobalDelay() {
+  let min = Number(state.globalSendDelayMin);
+  let max = Number(state.globalSendDelayMax);
+  if (!Number.isFinite(min) || min < 0) min = 3000;
+  if (!Number.isFinite(max) || max < 0) max = min;
+  if (min > max) { const t = min; min = max; max = t; }
+  if (min === max) return min;
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+/**
  * 将文本填入输入框（React 兼容：使用原生 value setter）
  * @param {Element} input - 输入框元素
  * @param {string} msg - 要填入的文本
  * @returns {boolean} 是否成功填入
  */
+/**
+ * 可信点击：通过主进程 sendInputEvent 注入真实鼠标事件（isTrusted = true）。
+ *
+ * 【禁止合成事件降级】原先 trustedClick 失败会回退到 el.click()，
+ * 合成事件的 isTrusted 恒为 false —— 这正是平台识别脚本操作最直接的信号。
+ * 宁可发送失败让用户看到明确报错，也不要静默降级成假输入。
+ */
+async function trustedClickElement(el) {
+  if (!el || typeof el.getBoundingClientRect !== 'function') {
+    console.warn('[LingYa] 可信点击失败：目标元素不可用');
+    return false;
+  }
+  const r = el.getBoundingClientRect();
+  if (!r || r.width <= 0 || r.height <= 0) {
+    console.warn('[LingYa] 可信点击失败：目标元素无尺寸');
+    return false;
+  }
+  const x = Math.round(r.left + r.width / 2);
+  const y = Math.round(r.top + r.height / 2);
+  const api = window.electronAPI;
+  if (!api || typeof api.trustedClick !== 'function') {
+    console.warn('[LingYa] 可信点击不可用：electronAPI.trustedClick 缺失');
+    return false;
+  }
+  try {
+    const res = await api.trustedClick(x, y);
+    if (res && res.success) return true;
+    console.warn('[LingYa] 可信点击失败:', (res && res.error) || '未知原因');
+  } catch (err) {
+    console.warn('[LingYa] 可信点击异常:', err && err.message);
+  }
+  return false;
+}
+
+/**
+ * 可信回车：通过主进程 sendInputEvent 注入真实按键（isTrusted = true）。
+ *
+ * 【禁止合成事件降级】原先失败会 dispatchEvent 合成 keydown/keyup，
+ * isTrusted 恒为 false。合成键在现代风控里是最容易被抓的特征之一，
+ * 宁可失败报错也不要静默伪装成真实按键。
+ */
+async function trustedPressEnter(target) {
+  if (target && typeof target.focus === 'function') {
+    try { target.focus(); } catch (_) { /* 聚焦失败仍继续尝试注入 */ }
+  }
+  const api = window.electronAPI;
+  if (!api || typeof api.trustedKey !== 'function') {
+    console.warn('[LingYa] 可信回车不可用：electronAPI.trustedKey 缺失');
+    return false;
+  }
+  try {
+    const res = await api.trustedKey('Enter');
+    if (res && res.success) return true;
+    console.warn('[LingYa] 可信回车失败:', (res && res.error) || '未知原因');
+  } catch (err) {
+    console.warn('[LingYa] 可信回车异常:', err && err.message);
+  }
+  return false;
+}
 async function setInputContent(input, msg) {
   try {
     if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
       input.focus();
-      const nativeSetter = Object.getOwnPropertyDescriptor(
-        input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-        'value'
-      ).set;
-      nativeSetter.call(input, msg);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const proto = input.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+
+      // 渐进填充：分段累积写入，逐段派发 input 事件，逼近真人打字的多次输入特征。
+      // 2026-10-24 DeepSeek 封号根因 ③-B1：原先一次 setter + 一次 input，
+      // 10 万字符瞬间落框，是极强的 bot 指纹。
+      // 段长随总长自适应 —— 短消息细粒度（更像人），超长消息放大段长，
+      // 避免首条 110KB 填充耗时数秒拖垮体验（实测约 1.5s 内完成）。
+      const base = Math.max(240, Math.min(3600, Math.ceil(msg.length / 26)));
+      let written = '';
+      let i = 0;
+      while (i < msg.length) {
+        const jitter = 0.7 + Math.random() * 0.6;   // 段长 ±30% 抖动，避免等长分段
+        const size = Math.max(1, Math.round(base * jitter));
+        written += msg.slice(i, i + size);
+        i += size;
+        nativeSetter.call(input, written);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        if (i < msg.length) {
+          await new Promise((resolve) => setTimeout(resolve, 24 + Math.floor(Math.random() * 70)));
+        }
+      }
       return true;
     }
     if (input.isContentEditable || input.getAttribute('contenteditable') === 'true') {
@@ -195,9 +298,11 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
       'ms → ' + sendDelay + 'ms（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay +
       '，比例 ' + state.thinkRatio + '，上限 ' + state.thinkMaxDelay + '）';
   } else {
-    const globalDelay = Number(state.globalSendDelay) || 3000;
+    const globalDelay = pickGlobalDelay();
     sendDelay = globalDelay;
-    branch = '快请求固定：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold + 'ms → ' + globalDelay + 'ms';
+    branch = '快请求随机：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold +
+      'ms → 区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
+      ']ms 内随机取 ' + globalDelay + 'ms';
   }
   console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（' + branch + '）...');
 
@@ -222,7 +327,8 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
         'adaptiveThreshold（快慢阈值）: ' + threshold + 'ms',
         'thinkRatio（自适应比例）: ' + state.thinkRatio,
         'thinkMaxDelay（自适应上限）: ' + state.thinkMaxDelay + 'ms',
-        'globalSendDelay（快请求固定延迟）: ' + state.globalSendDelay + 'ms',
+        'globalSendDelayMin/Max（快请求随机区间）: ' + state.globalSendDelayMin + ' ~ ' + state.globalSendDelayMax + 'ms',
+        'globalSendDelay（本次实际取值）: ' + sendDelay + 'ms',
         'initialSendDelay（兜底延迟）: ' + state.initialSendDelay + 'ms',
         '',
         '判定: ' + (thinkMs > threshold
@@ -234,14 +340,24 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
     });
   } catch (_) { /* 记录失败不影响发送 */ }
 
-  setTimeout(function() {
+  setTimeout(async function() {
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
       console.log('[LingYa] 已停止，取消本次延迟发送');
       return;
     }
     console.log('[LingYa] 等待结束，开始触发发送');
-    triggerSend(input);
+    // triggerSend 返回 Promise<boolean>：可信点击/可信 Enter 全部失败时为 false。
+    // 失败时不能继续往下走 —— 否则会误记 lastRequestStartAt、误切状态机到 SENT，
+    // 后续监督者会以为「消息已发出但没回复」，白白等一轮超时。
+    let sent = false;
+    try { sent = await triggerSend(input); } catch (err) {
+      console.error('[LingYa] 触发发送异常:', err && err.message);
+    }
+    if (!sent) {
+      console.error('[LingYa] 发送失败，跳过状态记录（' + (tag || '') + '）');
+      return;
+    }
     // 记录本次请求发出时刻，供 intercept-observer 计算思考耗时
     state.lastRequestStartAt = Date.now();
     // 状态机：已发出，等 AI 开始生成（intercept-observer 收到 lingya-ai-start 后会切 AWAITING）
@@ -252,7 +368,36 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
         round: taskState.snapshot().round + 1,
       });
     } catch (_) { /* 状态机异常不影响发送 */ }
-    console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length);
+    console.log('[LingYa] 已触发发送, ' + (tag || '') + ', 长度=' + msg.length +
+      ', 方式=' + (state.lastSendMethod || 'unknown'));
+
+    // ===== 发送方式可见化 =====
+    // 用户需要知道消息到底是「点了发送按钮」还是「按了回车」发出去的 ——
+    // 两者走的是不同的真实输入路径，排查发送失败时这是第一手线索。
+    try {
+      const SEND_METHOD_LABEL = {
+        'provider-native': '站点原生（Provider 自带）',
+        'trusted-click': '可信点击发送按钮（isTrusted=true）',
+        'trusted-enter': '可信回车（isTrusted=true）',
+        'failed': '发送失败（点击与回车均未成功）',
+      };
+      const methodText = SEND_METHOD_LABEL[state.lastSendMethod] || (state.lastSendMethod || 'unknown');
+      const { addHistory } = require('../overlay/ui');
+      addHistory({
+        id: 'send_' + Date.now(),
+        command: '[发送方式] ' + methodText,
+        success: true,
+        canceled: false,
+        output: [
+          '消息 tag: ' + (tag || '(无)'),
+          '消息长度: ' + msg.length + ' 字符',
+          '发送方式: ' + methodText,
+          '方式标识: ' + (state.lastSendMethod || 'unknown'),
+          '发送时刻: ' + new Date().toLocaleTimeString('zh-CN'),
+        ].join(String.fromCharCode(10)),
+        timestamp: Date.now(),
+      });
+    } catch (_) { /* 可观测性代码绝不能阻断发送 */ }
     // 记录用户原始消息（排除程序自动发的催促/工具回传，供本地拒绝改写使用）
     if (!isAuto) {
       try {
@@ -275,20 +420,41 @@ function sendMessageToChat(msg, tag, opts) {
  * 将 JSON 工具执行结果发送回 DeepSeek 聊天，让 AI 看到结果并继续工作
  */
 function sendToolResultToChat(toolCall, result) {
-  // 构造回传消息（明确的成功/失败信息，AI 可据此修正并继续）
+  // 构造回传消息（自然语言，模拟真人口吻，不带任何机器标记）
+  const nl = String.fromCharCode(10);
+  const MAXLEN = 20000;
   let msg;
-  if (result.success) {
-    const data = result.data || {};
-    // 大内容截断保护（20KB），避免超长消息
-    if (typeof data.content === 'string' && data.content.length > 20000) {
-      data.content = data.content.substring(0, 20000) + String.fromCharCode(10) + '...[内容过长已截断]...';
+
+  if (result && result.success) {
+    const data = result.data;
+    let out = '';
+
+    if (typeof data === 'string') {
+      // 最常见：ToolResult.success('格式化好的文本')
+      out = data;
+    } else if (data && typeof data === 'object') {
+      // 对象形态：优先取 content / output / text，其余字段平铺成朴素文本
+      out = (typeof data.content === 'string' && data.content) ||
+            (typeof data.output === 'string' && data.output) ||
+            (typeof data.text === 'string' && data.text) || '';
+      if (!out) {
+        const parts = [];
+        for (const k of Object.keys(data)) {
+          const v = data[k];
+          if (v === null || v === undefined) continue;
+          parts.push(k + ': ' + (typeof v === 'object' ? JSON.stringify(v) : String(v)));
+        }
+        out = parts.join(nl);
+      }
+    } else {
+      out = String(data === undefined || data === null ? '' : data);
     }
-    msg = '【工具执行结果】' + toolCall.toolName + ' 执行成功 (callId: ' + (toolCall.callId || '') + ')' + String.fromCharCode(10) +
-      JSON.stringify(data, null, 2);
+
+    out = String(out || '').trim();
+    if (out.length > MAXLEN) out = out.slice(0, MAXLEN) + nl + '...[内容太长省略了一部分]...';
+    msg = out || '(执行完成，没有输出)';
   } else {
-    msg = '【工具执行结果】' + toolCall.toolName + ' 执行失败 (callId: ' + (toolCall.callId || '') + ')' + String.fromCharCode(10) +
-      '错误原因: ' + (result.error || '未知错误') + String.fromCharCode(10) +
-      '请根据错误原因修正参数后重新调用工具。';
+    msg = '出错了：' + ((result && result.error) || '未知错误') + nl + '再试一下看看。';
   }
 
   console.log('[LingYa] 回传工具结果, 消息长度=' + msg.length);
@@ -303,23 +469,26 @@ function sendCombinedJsResultsToChat(results) {
   const MAX_OUTPUT = 15000;
   const sep = String.fromCharCode(10);
 
-  let msg = '【JS 执行结果汇总】(共 ' + results.length + ' 个脚本)' + sep + sep;
+  let msg = '';
 
   for (let i = 0; i < results.length; i++) {
     const item = results[i];
-    msg += '—— 脚本 ' + (i + 1) + ' ——' + sep;
-    if (item && item.result && item.result.success) {
-      let out = (item.result.output || '').trim();
+    const ok = item && item.result && item.result.success;
+
+    if (ok) {
+      let out = String((item.result.output || '')).trim();
       if (out.length > MAX_OUTPUT) {
-        out = out.slice(0, MAX_OUTPUT) + sep + '...[输出过长已截断]...';
+        out = out.slice(0, MAX_OUTPUT) + sep + '...[输出太长省略了一部分]...';
       }
-      msg += '✅ 成功' + sep + (out || '(脚本执行完成，无输出)');
+      msg += (out || '(执行完成，没有输出)') + sep;
     } else {
-      msg += '❌ 失败' + sep + '错误原因: ' + ((item && item.result && item.result.error) || '未知错误') + sep;
-      msg += '本次实际执行的代码(前300字符):' + sep + String((item && item.code) || '').slice(0, 300) + sep;
-      msg += '请修正 JavaScript 代码后重新输出完整的 ' + BT + BT + BT + 'lingya 代码块。';
+      // 报错时只说错误本身，不把代码贴回去（真人不会把自己刚写的代码再念一遍）
+      msg += '出错了：' + ((item && item.result && item.result.error) || '未知错误') + sep;
+      msg += '我改一下重新跑。' + sep;
     }
-    msg += sep + sep;
+
+    // 多脚本之间留空行分隔即可，不加"第一个/下一个"这类机械过渡
+    if (i < results.length - 1) msg += sep;
   }
 
   // 收集所有脚本产出的图片
@@ -330,7 +499,7 @@ function sendCombinedJsResultsToChat(results) {
     }
   }
   if (allImages.length > 0) {
-    msg += sep + '（已附上 ' + allImages.length + ' 张图片，请查看图片内容后继续。）';
+    msg += sep + '（附了 ' + allImages.length + ' 张图，你看下。）';
   }
 
   console.log('[LingYa] 回传 JS 汇总执行结果, 消息长度=' + msg.length + ', 图片=' + allImages.length);
@@ -386,16 +555,45 @@ function findInputArea() {
   }
 
   // 通用兜底：找所有可见 textarea
+  //
+  // 【必须排除 LingYa 注入的元素】provider.findInput() 若未命中（站点改版、
+  // 输入框延迟渲染），会落到这里。而 LingYa 覆盖层注入了 lingya-utodo-input /
+  // lingya-mcp-json / lingya-schedule-prompt 等 textarea，且位于 body 末尾。
+  // 不加排除就会把它们当成聊天输入框，导致消息被填进「我的待办」并按 Enter 提交
+  // ——凭空生成待办（2026-10-24 实测事故：定时任务文本被写进待办）。
   const allTextareas = document.querySelectorAll('textarea');
   for (const ta of allTextareas) {
+    if (isLingyaInjected(ta)) continue;
     if (isInputVisible(ta)) return ta;
   }
   // 再找 contenteditable 或 textbox
-  const editable = document.querySelector('div[contenteditable="true"], [role="textbox"]');
-  if (editable && isInputVisible(editable)) return editable;
+  const editables = document.querySelectorAll('div[contenteditable="true"], [role="textbox"]');
+  for (const editable of editables) {
+    if (isLingyaInjected(editable)) continue;
+    if (isInputVisible(editable)) return editable;
+  }
 
   return null;
 }
+/**
+ * 判断元素是否由 LingYa 自己注入（非站点原生元素）。
+ *
+ * 与 providers/deepseek.js 里的同名函数保持一致的判定规则。
+ * 覆盖层与侧边栏注入的输入框（lingya-utodo-input / sh-utodo-input 等）
+ * 绝不能当成聊天输入框——否则消息会被填进去并触发它们的 Enter 提交逻辑。
+ */
+function isLingyaInjected(el) {
+  if (!el) return true;
+  try {
+    if (el.id && /^(lingya|sh)-/.test(el.id)) return true;
+    var cls = (typeof el.className === 'string') ? el.className : '';
+    if (/\b(lingya|sh)-/.test(cls)) return true;
+    if (typeof el.closest === 'function' &&
+        el.closest('#lingya-root, .lingya-overlay, #lingya-sidebar, .lingya-sidebar, .sh-view')) return true;
+  } catch (_) { /* 判定失败时保守放行 */ }
+  return false;
+}
+
 /**
  * 检查元素是否可见
  */
@@ -422,21 +620,134 @@ async function sendInitialPromptToInput() {
     return false;
   }
 
-  const sendDelay = initialDelay();
-  console.log('[LingYa] 初始提示已填入，等待 ' + sendDelay + 'ms 后发送...');
-  setTimeout(function() {
+  // 分批发送的段间间隔必须随机化。
+  // 固定节拍（如每次都精确 1 秒）是最强的 bot 指纹 —— 记忆 #422 已把普通消息的
+  // globalSendDelay 从固定 3000 改成 2500~9000 随机，初始化这里不能漏。
+  // 基础值仍取 initialDelay()，在此基础上叠加 0.6~1.8 倍的随机抖动。
+  const baseDelay = initialDelay();
+  const jitter = 0.6 + Math.random() * 1.2;
+  const sendDelay = Math.round(baseDelay * jitter);
+  // 把分段数组和序号"快照"到本地常量。
+  // 不能在 setTimeout 回调里再去读 state.initialPromptChunks ——
+  // 这中间用户可能切会话，新的 initial-prompt 会把 state.initialPromptChunks 置 null，
+  // 回调里再访问 .length 就会抛异常，导致这一段发不出去且状态卡死。
+  const chunksSnapshot = Array.isArray(state.initialPromptChunks) ? state.initialPromptChunks : null;
+  const chunkIdxSnapshot = state.initialPromptChunkIndex;
+  const isChunked = !!chunksSnapshot && chunksSnapshot.length > 1;
+  const chunkNo = chunkIdxSnapshot + 1;
+  const chunkTotal = isChunked ? chunksSnapshot.length : 0;
+  console.log('[LingYa] 初始提示已填入' +
+    (isChunked ? '（第 ' + chunkNo + '/' + chunkTotal + ' 段）' : '') +
+    '，等待 ' + sendDelay + 'ms 后发送...');
+  setTimeout(async function() {
     if (state.stopped) {
       console.log('[LingYa] 已停止，取消初始提示发送');
       state.pendingInitialPrompt = false;
+      state.initialPromptChunks = null;
       return;
     }
-    console.log('[LingYa] 等待结束，开始发送初始提示');
-    triggerSend(input);
+    console.log('[LingYa] 等待结束，开始发送初始提示' +
+      (isChunked ? '（第 ' + chunkNo + '/' + chunkTotal + ' 段）' : ''));
+    let sent = false;
+    try { sent = await triggerSend(input); } catch (err) {
+      console.error('[LingYa] 初始提示发送异常:', err && err.message);
+    }
     state.pendingInitialPrompt = false;
+    if (!sent) {
+      // 发送失败：清掉分批状态，避免 awaitingNextInitialChunk 永久挂起屏蔽续跑
+      console.error('[LingYa] 初始提示发送失败，放弃本批次剩余分段');
+      state.initialPromptChunks = null;
+      state.initialPromptChunkIndex = 0;
+      state.awaitingNextInitialChunk = false;
+      state.initialChunkDeferCount = 0;
+      state.initialChunkDeferAt = 0;
+      return;
+    }
+
+    // 分批模式：还有后续段 → 挂起，等本轮回复结束后再发下一段
+    // 用快照判断，且只有在 state 仍是同一批次时才置挂起标志
+    const sameBatch = isChunked &&
+      state.initialPromptChunks === chunksSnapshot &&
+      state.initialPromptChunkIndex === chunkIdxSnapshot;
+    if (sameBatch && chunkIdxSnapshot < chunksSnapshot.length - 1) {
+      state.awaitingNextInitialChunk = true;
+      state.initialChunkDeferCount = 0;
+      state.initialChunkDeferAt = 0;
+      console.log('[LingYa] 第 ' + chunkNo + ' 段已发出，等待回复后发送下一段');
+    } else if (isChunked && sameBatch) {
+      console.log('[LingYa] 全部分段已发送完毕（共 ' + chunkTotal + ' 段）');
+      state.initialPromptChunks = null;
+      state.initialPromptChunkIndex = 0;
+      state.awaitingNextInitialChunk = false;
+      state.initialChunkDeferCount = 0;
+      state.initialChunkDeferAt = 0;
+    }
   }, sendDelay);
 
   return true;
 }
+
+/**
+ * 分批模式下发送下一段初始提示。
+ * 由 lingya-ai-response 监听器在上一段回复结束后调用。
+ * @returns {boolean} 是否已发起发送
+ */
+function sendNextInitialPromptChunk() {
+  if (!state.awaitingNextInitialChunk) return false;
+  if (!Array.isArray(state.initialPromptChunks)) return false;
+  if (state.stopped) {
+    state.awaitingNextInitialChunk = false;
+    state.initialPromptChunks = null;
+    return false;
+  }
+  const nextIdx = state.initialPromptChunkIndex + 1;
+  if (nextIdx >= state.initialPromptChunks.length) {
+    state.awaitingNextInitialChunk = false;
+    state.initialPromptChunks = null;
+    state.initialPromptChunkIndex = 0;
+    return false;
+  }
+  state.initialPromptChunkIndex = nextIdx;
+  state.awaitingNextInitialChunk = false;
+  state.initialPromptContent = state.initialPromptChunks[nextIdx];
+  state.pendingInitialPrompt = true;
+  console.log('[LingYa] 准备发送第 ' + (nextIdx + 1) + '/' + state.initialPromptChunks.length + ' 段');
+  return sendInitialPromptToInput();
+}
+/**
+ * 强制把剩余的初始提示分段合并成一条发出。
+ *
+ * 使用场景：AI 连续多轮回复都带工具调用，导致「等它干完再发下一段」永远等不到。
+ * 此时必须放弃分段策略，把剩下的段合并成一条发出去 ——
+ * 提示词晚一点到不影响正确性，但让整个 Agent 循环被永久屏蔽是致命的。
+ *
+ * @param {string} reason 触发原因（仅用于日志）
+ * @returns {boolean} 是否已发起发送
+ */
+function flushRemainingInitialChunks(reason) {
+  if (!Array.isArray(state.initialPromptChunks)) return false;
+  const rest = state.initialPromptChunks.slice(state.initialPromptChunkIndex + 1);
+  // 先把所有分批状态清干净，无论后面发不发得出去，都不能再屏蔽续跑
+  state.awaitingNextInitialChunk = false;
+  state.initialPromptChunks = null;
+  state.initialPromptChunkIndex = 0;
+  state.initialChunkDeferCount = 0;
+  state.initialChunkDeferAt = 0;
+
+  if (rest.length === 0) return false;
+  if (state.stopped) {
+    console.log('[LingYa][分批] 已停止，丢弃剩余 ' + rest.length + ' 段（' + reason + '）');
+    return false;
+  }
+
+  const merged = rest.join('\n\n');
+  state.initialPromptContent = merged;
+  state.pendingInitialPrompt = true;
+  console.log('[LingYa][分批] ' + reason + ' → 放弃分段，把剩余 ' + rest.length +
+    ' 段合并成一条发出（' + merged.length + ' 字符）');
+  return sendInitialPromptToInput();
+}
+
 /**
  * 等待输入框出现后再发送初始提示
  */
@@ -475,46 +786,65 @@ function triggerSend(input) {
     let result = null;
     try { result = provider.triggerSend(input); } catch (_) { /* 站点实现异常时回退通用逻辑 */ }
     if (result && typeof result.then === 'function') {
-      result.then(function (ok) {
+      return result.then(function (ok) {
         if (ok) {
           console.log('[LingYa] 已通过站点原生发送触发');
-        } else {
-          fallbackSend(provider, input);
+          state.lastSendMethod = 'provider-native';
+          return true;
         }
-      }).catch(function () { fallbackSend(provider, input); });
-      return;
+        return fallbackSend(provider, input);
+      }).catch(function () { return fallbackSend(provider, input); });
     }
     if (result) {
       console.log('[LingYa] 已通过站点原生发送触发');
-      return;
+      state.lastSendMethod = 'provider-native';
+      return true;
     }
   }
 
-  fallbackSend(provider, input);
+  return fallbackSend(provider, input);
 }
 
 /**
- * 通用发送兜底：查找发送按钮点击，或模拟 Enter 按键序列
+ * 通用发送兜底：可信点击发送按钮，或可信 Enter。
+ *
+ * 【必须 await】两个 trusted* 函数是 async，且内部已改为「失败返回 false 而非合成事件降级」。
+ * 不 await 会导致失败被吞掉、日志打印假成功，用户看到消息没发出去却查不到原因。
+ * 全部失败时明确报错，让用户手动发一条恢复循环。
  */
-function fallbackSend(provider, input) {
-  // 方法 1: 调用平台 Provider 查找发送按钮
+async function fallbackSend(provider, input) {
+  // 方法 1: 平台 Provider 提供的发送按钮
   if (provider && typeof provider.findSendButton === 'function') {
-    const btn = provider.findSendButton();
+    let btn = null;
+    try { btn = provider.findSendButton(); } catch (_) { btn = null; }
     if (btn) {
-      btn.click();
-      console.log('[LingYa] 已点击发送按钮');
-      return;
+      const ok = await trustedClickElement(btn);
+      if (ok) {
+        console.log('[LingYa] 已通过可信点击发送按钮');
+        state.lastSendMethod = 'trusted-click';
+        return true;
+      }
+      console.warn('[LingYa] 可信点击发送按钮失败，尝试 Enter');
     }
   }
 
-  // 方法 2: 在输入框上模拟完整 Enter 按键序列（keydown + keypress + keyup）
+  // 方法 2: 可信 Enter 按键
   if (input) {
-    const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, isComposing: false };
-    input.dispatchEvent(new KeyboardEvent('keydown', opts));
-    input.dispatchEvent(new KeyboardEvent('keypress', opts));
-    input.dispatchEvent(new KeyboardEvent('keyup', opts));
-    console.log('[LingYa] 已通过 Enter 键触发发送 (未找到发送按钮)');
+    const ok = await trustedPressEnter(input);
+    if (ok) {
+      console.log('[LingYa] 已通过可信 Enter 触发发送');
+      state.lastSendMethod = 'trusted-enter';
+      return true;
+    }
   }
+
+  console.error('[LingYa] 发送失败：可信点击与可信 Enter 均未成功');
+  state.lastSendMethod = 'failed';
+  try {
+    const { showToast } = require('../overlay/ui');
+    if (showToast) showToast('⚠️ 消息未能发送，请手动发一条消息恢复', 6000);
+  } catch (_) { /* 覆盖层未就绪时忽略 */ }
+  return false;
 }
 /**
  * 注册主进程消息监听（initial-prompt）
@@ -534,7 +864,8 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     else if (k === 'initial-send-delay') { localStorage.setItem('lingya-initial-send-delay', String(v)); state.initialSendDelay = Number(v); }
     else if (k === 'think-ratio') { localStorage.setItem('lingya-think-ratio', String(v)); state.thinkRatio = Number(v); console.log('[LingYa] 配置已更新 thinkRatio=' + state.thinkRatio + '（IPC 生效）'); }
     else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); console.log('[LingYa] 配置已更新 thinkMaxDelay=' + state.thinkMaxDelay + '（IPC 生效）'); }
-    else if (k === 'global-send-delay') { localStorage.setItem('lingya-global-send-delay', String(v)); state.globalSendDelay = Number(v); }
+    else if (k === 'global-send-delay-min') { localStorage.setItem('lingya-global-send-delay-min', String(v)); state.globalSendDelayMin = Number(v); }
+    else if (k === 'global-send-delay-max') { localStorage.setItem('lingya-global-send-delay-max', String(v)); state.globalSendDelayMax = Number(v); }
     else if (k === 'adaptive-threshold') { localStorage.setItem('lingya-adaptive-threshold', String(v)); state.adaptiveThreshold = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
@@ -611,6 +942,28 @@ ipcRenderer.on('lingya-insert-to-chat', async (_event, payload) => {
 });
 
 ipcRenderer.on('initial-prompt', (_event, content) => {
+  // 分批模式：主进程传 { chunks: [...] }，逐段发送（每段之间等上一条回复结束）
+  if (content && Array.isArray(content.chunks) && content.chunks.length > 0) {
+    console.log('[' + new Date().toISOString() + '] [LingYa] 收到 initial-prompt 分批事件, 共 ' +
+      content.chunks.length + ' 段, 总长度=' + content.chunks.join('').length);
+    state.initialPromptChunks = content.chunks.slice();
+    state.initialPromptChunkIndex = 0;
+    state.awaitingNextInitialChunk = false;   // 新一轮分批，先复位挂起标志
+    state.initialPromptContent = content.chunks[0] || '';
+    state.pendingInitialPrompt = true;
+    try {
+      const input = findInputArea();
+      if (input) sendInitialPromptToInput();
+      else waitForInitialPromptAndSend();
+    } catch (e) {
+      console.error('[' + new Date().toISOString() + '] [LingYa] initial-prompt 分批处理异常:', e.message);
+    }
+    return;
+  }
+
+  state.initialPromptChunks = null;
+  state.initialPromptChunkIndex = 0;
+  state.awaitingNextInitialChunk = false;   // 单段模式，清掉可能残留的挂起标志
   console.log('[' + new Date().toISOString() + '] [LingYa] 收到 initial-prompt 事件, content长度=' + (content || '').length);
   state.initialPromptContent = content || '';
   state.pendingInitialPrompt = true;
@@ -644,6 +997,8 @@ module.exports = {
   findInputArea,
   isInputVisible,
   sendInitialPromptToInput,
+  sendNextInitialPromptChunk,
+  flushRemainingInitialChunks,
   waitForInitialPromptAndSend,
   triggerSend,
   registerIpcListeners,

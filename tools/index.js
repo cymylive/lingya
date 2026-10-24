@@ -21,6 +21,7 @@ const { InjectJSTool } = require('./InjectJSTool');
 const { McpCallTool } = require('./McpCallTool');
 const { McpListServersTool, McpGetToolsTool } = require('./McpQueryTools');
 const { MemorySaveTool, MemoryUpdateTool, MemoryDeleteTool, MemoryListTool } = require('./MemoryTool');
+const { SkillListTool } = require('./SkillTool');
 const { WebSearchTool } = require('./WebSearchTool');
 const { ViewImageTool } = require('./ViewImageTool');
 const { BashBackgroundTool, BashOutputTool, BashKillTool } = require('./BackgroundTaskTool');
@@ -57,6 +58,7 @@ registry.register(new MemorySaveTool());
 registry.register(new MemoryUpdateTool());
 registry.register(new MemoryDeleteTool());
 registry.register(new MemoryListTool());
+  registry.register(new SkillListTool());
 registry.register(new WebSearchTool());
 registry.register(new ViewImageTool());
 registry.register(new BashBackgroundTool());
@@ -85,6 +87,7 @@ module.exports = {
   MemoryUpdateTool,
   MemoryDeleteTool,
   MemoryListTool,
+  SkillListTool,
   WebSearchTool,
   ViewImageTool,
   BashBackgroundTool,

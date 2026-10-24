@@ -130,11 +130,9 @@ async function handleTaskStateStall(now, max) {
 
     // DOM 兜底失败 → 催 AI 继续
     if (!recovered) {
-      try { showToast('检测到回复中断，已自动催促继续', 4000); } catch (_) {}
+      try { showToast('回复好像断了，已提醒继续', 4000); } catch (_) {}
       sendMessageToChat(
-        '【监督续跑】检测到上一条回复可能因网络或页面异常中断（已 ' + sec + ' 秒无进展）。' +
-        '请继续完成当前任务：若上一步已生效请勿重复执行，直接推进下一步；' +
-        '若任务已完成，请用一句话明确说明"任务已完成"。',
+        '刚才好像断了。接着往下做，已经做过的别重来；全做完了跟我说一声“完成了”。',
         '状态机续跑',
         { auto: true }
       );
@@ -164,9 +162,8 @@ async function handleTaskStateStall(now, max) {
   if (stallInfo.state === taskState.STATES.EXECUTING) {
     try { showToast('⚠️ 工具执行超时（' + sec + 's），已中断并催促继续', 5000); } catch (_) {}
     sendMessageToChat(
-      '【监督续跑】上一步工具执行超时（已 ' + sec + ' 秒无响应），可能已失败。' +
-      '请检查该操作是否已生效：若未生效，换一种方式重试；若已生效，直接推进下一步。' +
-      '若任务已完成，请用一句话明确说明"任务已完成"。',
+      '刚才那个操作卡了 ' + sec + ' 秒没反应，可能没成。' +
+      '先确认一下有没有生效：没成换个法子重来，成了就接着往下做。全做完跟我说“完成了”。',
       '工具超时续跑',
       { auto: true }
     );
@@ -203,8 +200,14 @@ async function checkOnce() {
     }
   }
 
-  // === A) awaitingUserInput 超时 ===
+  // === A) awaitingUserInput ===
   if (state.awaitingUserInput) {
+    // 【强等待不催】AI 明确列出多个方案让用户挑（A./B. 选项列表、「你有两个选项」等），
+    // 这种等多久都合理 —— 用户可能几小时后才回来选。催促会让 AI 自己随便选一个
+    // 继续跑，用户彻底失去决策权（实测事故：AI 列出 A/B 两个方案后被催，自行选了 B）。
+    if (state.awaitingUserInputStrong) {
+      return;
+    }
     const waited = now - (state.awaitingUserInputAt || 0);
     if (waited < AWAITING_USER_TIMEOUT_MS) return;
     console.log('[LingYa][监督] awaitingUserInput 已 ' + Math.round(waited / 1000) +
@@ -212,8 +215,12 @@ async function checkOnce() {
     // 清掉标志，否则下次检查又要白等 3 分钟
     state.awaitingUserInput = false;
     state.awaitingUserInputAt = 0;
+    state.awaitingUserInputStrong = false;
     // 不 return，继续往下；如果计划真完成了会查 todo 判断
   }
+
+  // 正在分批发送初始提示：等回复是正常流程，不是停滞
+  if (state.awaitingNextInitialChunk) return;
 
   const { enabled, stallMs, max } = await loadConfig();
   if (!enabled) return;
@@ -270,11 +277,9 @@ async function checkOnce() {
           stallCount++;
           console.log('[LingYa][监督] 无计划任务停滞 ' + Math.round(idleMs / 1000) +
             's，兜底续跑第 ' + stallCount + ' 次');
-          try { showToast('检测到任务停滞（无计划），已自动催促继续', 4000); } catch (_) {}
+          try { showToast('卡住了，已提醒继续', 4000); } catch (_) {}
           sendMessageToChat(
-            '【监督续跑】检测到你已经 ' + Math.round(idleMs / 1000) + ' 秒没有动作。' +
-            '若任务尚未完成，请立即调用工具继续下一步（不要只描述计划、不要停下来等用户确认）；' +
-            '若任务确已完成，请用一句话明确说明"任务已完成"。',
+            '停了一会儿了，接着往下做吧。做完了跟我说“完成了”。',
             '无计划兜底续跑',
             { auto: true }
           );
@@ -322,11 +327,9 @@ async function checkOnce() {
   const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];
   console.log('[LingYa][监督] 检测到停滞 ' + Math.round(idleMs / 1000) + 's，任务剩 ' +
     unfinished.length + ' 项，第 ' + stallCount + ' 次催促');
-  try { showToast('检测到任务停滞，已自动催促继续', 3000); } catch (_) { /* ignore */ }
+  try { showToast('卡住了，已提醒继续', 3000); } catch (_) { /* ignore */ }
   sendMessageToChat(
-    '【监督续跑】检测到你已经 ' + Math.round(idleMs / 1000) + ' 秒没有动作，但任务计划尚未完成（还剩 ' +
-    unfinished.length + ' 项）。请立即继续执行：' + next.content +
-    '。不要停下来等用户确认；若任务确已完成，请用一句话明确说明"任务已完成"并更新 todo。',
+    '接着做：' + next.content + '。做完再往下走，不用等我确认。',
     '监督续跑',
     { auto: true }
   );

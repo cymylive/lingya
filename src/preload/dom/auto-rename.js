@@ -143,13 +143,8 @@ async function doRename(sid) {
   try {
     const { sendToChat } = require('./chat-input');
     const prompt = [
-      '请回顾本次对话的**完整上下文**（包括所有历史消息与工具执行结果），提炼这次对话真正在做的核心工作，',
-      '然后**只调用一次** nameConversation(title) 工具，给本次对话起一个准确的中文标题（≤20 字）。',
-      '',
-      '要求：',
-      '1. 标题要体现对话的**实际核心内容**，不要用"你好""继续"这类开场词，也不要用最后一条消息的主题代替整体。',
-      '2. 直接调用工具，不要输出计划、不要解释、不要做任何其他操作。',
-      '3. 调用完只回复一句"已重命名为：<标题>"即可。',
+      '帮我总结一下咱们刚才聊的核心内容，然后用 nameConversation 工具给这个对话起个短标题（不超过20字）。',
+      '直接调工具就行，不用解释。',
     ].join('\n');
     console.log('[LingYa AutoRename] 发送自动重命名指令: ' + sid);
     const ok = await sendToChat(prompt, '自动重命名', 300);

@@ -24,7 +24,7 @@ const DEFAULT_CONFIG = {
   ctfInjectionEnabled: false,
   ctfPrompt: '',
   autoContinueEnabled: false,
-  autoContinueText: '上一条回复在生成中被中断（未正常结束）。请从中断处继续完成，不要重复已输出的内容；若上次内容已完成，请继续下一步。',
+  autoContinueText: '刚才断了，接着往下写，别重复已经写过的部分。',
   // 自动续跑上限（次）：
   //   autoContinueMax —— 生成被中断时的自动"继续"次数上限
   //   planContinueMax —— 计划未完成时自动催促续跑的次数上限
@@ -37,6 +37,11 @@ const DEFAULT_CONFIG = {
   stallSupervisorEnabled: true,
   stallThresholdMs: 120000,   // 停滞判定阈值（毫秒），默认 120s
   stallContinueMax: 5,        // 停滞催促上限（次）
+  // 初始提示分片的单段字符上限。系统提示词太长会拆成多段依次发送，
+  // 每段不超过这个值（平台输入框对单条消息有长度限制，超了直接发不出去）。
+  // 调大：段数更少、初始化更快，但太大会被平台拒收（DeepSeek 实测约 3 万上限）；
+  // 调小：更保险，但段数变多、初始化变慢。
+  promptChunkSize: 15000,
   refusalEnabled: false,
   aiRewriteEnabled: false,
   aiRewriteViaChat: false,
@@ -125,6 +130,10 @@ function updateConfig(patch) {
       next.customKeywords = normalizeKeywords(patch.customKeywords);
     } else if (key === 'autoContinueMax' || key === 'planContinueMax' || key === 'stallThresholdMs' || key === 'stallContinueMax') {
       next[key] = normalizePositiveInt(patch[key], DEFAULT_CONFIG[key]);
+    } else if (key === 'promptChunkSize') {
+      // 分片大小范围独立：下限 2000（太小会切出上百段），上限 100000（再大平台必拒收）。
+      // 不能用 normalizePositiveInt —— 那个上限硬编码 10000，会把 15000~100000 的值全压成 10000。
+      next[key] = normalizeChunkSize(patch[key], DEFAULT_CONFIG[key]);
     } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
@@ -150,6 +159,19 @@ function normalizePositiveInt(value, fallback) {
   const n = Math.floor(Number(value));
   if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.min(n, 10000);
+}
+
+/**
+ * 归一化分片大小：范围 2000~100000。
+ * 传空字符串视为「用默认值」。
+ */
+function normalizeChunkSize(value, fallback) {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  if (n < 2000) return 2000;
+  if (n > 100000) return 100000;
+  return n;
 }
 
 function normalizeKeywords(input) {

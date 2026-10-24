@@ -433,6 +433,13 @@ function bindUserTodoPanel() {
   if (input) {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
+        // 【最后一道防线】只接受真实用户触发的 Enter。
+        // chat-input 的 triggerSend 会合成 KeyboardEvent；若 findInputArea 误把
+        // 本框当成聊天输入框，这里会凭空创建待办。isTrusted=false 即可拦下。
+        if (!e.isTrusted) {
+          console.warn('[LingYa] 忽略合成的 Enter（非用户输入），避免误提交待办');
+          return;
+        }
         e.preventDefault();
         submitUserTodo();
       }

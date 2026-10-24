@@ -169,7 +169,7 @@ async function handleJsToolScript(code) {
     if (resultOutput) {
       resultOutput.textContent = err.message || String(err);
     }
-    return { code, result: { success: false, error: '系统异常: ' + (err.message || String(err)) } };
+    return { code, result: { success: false, error: (err.message || String(err)) } };
   } finally {
     isExecuting = false;
     try { setTaskbarDetail(''); } catch (_) {}
@@ -319,7 +319,7 @@ async function handleToolCall(toolCall) {
     if (resultOutput) resultOutput.textContent = err.message || String(err);
     renderResultCard(callId || ('tool_' + toolName), toolName, params, 'error', err.message || String(err));
     if (!state.stopped) {
-      sendToolResultToChat(toolCall, { success: false, error: '系统异常: ' + (err.message || String(err)) });
+      sendToolResultToChat(toolCall, { success: false, error: (err.message || String(err)) });
     }
   } finally {
     isExecuting = false;

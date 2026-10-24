@@ -44,6 +44,10 @@ const SYSTEM_PREFIXES = [
   '【用户已确认执行】',
   '【计划已建立',
   '【计划已全部完成',
+  // 定时任务指令是程序自动发给 AI 的，不是用户想记的待办。
+  // 曾出现过定时任务文本混进待办的情况（会话未建立时 sessionId=null，
+  // 落在 pending:profile-xxx 桶里，且因跨会话过滤失效而显示在所有窗口）。
+  '【定时任务】',
 ];
 
 let STORE_FILE = null;

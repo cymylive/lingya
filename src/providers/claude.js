@@ -6,8 +6,25 @@
 // 说明：hook 源码直接内联在 provider 中，保证 provider 单文件自包含。
 // 函数体必须自包含（不引用模块级变量）。
 function claudeHookInstaller() {
-  var MARKER = '__lingyaClaudeHookInstalled__';
+  var MARKER = Symbol.for('l.hook.claude');
   if (window[MARKER]) return;
+
+  /**
+   * 把被包裹的原生函数伪装成 native code。
+   * 平台常用 Function.prototype.toString.call(fn).includes('[native code]') 判断劫持。
+   * 这里覆盖 fn.toString()，让直接调用 fn.toString() 的检测拿不到真实源码。
+   * 注意：Function.prototype.toString.call(fn) 仍会拿到真实源码 —— 那需要替换
+   * Function.prototype.toString 本身，侵入性太大且容易弄坏站点，不做。
+   */
+  function spoofNative(fn, name) {
+    try {
+      Object.defineProperty(fn, 'toString', {
+        value: function () { return 'function ' + name + '() { [native code] }'; },
+        configurable: true,
+        writable: true,
+      });
+    } catch (e) { /* 属性不可配置时忽略，不影响功能 */ }
+  }
   window[MARKER] = true;
 
   // claude.ai 的 completion 端点形如：
@@ -169,6 +186,7 @@ function claudeHookInstaller() {
         return response;
       });
     };
+    spoofNative(window.fetch, 'fetch');
   }
 
   // ---------- XHR 拦截（被动读取 responseText）----------
@@ -179,6 +197,7 @@ function claudeHookInstaller() {
     try { xhrInfo.set(this, { url: url, method: method }); } catch (e) { /* ignore */ }
     return origOpen.apply(this, arguments);
   };
+  spoofNative(XMLHttpRequest.prototype.open, 'open');
   XMLHttpRequest.prototype.send = function () {
     var info = xhrInfo.get(this);
     if (info && isCompletion(info.url, info.method)) {
@@ -187,6 +206,7 @@ function claudeHookInstaller() {
     }
     return origSend.apply(this, arguments);
   };
+  spoofNative(XMLHttpRequest.prototype.send, 'send');
 
   function observeXhr(xhr) {
     var lastLen = 0;

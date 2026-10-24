@@ -786,6 +786,54 @@ function registerIpcHandlers() {
 
   // ========== Skill 系统 ==========
   // 列出所有技能
+  // ========== Trusted input (isTrusted) ==========
+  ipcMain.handle('trusted-click', async (event, args) => {
+    try {
+      const wc = event.sender;
+      if (!wc || typeof wc.isDestroyed === 'function' && wc.isDestroyed()) {
+        return { success: false, error: 'webContents unavailable' };
+      }
+      const x = Number(args && args.x);
+      const y = Number(args && args.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return { success: false, error: 'invalid coordinates' };
+      }
+      let size = [0, 0];
+      if (typeof wc.getSize === 'function') size = wc.getSize();
+      const w = Number(size && size[0]) || 0;
+      const h = Number(size && size[1]) || 0;
+      let cx = Math.round(x);
+      let cy = Math.round(y);
+      if (w > 0) cx = Math.max(0, Math.min(cx, w - 1));
+      if (h > 0) cy = Math.max(0, Math.min(cy, h - 1));
+      wc.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+      wc.sendInputEvent({ type: 'mouseDown', x: cx, y: cy, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseUp', x: cx, y: cy, button: 'left', clickCount: 1 });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('trusted-key', async (event, args) => {
+    try {
+      const wc = event.sender;
+      if (!wc || typeof wc.isDestroyed === 'function' && wc.isDestroyed()) {
+        return { success: false, error: 'webContents unavailable' };
+      }
+      const key = String(args && args.key || '');
+      if (!key) return { success: false, error: 'invalid key' };
+      const keyCode = key === 'Enter' ? 'Return' : key;
+      wc.sendInputEvent({ type: 'keyDown', keyCode: keyCode, key: key });
+      if (key === 'Enter') {
+        wc.sendInputEvent({ type: 'char', keyCode: 'Return', key: String.fromCharCode(13) });
+      }
+      wc.sendInputEvent({ type: 'keyUp', keyCode: keyCode, key: key });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
   ipcMain.handle('skill-list', async () => {
     try {
       return { success: true, skills: skillStore.getAllSkills() };

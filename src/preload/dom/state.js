@@ -6,6 +6,18 @@ module.exports = {
   initialPromptContent: '',
   // 是否有待发送的初始提示
   pendingInitialPrompt: false,
+  // 分批发送初始提示：待发分段数组（null 表示不是分批模式）
+  initialPromptChunks: null,
+  // 当前正在发送第几段（0-based）
+  initialPromptChunkIndex: 0,
+  // 分批模式下：已发完一段，正等本轮回复结束后发下一段。
+  // 为 true 时暂停自动续跑/监督者，否则会和分批发送抢着发消息。
+  awaitingNextInitialChunk: false,
+  // 分批暂缓计数：AI 连续回复都含工具调用时，「等它干完再发下一段」可能永远等不到。
+  // 累计到阈值（次数或时长）就强制把剩余段合并发出，避免整条 Agent 循环被永久屏蔽。
+  initialChunkDeferCount: 0,
+  // 首次暂缓的时刻（毫秒时间戳），0 表示未暂缓
+  initialChunkDeferAt: 0,
   // 待执行的工具调用
   pendingToolCall: null,
   // 最近一次用户发出的原始消息（用于本地规则改写 / 拒绝兜底）
@@ -25,9 +37,15 @@ module.exports = {
   // 延迟上限（毫秒）：防止思考很久时等得过长
   thinkMaxDelay: 60000,
   // ===== 双策略延迟 =====
-  // 快请求（往返 ≤ adaptiveThreshold）用固定延迟 globalSendDelay
+  // 快请求（往返 ≤ adaptiveThreshold）在 [globalSendDelayMin, globalSendDelayMax] 闭区间内随机
   // 慢请求（往返 > adaptiveThreshold）用思考耗时自适应（× thinkRatio，封顶 thinkMaxDelay）
+  // 保留 globalSendDelay 供旧代码/旧配置兼容，快请求分支已不再直接读取它
   globalSendDelay: 3000,
+  // 快请求延迟区间（闭区间；min === max 时会被 pickGlobalDelay 短路成固定值，
+  // 等于每轮精确同一节拍 —— 那是最强的 bot 指纹，切勿再配成相等）。
+  // 2026-10-24：DeepSeek 封号根因 ③-B3，原 3000/3000 恒定节拍改为 2.5~9s 随机。
+  globalSendDelayMin: 2500,
+  globalSendDelayMax: 9000,
   adaptiveThreshold: 20000,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
@@ -57,6 +75,14 @@ module.exports = {
   taskDeclaredDone: false,
   // awaitingUserInput 置位的时刻。监督者用它在「等太久且计划未完成」时判定为误判，强制催。
   awaitingUserInputAt: 0,
+  // 是否为「强等待」：AI 明确列出多个方案让用户挑（A./B. 列表、「你有两个选项」等）。
+  // 这种等多久都合理 —— supervisor 不做超时催促。
+  // 弱等待（结尾问号等）仍会在 3 分钟后被判误判并催，避免 AI 随口一句「要吗」卡死流程。
+  awaitingUserInputStrong: false,
+  // 最近一次实际使用的发送方式（用于界面显示，排查发送链路）：
+  // 'provider-native' 站点原生 / 'trusted-click' 可信点击发送按钮 /
+  // 'trusted-enter' 可信回车 / 'failed' 全部失败
+  lastSendMethod: '',
 
   /** 打一次活动点（AI 响应、工具执行、发送消息时调用） */
   touch() { this.lastActivityAt = Date.now(); },

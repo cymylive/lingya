@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.107",
+  "version": "0.6.116",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -25,7 +25,9 @@
     "build:win:portable:local": "electron-builder --win --config.win.target=portable --publish never",
     "prep:portable": "scripts\\apply-portable-patch.bat",
     "build:mac:local": "electron-builder --mac --publish never",
-    "build:mac:dmg:local": "electron-builder --mac --config.mac.target=dmg --publish never"
+    "build:mac:dmg:local": "electron-builder --mac --config.mac.target=dmg --publish never",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
   },
   "keywords": [
     "deepseek",
@@ -69,21 +71,18 @@
   "build": {
     "appId": "com.lingya.lingya",
     "productName": "LingYa",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "cymylive",
-        "repo": "lingya"
-      }
-    ],
+    "publish": null,
     "directories": {
       "output": "dist"
     },
     "win": {
       "target": [
-        "nsis",
-        "portable",
-        "zip"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "lingya-win-v${version}-${arch}.${ext}"
@@ -114,11 +113,12 @@
       "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "lingya-win-v${version}.${ext}"
+      "artifactName": "lingya-win-v${version}.${ext}",
+      "shortcutName": "LingYa"
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.107"
+      "unpackDirName": "LingYa-runtime-0.6.116"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",
@@ -174,8 +174,18 @@
       "tools/rules.md",
       "src/prompt/*.md",
       "src/prompt/superpowers/**/*",
-      "src/prompt/purge/**/*"
-    ]
+      "src/prompt/purge/**/*",
+      "!dist/**",
+      "!coverage/**",
+      "!**/*.b2bak",
+      "!**/*.b2fix",
+      "!_*.js",
+      "!_*.cmd",
+      "!_*.txt",
+      "!_*.log",
+      "!_*.prev"
+    ],
+    "asar": true
   },
   "dependencies": {
     "@joplin/turndown-plugin-gfm": "^1.0.67",

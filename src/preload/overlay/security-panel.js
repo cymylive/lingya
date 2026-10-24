@@ -66,6 +66,8 @@ async function loadConfig() {
     if (stallSupervisorEnabled) stallSupervisorEnabled.checked = cfg.stallSupervisorEnabled !== false;
     if (stallThreshold) stallThreshold.value = cfg.stallThresholdMs != null ? Math.round(cfg.stallThresholdMs / 1000) : 120;
     if (stallContinueMax) stallContinueMax.value = cfg.stallContinueMax != null ? cfg.stallContinueMax : 5;
+    const promptChunkSize = el('lingya-security-prompt-chunk-size');
+    if (promptChunkSize) promptChunkSize.value = cfg.promptChunkSize != null ? cfg.promptChunkSize : 15000;
     if (refusalEnabled) refusalEnabled.checked = !!cfg.refusalEnabled;
     const localRewrite = el('lingya-security-local-rewrite');
     if (localRewrite) localRewrite.checked = cfg.localRewriteEnabled !== false;
@@ -99,6 +101,7 @@ async function saveConfig() {
     stallSupervisorEnabled: !!(el('lingya-security-stall-supervisor-enabled') && el('lingya-security-stall-supervisor-enabled').checked),
     stallThresholdMs: (() => { const v = el('lingya-security-stall-threshold'); const s = v ? Math.floor(Number(v.value)) : 0; return s > 0 ? s * 1000 : ''; })(),
     stallContinueMax: el('lingya-security-stall-continue-max') ? el('lingya-security-stall-continue-max').value : '',
+    promptChunkSize: el('lingya-security-prompt-chunk-size') ? el('lingya-security-prompt-chunk-size').value : '',
     refusalEnabled: !!(el('lingya-security-refusal-enabled') && el('lingya-security-refusal-enabled').checked),
     localRewriteEnabled: !!(el('lingya-security-local-rewrite') && el('lingya-security-local-rewrite').checked),
     aiRewriteEnabled: !!(el('lingya-security-ai-rewrite') && el('lingya-security-ai-rewrite').checked),

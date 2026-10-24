@@ -15,6 +15,15 @@ const securityStore = require('./security-store');
 const agentStore = require('./agent-store');
 const { getAgent } = require('./agents');
 
+// 初始提示分批发送的参数
+// 单段目标字符数：每段不超过这个值，接近人类粘贴长文的量级。
+// 注意这是【硬上限】—— 单段绝不能超过它，否则平台输入框可能拒收。
+const PROMPT_CHUNK_TARGET_SIZE = 15000;
+// 段数保护上限：只用于防止异常输入导致段数爆炸（如 1000 段刷屏）。
+// 【绝不能靠合并来满足这个上限】—— 那会让单段变回十几万字符，直接发不出去。
+// 正常内容 20 段以内；超过说明记忆/技能体积过大，应警告而不是硬压。
+const PROMPT_CHUNK_MAX = 40;
+
 // 提示词模板目录
 const PROMPT_DIR = path.join(__dirname, '..', 'prompt');
 
@@ -257,8 +266,8 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // 长期记忆注入块（全局记忆，按 token 预算选择）
   let memorySection = '';
   try {
-    memorySection = memoryStore.buildMemorySection({});
-    console.log('[LingYa] 记忆注入块长度:', memorySection.length);
+    memorySection = memoryStore.buildMemorySectionMinimal({});
+    console.log('[LingYa] 记忆注入块长度(minimal):', memorySection.length);
   } catch (err) {
     console.error('[LingYa] 构建记忆注入块失败:', err.message);
   }
@@ -266,8 +275,8 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // 技能注入块（仅已启用技能，按 token 预算选择）
   let skillSection = '';
   try {
-    skillSection = skillStore.buildSkillSection({});
-    console.log('[LingYa] 技能注入块长度:', skillSection.length);
+    skillSection = skillStore.buildSkillSectionMinimal({});
+    console.log('[LingYa] 技能注入块长度(minimal):', skillSection.length);
   } catch (err) {
     console.error('[LingYa] 构建技能注入块失败:', err.message);
   }
@@ -406,13 +415,149 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   }
 
   stepLog('提示词组装完成');
-  console.log('[LingYa] 准备发送初始提示（不含目录树），长度:', combined.length);
+  // 分批发送：单条消息体量过大更容易被平台侧判定为异常，也更像机器一次性倾倒。
+  // 拆成几段依次发送，每段都自然带上"第几段/共几段"的说明，观感接近人类分次粘贴配置。
+  // 单段上限从配置读取（用户可在设置面板调整），非法值回退到默认常量。
+  let chunkSize = PROMPT_CHUNK_TARGET_SIZE;
+  try {
+    const cfg = securityStore.getConfig();
+    const n = Number(cfg && cfg.promptChunkSize);
+    if (Number.isFinite(n) && n >= 2000 && n <= 100000) {
+      chunkSize = Math.floor(n);
+    }
+  } catch (_) { /* 读配置失败用默认值，不影响初始化 */ }
+  const chunks = splitPromptIntoChunks(combined, chunkSize, PROMPT_CHUNK_MAX);
+  console.log('[LingYa] 准备发送初始提示（不含目录树），总长度:', combined.length,
+    '，单段上限:', chunkSize, '，拆分为', chunks.length, '段');
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('initial-prompt', combined);
+    if (chunks.length > 1) {
+      mainWindow.webContents.send('initial-prompt', { chunks });
+    } else {
+      mainWindow.webContents.send('initial-prompt', combined);
+    }
   }
   stepLog('initial-prompt 已发送');
 
-  return { success: true, message: '初始化完成，已发送系统提示词、工具规则和工具库' };
+  return {
+    success: true,
+    message: chunks.length > 1
+      ? '初始化完成，已分 ' + chunks.length + ' 段发送系统提示词'
+      : '初始化完成，已发送系统提示词、工具规则和工具库',
+  };
 }
 
-module.exports = { PROMPT_DIR, initProject };
+/**
+ * 把组装好的 systemPrompt 拆成若干段。
+ *
+ * 【硬约束】每段长度必须 ≤ targetSize。
+ * 记忆库/技能库膨胀后，一段可能十几万字符，平台输入框会拒收 —— 这是实测踩过的坑
+ * （426 条记忆 + 173 个技能 → systemPrompt 26.8 万字符 → 5 段合并后单段 15.4 万 → 发不出去）。
+ *
+ * 因此：
+ *   1. 先按顶层结构（一级标题 / 独立 --- 分隔线）切成语义完整的 segs
+ *   2. 单个 seg 若仍超过 target，在行边界处二次切分（保证不会把代码块劈开得太碎）
+ *   3. 按 target 累积 segs 成 chunks，绝不合并超过 target
+ *   4. 段数只做保护性告警，绝不靠合并来"满足上限"
+ *
+ * @param {string} text 完整提示词
+ * @param {number} targetSize 单段硬上限（字符）
+ * @param {number} maxChunks 段数保护上限（超出仅告警，不合并）
+ * @returns {string[]} 分段结果；只有一段时返回长度 1 的数组
+ */
+function splitPromptIntoChunks(text, targetSize, maxChunks) {
+  const src = String(text || '');
+  if (!src.trim()) return [];
+
+  const target = Number(targetSize) > 0 ? Number(targetSize) : PROMPT_CHUNK_TARGET_SIZE;
+  const limit = Number(maxChunks) > 0 ? Math.floor(Number(maxChunks)) : PROMPT_CHUNK_MAX;
+
+  // ===== 第 1 步：按顶层结构切成语义完整的 segs =====
+  const lines = src.split('\n');
+  const segs = [];
+  let cur = [];
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    const isBoundary = /^# /.test(ln) || /^---+\s*$/.test(ln);
+    if (isBoundary && cur.length > 0) {
+      segs.push(cur.join('\n'));
+      cur = [];
+    }
+    cur.push(ln);
+  }
+  if (cur.length > 0) segs.push(cur.join('\n'));
+
+  // ===== 第 2 步：单个 seg 超长时，在行边界二次切分 =====
+  // 为什么必须做：一条置顶记忆可以长达 8000 字符，若它整条塞不进一段，
+  // 直接跳过会导致最终某一段远超 target。
+  const expanded = [];
+  for (let s = 0; s < segs.length; s++) {
+    const seg = segs[s];
+    if (seg.length <= target) {
+      expanded.push(seg);
+      continue;
+    }
+    // 按行累积切，单行仍超长时强制按字符切
+    const segLines = seg.split('\n');
+    let buf = '';
+    for (let li = 0; li < segLines.length; li++) {
+      let line = segLines[li];
+      // 单行本身超 target：强制按字符切（极端情况，保证不超过硬上限）
+      while (line.length > target) {
+        if (buf) { expanded.push(buf); buf = ''; }
+        expanded.push(line.slice(0, target));
+        line = line.slice(target);
+      }
+      const next = buf ? buf + '\n' + line : line;
+      if (next.length > target) {
+        if (buf) expanded.push(buf);
+        buf = line;
+      } else {
+        buf = next;
+      }
+    }
+    if (buf) expanded.push(buf);
+  }
+
+  // ===== 第 3 步：按 target 累积，绝不超限 =====
+  const chunks = [];
+  let acc = '';
+  for (let j = 0; j < expanded.length; j++) {
+    const piece = expanded[j];
+    if (acc && acc.length + 1 + piece.length > target) {
+      chunks.push(acc);
+      acc = piece;
+    } else {
+      acc = acc ? acc + '\n' + piece : piece;
+    }
+  }
+  if (acc) chunks.push(acc);
+
+  // ===== 第 4 步：尾段过短并回上一段（仅在不会超限时）=====
+  while (chunks.length > 1 && chunks[chunks.length - 1].trim().length < 200) {
+    const tail = chunks[chunks.length - 1];
+    const prev = chunks[chunks.length - 2];
+    if (prev.length + 1 + tail.length > target) break;  // 并回去会超限 → 不并
+    chunks.pop();
+    chunks[chunks.length - 1] = prev + '\n' + tail;
+  }
+
+  // ===== 第 5 步：段数保护上限 —— 只告警，绝不合并 =====
+  // 合并会让单段超 target，直接导致发送失败。宁可多发几段也不能发不出去。
+  if (chunks.length > limit) {
+    console.warn('[LingYa] 提示词分成 ' + chunks.length + ' 段，超过保护上限 ' + limit +
+      '。记忆/技能体积过大，建议精简，但不会因此合并（合并会导致单段超限发不出去）。');
+  }
+
+  // ===== 兜底校验：任何一段都不得超过 target =====
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks[i].length > target) {
+      console.error('[LingYa] 分段异常：第 ' + (i + 1) + ' 段 ' + chunks[i].length +
+        ' 字符超过上限 ' + target + '，强制按字符截断');
+      chunks[i] = chunks[i].slice(0, target);
+    }
+  }
+
+  return chunks.length > 0 ? chunks : [src.slice(0, target)];
+}
+
+module.exports = { PROMPT_DIR, initProject, splitPromptIntoChunks };

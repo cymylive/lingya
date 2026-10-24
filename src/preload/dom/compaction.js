@@ -20,9 +20,7 @@ const { showToast } = require('../overlay/ui');
 const state = require('./state');
 
 const SUMMARY_INSTRUCTION =
-  '请把以上对话总结成一份详细的摘要，尽可能完整地保留关键信息、背景上下文、' +
-  '已完成的结论和未完成的事项，用中文，一次性输出全部内容，' +
-  '直接输出摘要，不要输出其他解释。';
+  '把上面的对话总结成一份详细摘要，保留关键信息和未完成的事项。直接输出摘要，别加别的。';
 
 /** 日志前缀 */
 function logStep(step, msg) {

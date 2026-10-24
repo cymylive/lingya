@@ -108,6 +108,13 @@ let electronAPI = {
     return ipcRenderer.invoke('conversation-export-md', { markdown, suggestedName });
   },
   // ========== Skill 系统 API ==========
+  // ========== Trusted input API ==========
+  trustedClick: (x, y) => {
+    return ipcRenderer.invoke('trusted-click', { x: x, y: y });
+  },
+  trustedKey: (key) => {
+    return ipcRenderer.invoke('trusted-key', { key: key });
+  },
   listSkills: () => {
     return ipcRenderer.invoke('skill-list');
   },

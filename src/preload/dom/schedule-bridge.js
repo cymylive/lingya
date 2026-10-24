@@ -19,7 +19,7 @@ function flushTask() {
   const t = pendingTask;
   pendingTask = null;
   if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
-  const msg = '【定时任务】' + (t.name || '') + String.fromCharCode(10) + (t.prompt || '');
+  const msg = (t.prompt || '');
   console.log('[LingYa Schedule] 初始化就绪，发送任务指令:', t.name);
   sendToChat(msg, '定时任务', 500).then((ok) => {
     if (!ok) {

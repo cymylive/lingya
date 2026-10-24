@@ -41,6 +41,32 @@ if (useIntercept) {
   }
 }
 
+// ========== 主进程异常可见化 ==========
+// 主进程 global-guard 捕获到未处理异常后会广播 'lingya-main-error'，
+// 但此前全项目没有任何监听者 —— 异常被发出来又丢掉，用户和开发者都看不到。
+// 这里补上监听：至少落到控制台，同时给用户一个可见提示。
+try {
+  const { ipcRenderer } = require('electron');
+  ipcRenderer.on('lingya-main-error', (_ev, info) => {
+    // global-guard 传过来的是 { kind, message, fatal }
+    const kind = (info && info.kind) ? String(info.kind) : 'error';
+    const fatal = !!(info && info.fatal);
+    const msg = (info && info.message) ? String(info.message) : String(info || '未知错误');
+    console.error('[LingYa] 主进程异常 [' + kind + ']' + (fatal ? '(致命)' : '') + ': ' + msg);
+    try {
+      const { showToast } = require('./overlay/ui');
+      if (showToast) {
+        showToast(
+          (fatal ? '主进程发生致命错误，即将退出：' : '主进程异常：') + msg.slice(0, 60),
+          fatal ? 15000 : 8000
+        );
+      }
+    } catch (_) { /* 覆盖层尚未就绪时忽略 */ }
+  });
+} catch (err) {
+  console.error('[LingYa] 注册主进程异常监听失败:', err && err.message);
+}
+
 // 以下仅对 AI 平台页面生效；非 AI 平台（AI 开的普通网页标签）不注册，避免无谓开销
 if (currentProvider) {
   // 注册主进程消息监听（与原 preload.js 顶层注册时机一致）

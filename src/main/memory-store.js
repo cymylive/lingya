@@ -254,6 +254,27 @@ function touchMemories(ids) {
  * 因此这里额外附一份**全部记忆的索引**（仅 id/类型/名称，不含正文，成本极低），
  * 让模型明确知道"有哪些记忆可用"，从而在需要时主动 memoryList() 取全文。
  */
+// 2026-10-24 DeepSeek 封号根因 ②：421 条索引每条重复写全 type 名（reference 等），
+// 缩成单字母，零信息损失（type 只有 4 种，且索引仅用于"知道有这条记忆"）。
+const MEMORY_TYPE_ABBR = { reference: 'r', user: 'u', topic: 't', feedback: 'f' };
+
+
+function buildMemorySectionMinimal(options = {}) {
+  const memories = getAllMemories();
+  if (memories.length === 0) return formatMemoriesBlock([]);
+  const NL = String.fromCharCode(10);
+  const topN = Math.max(1, Math.min(5, Number(options.topN || 3)));
+  const selected = selectMemories(memories, Object.assign({}, options, { budget: 1000000 })).slice(0, topN);
+  if (selected.length > 0) touchMemories(selected.map(function (m) { return m.id; }));
+  const lines = selected.map(function (m) {
+    const abbr = MEMORY_TYPE_ABBR[m.type] || String(m.type || "r")[0];
+    const name = String(m.name || "").slice(0, 60);
+    const content = String(m.content || "");
+    const preview = content.slice(0, 100);
+    return "-#" + m.id + abbr + " " + name + (preview ? "：" + preview + (content.length > 100 ? "…" : "") : "");
+  });
+  return ["【长期记忆】共 " + memories.length + " 条；仅注入最相关 " + selected.length + " 条摘要。", lines.join(NL), "> 凡任务可能涉及凭证/token/密钥/路径/配置/端口/账号、用户偏好、历史决策、之前项目，或不确定是否已有相关记忆，先调用 memoryList() 取全文，不要凭猜测、不要等用户提醒。"].join(NL + NL);
+}
 function buildMemorySection(options) {
   const memories = getAllMemories();
   if (memories.length === 0) return formatMemoriesBlock([]);
@@ -264,8 +285,8 @@ function buildMemorySection(options) {
   const selectedIds = new Set(selected.map((m) => m.id));
   const omitted = memories.filter((m) => !selectedIds.has(m.id));
   if (omitted.length > 0) {
-    block += '\n\n【全部记忆索引】（仅标题；上文的正文未覆盖下列条目，需要时用 memoryList() 取全文）：\n' +
-      omitted.map((m) => '- #' + m.id + ' [' + m.type + '] ' + m.name).join('\n');
+    block += '\n\n【全部记忆索引】（仅标题；正文未覆盖下列条目，需要时用 memoryList() 取全文）：\n' +
+      omitted.map((m) => '-#' + m.id + (MEMORY_TYPE_ABBR[m.type] || String(m.type || 'r')[0]) + ' ' + m.name).join('\n');
   }
   block += '\n\n> 判断标准：只要任务可能与上述任一条目相关（如用到凭证/token/路径/配置/历史决策/用户偏好），就应**先调用 memoryList() 取全文**，不要凭猜测行事、也不要等用户提醒。';
   return block;
@@ -378,6 +399,7 @@ module.exports = {
   deleteMemory,
   touchMemories,
   buildMemorySection,
+  buildMemorySectionMinimal,
   importMemories,
   exportMemories,
 };

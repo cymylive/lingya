@@ -1068,7 +1068,14 @@
           var item = null; for(var m=0;m<userTodos.length;m++) if(userTodos[m].id===id){ item=userTodos[m]; break; }
           if(!item) return;
           var ck = row.querySelector('[data-act="toggle"]');
-          if(ck) ck.addEventListener('click', function(e){ e.stopPropagation(); if(window.shellAPI) window.shellAPI.userTodosUpdate(id, {done:!item.done})['catch'](function(){}); });
+          if(ck) ck.addEventListener('click', function(e){
+            e.stopPropagation();
+            if(!window.shellAPI) return;
+            window.shellAPI.userTodosUpdate(id, {done:!item.done}).then(function(r){
+              // 失败必须有反馈：原实现静默吞掉，用户点了没反应也不知道为什么
+              if(r && !r.success) toast2('操作失败：' + (r.error || '待办不存在（可能属于其他会话）'));
+            })['catch'](function(err){ toast2('操作失败：' + ((err && err.message) || '未知错误')); });
+          });
           var tx = row.querySelector('[data-act="edit"]');
           if(tx) tx.addEventListener('dblclick', function(e){ e.stopPropagation(); startEdit(row, item); });
           var st = row.querySelector('[data-act="start"]');
@@ -1088,7 +1095,13 @@
              .then(function(){ setTimeout(function(){ st.setAttribute('data-busy',''); st.style.opacity='0.6'; }, 3000); });
           });
           var dl = row.querySelector('[data-act="del"]');
-          if(dl) dl.addEventListener('click', function(e){ e.stopPropagation(); if(window.shellAPI) window.shellAPI.userTodosDelete(id)['catch'](function(){}); });
+          if(dl) dl.addEventListener('click', function(e){
+            e.stopPropagation();
+            if(!window.shellAPI) return;
+            window.shellAPI.userTodosDelete(id).then(function(r){
+              if(r && !r.success) toast2('删除失败：' + (r.error || '待办不存在（可能属于其他会话）'));
+            })['catch'](function(err){ toast2('删除失败：' + ((err && err.message) || '未知错误')); });
+          });
         })(rows[j]);
       }
     }
@@ -1119,7 +1132,18 @@
     function reloadUserTodos(){
       if(!window.shellAPI || !window.shellAPI.userTodosList) return;
       window.shellAPI.userTodosList().then(function(r){
-        if(r && r.success) drawUserTodos(r.todos);
+        if(r && r.success){
+          // 【关键】同步本窗口的会话 ID。
+          //
+          // 原实现只渲染不记录 sessionId，导致 window.__lingyaShellSessionId 长期为 null：
+          //   - 广播过滤条件 `p.sessionId && window.__lingyaShellSessionId && ...` 短路 → 不过滤
+          //   - 结果：别的窗口/别的会话的待办串到当前窗口显示
+          //   - 更糟：这些"外来"待办属于另一个 sessionId，用户点删除时主进程用当前
+          //     sessionId 查不到，返回"待办不存在" → 点了没反应
+          // 与 reloadPlan() 保持一致，查询结果里带 sessionId 就记下来。
+          if(r.sessionId) window.__lingyaShellSessionId = r.sessionId;
+          drawUserTodos(r.todos);
+        }
       })['catch'](function(){});
     }
 
@@ -1155,8 +1179,15 @@
       window.__lingyaUserTodoSubscribed = true;
       window.shellAPI.onUserTodosUpdated(function(p){
         if(!p) return;
-        // 会话过滤：避免别的会话的变更串到当前面板
-        if(p.sessionId && window.__lingyaShellSessionId && p.sessionId !== window.__lingyaShellSessionId) return;
+        // 【严格过滤】避免别的会话/窗口的待办串到当前面板。
+        //
+        // 原条件是 `p.sessionId && cur && p.sessionId !== cur` —— 三个都必须为真才过滤。
+        // 当 cur 为 null（本地还没查到会话 ID）时条件短路 → 任何广播都渲染，
+        // 于是别的窗口的待办就显示在这里，且点删除会因会话不匹配而失败。
+        //
+        // 改为：只要广播带 sessionId，且它不等于本地已知的 sessionId（含 null），就忽略。
+        // 本地 sessionId 未知时不渲染外来数据，宁可等 reloadUserTodos 拉到自己的。
+        if(p.sessionId && p.sessionId !== window.__lingyaShellSessionId) return;
         // 转发到当前活跃视图的回调（切视图后旧回调会失效，这里始终用最新的）
         if(typeof window.__lingyaUserTodoDraw !== 'function') return;
         if(Array.isArray(p.todos)) window.__lingyaUserTodoDraw(p.todos);
@@ -1167,7 +1198,17 @@
     var utInput = document.getElementById('sh-utodo-input');
     if(utInput){
       utInput.addEventListener('keydown', function(e){
-        if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); submitUserTodo(); }
+        if(e.key==='Enter' && !e.shiftKey){
+          // 【最后一道防线】只接受真实用户触发的 Enter。
+          // 程序合成的 KeyboardEvent（如 chat-input 的 triggerSend 误把本框当聊天框）
+          // isTrusted 为 false —— 直接忽略，防止消息被误提交成待办。
+          if(!e.isTrusted){
+            console.warn('[LingYa] 忽略合成的 Enter（非用户输入），避免误提交待办');
+            return;
+          }
+          e.preventDefault();
+          submitUserTodo();
+        }
       });
       utInput.addEventListener('input', function(){
         var n = String(utInput.value||'').split('\n').length;
@@ -1517,6 +1558,9 @@
       h+=chk('sh-sec-stall','停滞监督者','stallSupervisorEnabled');
       h+=num('sh-sec-stallth','停滞阈值(秒)',c.stallThresholdMs!=null?Math.round(c.stallThresholdMs/1000):120);
       h+=num('sh-sec-stallmax','停滞续跑上限',c.stallContinueMax!=null?c.stallContinueMax:5);
+      h+='<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--ck-border);font-size:12px;font-weight:600;color:var(--ck-title);">初始提示分片</div>';
+      h+=num('sh-sec-chunksize','单段字符上限（2000~100000，默认 15000）',c.promptChunkSize!=null?c.promptChunkSize:15000);
+      h+='<div style="font-size:10.5px;color:var(--ck-text-dim);margin-top:2px;line-height:1.5;">系统提示词太长会拆成多段依次发送，每段不超过此值。调大=段数少但可能被平台拒收；调小=更保险但初始化变慢。下次初始化项目时生效。</div>';
       h+=ta('sh-sec-mock','模拟响应（调试用）',c.mockResponse);
       h+='</div>';
       h+='<div style="display:flex;gap:6px;margin-top:8px;"><button class="sh-btn primary" id="sh-sec-save">保存</button><button class="sh-btn" id="sh-sec-reset">重置</button><button class="sh-btn" id="sh-sec-inject">立即注入CTF</button></div>';
@@ -1525,7 +1569,7 @@
       if(sv) sv.addEventListener('click',function(){
         function v(id){ var e=document.getElementById(id); return e?e.value:''; }
         function ck(id){ var e=document.getElementById(id); return !!(e&&e.checked); }
-        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), mockResponse:v('sh-sec-mock') };
+        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), promptChunkSize:v('sh-sec-chunksize'), mockResponse:v('sh-sec-mock') };
         var ky=v('sh-sec-key'); if(ky) patch.aiKey=ky;
         window.shellAPI.updateSecurityConfig(patch).then(function(){ toast2('已保存'); })['catch'](function(){ toast2('保存失败'); });
       });
@@ -1651,7 +1695,7 @@
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">悬浮元素</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hidefloat" /> 隐藏悬浮球与覆盖层面板</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hideplan" /> 隐藏计划悬浮卡</label></div>'+
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动注入</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-autoinject" /> 新会话自动注入记忆与技能</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding-top:4px;"><input type="checkbox" id="sh-set-autorename" /> 初始化项目后自动 AI 重命名</label></div>'+
       '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动压缩</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-acen" /> 开启自动压缩</label><div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:12px;"><span style="color:var(--ck-text-dim);">超过</span><input id="sh-set-acth" type="number" value="80" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">万 tokens</span><button class="sh-btn" id="sh-set-acsave">保存</button></div></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">AI 回复后的发送延迟</div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">判定阈值</span><input id="sh-set-dual-th" type="number" step="1000" min="0" value="20000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms（上一次 AI 回复耗时）</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">≤ 阈值 → 固定等</span><input id="sh-set-dual-delay" type="number" step="500" min="0" value="3000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;"><span style="color:var(--ck-text-dim);">> 阈值 → 等「耗时 ×</span><input id="sh-set-think-ratio" type="number" step="0.05" min="0" max="5" value="0.2" style="width:60px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">」，最多</span><input id="sh-set-think-max" type="number" step="1000" min="0" value="60000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span><button class="sh-btn" id="sh-set-think-save">保存</button></div></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">AI 回复后的发送延迟</div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">判定阈值</span><input id="sh-set-dual-th" type="number" step="1000" min="0" value="20000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms（上一次 AI 回复耗时）</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">≤ 阈值 → 随机等</span><input id="sh-set-dual-delay-min" type="number" step="500" min="0" value="3000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">~</span><input id="sh-set-dual-delay-max" type="number" step="500" min="0" value="3000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;"><span style="color:var(--ck-text-dim);">> 阈值 → 等「耗时 ×</span><input id="sh-set-think-ratio" type="number" step="0.05" min="0" max="5" value="0.2" style="width:60px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">」，最多</span><input id="sh-set-think-max" type="number" step="1000" min="0" value="60000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span><button class="sh-btn" id="sh-set-think-save">保存</button></div></div>'+
       '');
     var ev=function(id){ return document.getElementById(id); };
     var tb=ev('sh-set-theme');
@@ -1680,32 +1724,37 @@
     })();
     function loadFloatCb(){ try{ var hf=localStorage.getItem('lingya-hide-floating')==='1'; var hp=localStorage.getItem('lingya-hide-plan-float')==='1'; var e1=ev('sh-set-hidefloat'); if(e1) e1.checked=hf; var e2=ev('sh-set-hideplan'); if(e2) e2.checked=hp; }catch(_e){} }
     loadFloatCb();
-    (function loadSettingsCb(){ try{ var v; var e3=ev('sh-set-autoinject'); if(e3) e3.checked=(localStorage.getItem('sh-autoinject')==='1'); var e4=ev('sh-set-acen'); if(e4) e4.checked=(localStorage.getItem('sh-acen')==='1'); v=localStorage.getItem('sh-acth'); var e5=ev('sh-set-acth'); if(v&&e5) e5.value=v; v=localStorage.getItem('lingya-think-ratio'); var e6=ev('sh-set-think-ratio'); if(v&&e6) e6.value=v; v=localStorage.getItem('lingya-think-max-delay'); var e7=ev('sh-set-think-max'); if(v&&e7) e7.value=v; v=localStorage.getItem('lingya-adaptive-threshold'); var e8=ev('sh-set-dual-th'); if(v&&e8) e8.value=v; v=localStorage.getItem('lingya-global-send-delay'); var e9=ev('sh-set-dual-delay'); if(v&&e9) e9.value=v; }catch(_e){} })();
+    (function loadSettingsCb(){ try{ var v; var e3=ev('sh-set-autoinject'); if(e3) e3.checked=(localStorage.getItem('sh-autoinject')==='1'); var e4=ev('sh-set-acen'); if(e4) e4.checked=(localStorage.getItem('sh-acen')==='1'); v=localStorage.getItem('sh-acth'); var e5=ev('sh-set-acth'); if(v&&e5) e5.value=v; v=localStorage.getItem('lingya-think-ratio'); var e6=ev('sh-set-think-ratio'); if(v&&e6) e6.value=v; v=localStorage.getItem('lingya-think-max-delay'); var e7=ev('sh-set-think-max'); if(v&&e7) e7.value=v; v=localStorage.getItem('lingya-adaptive-threshold'); var e8=ev('sh-set-dual-th'); if(v&&e8) e8.value=v; v=localStorage.getItem('lingya-global-send-delay-min'); var e9=ev('sh-set-dual-delay-min'); if(v&&e9) e9.value=v; v=localStorage.getItem('lingya-global-send-delay-max'); var e10=ev('sh-set-dual-delay-max'); if(v&&e10) e10.value=v; }catch(_e){} })();
     var hf=ev('sh-set-hidefloat'); if(hf) hf.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-floating', hf.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-floating', hf.checked); toast2(hf.checked?'已隐藏悬浮元素':'已显示悬浮元素'); });
     var hp=ev('sh-set-hideplan'); if(hp) hp.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-plan-float', hp.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-plan-float', hp.checked); toast2(hp.checked?'已隐藏计划卡':'已显示计划卡'); });
     var acs=ev('sh-set-acsave'); if(acs) acs.addEventListener('click',function(){ if(!window.shellAPI||!window.shellAPI.setSetting) return; var en=!!((ev('sh-set-acen')||{}).checked); var th=Number((ev('sh-set-acth')||{}).value)||80; try{ localStorage.setItem('sh-acen', en?'1':'0'); localStorage.setItem('sh-acth', String(th)); }catch(_e){} window.shellAPI.setSetting('auto-compact-enabled',en); window.shellAPI.setSetting('auto-compact-threshold',th); toast2('自动压缩已保存'); });
     var tss=ev('sh-set-think-save'); if(tss) tss.addEventListener('click',function(){
       var th=parseInt((ev('sh-set-dual-th')||{}).value,10);
-      var gl=parseInt((ev('sh-set-dual-delay')||{}).value,10);
+      var glMin=parseInt((ev('sh-set-dual-delay-min')||{}).value,10);
+      var glMax=parseInt((ev('sh-set-dual-delay-max')||{}).value,10);
       var ratio=parseFloat((ev('sh-set-think-ratio')||{}).value);
       var maxDelay=parseInt((ev('sh-set-think-max')||{}).value,10);
       if(!isFinite(th)||th<0||th>600000){ toast2('阈值需在 0 - 600000ms 之间'); return; }
-      if(!isFinite(gl)||gl<0||gl>600000){ toast2('固定延迟需在 0 - 600000ms 之间'); return; }
+      if(!isFinite(glMin)||glMin<0||glMin>600000){ toast2('延迟最小值需在 0 - 600000ms 之间'); return; }
+      if(!isFinite(glMax)||glMax<0||glMax>600000){ toast2('延迟最大值需在 0 - 600000ms 之间'); return; }
+      if(glMin>glMax){ toast2('延迟最小值不能大于最大值'); return; }
       if(!isFinite(ratio)||ratio<0||ratio>5){ toast2('比例需在 0 - 5 之间'); return; }
       if(!isFinite(maxDelay)||maxDelay<0||maxDelay>600000){ toast2('延迟上限需在 0 - 600000ms 之间'); return; }
       try{
         localStorage.setItem('lingya-adaptive-threshold',String(th));
-        localStorage.setItem('lingya-global-send-delay',String(gl));
+        localStorage.setItem('lingya-global-send-delay-min',String(glMin));
+        localStorage.setItem('lingya-global-send-delay-max',String(glMax));
         localStorage.setItem('lingya-think-ratio',String(ratio));
         localStorage.setItem('lingya-think-max-delay',String(maxDelay));
       }catch(_e){}
       if(window.shellAPI&&window.shellAPI.setSetting){
         window.shellAPI.setSetting('adaptive-threshold',th);
-        window.shellAPI.setSetting('global-send-delay',gl);
+        window.shellAPI.setSetting('global-send-delay-min',glMin);
+        window.shellAPI.setSetting('global-send-delay-max',glMax);
         window.shellAPI.setSetting('think-ratio',ratio);
         window.shellAPI.setSetting('think-max-delay',maxDelay);
       }
-      toast2('已保存：≤' + th + 'ms 固定等 ' + gl + 'ms；超过则等「耗时×' + ratio + '」（最多 ' + maxDelay + 'ms）');
+      toast2('已保存：≤' + th + 'ms 时在 ' + glMin + '~' + glMax + 'ms 内随机；超过则等「耗时×' + ratio + '」（最多 ' + maxDelay + 'ms）');
     });
   }
 
