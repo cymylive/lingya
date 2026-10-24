@@ -75,7 +75,8 @@
       {
         "provider": "github",
         "owner": "cymylive",
-        "repo": "lingya"
+        "repo": "lingya",
+        "releaseType": "release"
       }
     ],
     "directories": {
