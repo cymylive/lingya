@@ -1093,6 +1093,20 @@ ipcMainForProfile.handle('list-profiles', async () => {
   return { success: true, profiles: profileManager.readProfiles() };
 });
 
+// 调整窗口顺序（数组顺序即显示顺序，第一位为主窗口）
+ipcMainForProfile.handle('reorder-profiles', async (_event, { orderedIds } = {}) => {
+  const out = profileManager.reorderProfiles(orderedIds);
+  if (!out) return { success: false, error: '参数无效' };
+  return { success: true, profiles: out };
+});
+
+// 修改窗口编号（重复时占用者及其后顺延）
+ipcMainForProfile.handle('update-profile-number', async (_event, { profileId, number } = {}) => {
+  const out = profileManager.updateProfileNumber(profileId, number);
+  if (!out) return { success: false, error: '参数无效或窗口不存在' };
+  return { success: true, profiles: out };
+});
+
 // 删除指定 profile（会关闭其窗口）
 ipcMainForProfile.handle('delete-profile', async (_event, { profileId }) => {
   if (!profileId) return { success: false, error: '缺少窗口ID' };
