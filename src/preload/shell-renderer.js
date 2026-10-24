@@ -2018,6 +2018,27 @@
         q('.sh-win-open',function(id){ window.shellAPI.openProfileWindow(id).then(function(r2){ toast2(r2&&r2.success?(r2.focused?'已切换':'已打开'):'打开失败'); })['catch'](function(){}); });
         q('.sh-win-rename',function(id,name){ var nn=prompt('新名称',name); if(nn==null) return; window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); });
         q('.sh-win-del',function(id,name){ if(!confirm('确定删除窗口「'+name+'」？')) return; window.shellAPI.deleteProfileWindow(id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
+
+        // 拖动排序：数组顺序即显示顺序，第一位为主窗口
+        // 算法与 src/main/profile-manager.js 的 moveIdBefore 一致（渲染层无法 require 主进程模块）
+        var dragId=null;
+        var rows=box.querySelectorAll('.sh-win-row');
+        for(var di=0;di<rows.length;di++){ (function(row){
+          row.addEventListener('dragstart',function(e){ dragId=row.getAttribute('data-id'); try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',dragId); }catch(_){} });
+          row.addEventListener('dragover',function(e){ e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} });
+          row.addEventListener('drop',function(e){
+            e.preventDefault();
+            var targetId=row.getAttribute('data-id');
+            if(!dragId||dragId===targetId){ dragId=null; return; }
+            var ids=[]; for(var z=0;z<list.length;z++) ids.push(list[z].id);
+            var from=ids.indexOf(dragId); var to=ids.indexOf(targetId);
+            if(from<0||to<0||from===to){ dragId=null; return; }
+            ids.splice(from,1);
+            ids.splice(ids.indexOf(targetId),0,dragId);
+            window.shellAPI.reorderProfiles(ids).then(function(r2){ toast2(r2&&r2.success?'顺序已更新':'排序失败'); load(); })['catch'](function(){});
+            dragId=null;
+          });
+        })(rows[di]); }
       })['catch'](function(){});
     }
     var nb=document.getElementById('sh-win-new'); if(nb) nb.addEventListener('click',function(){ window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); load(); })['catch'](function(){}); });
