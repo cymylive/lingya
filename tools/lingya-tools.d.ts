@@ -311,6 +311,64 @@ declare function webFetch(url: string, options?: { method?: string; headers?: Re
  */
 declare function viewImage(filePath: string): Promise<string>;
 
+/** waitFor 的选项 */
+interface WaitForOptions {
+  /** 总超时毫秒数，默认 600000（10 分钟），上限 1800000（30 分钟） */
+  timeout?: number;
+  /** 每次轮询间隔毫秒数，默认 10000（10 秒），最小 1000 */
+  interval?: number;
+  /** 等待目的说明（如「等 CI 打包完成」），用于日志 */
+  description?: string;
+  /** 命令工作目录（相对路径基于项目根目录） */
+  workdir?: string;
+}
+
+/** waitFor 的返回结果 */
+interface WaitForResult {
+  /** 是否在超时前达成条件 */
+  matched: boolean;
+  /** 实际轮询次数 */
+  attempts: number;
+  /** 总耗时（毫秒） */
+  elapsedMs: number;
+  /** 最后一次命令的退出码 */
+  exitCode: number | null;
+  /** 最后一次命令的输出（尾部 2000 字符） */
+  lastOutput: string;
+  /** 超时时的说明（matched=true 时无此字段） */
+  note?: string;
+}
+
+/**
+ * 轮询执行命令直到条件满足或超时。
+ *
+ * **禁止用固定时长死等**（如 bash('ping -n 300 127.0.0.1 >nul')）——
+ * 外部任务完成时间不确定，死等会白白浪费时间，界面还卡在「正在执行」看起来像死机。
+ *
+ * @param command 每次轮询要执行的检查命令（要轻量，别每次跑重活）
+ * @param expect 输出里出现这个字符串就算完成（不区分大小写）；传 'exit0' 表示退出码 0 即完成
+ * @param options 可选，{ timeout, interval, description, workdir }
+ * @returns { matched, attempts, elapsedMs, exitCode, lastOutput }
+ * @throws 命令为空、expect 为空、命令被安全策略拒绝时抛出异常
+ *
+ * @example
+ * // 等 GitHub CI 构建完成
+ * const r = await waitFor(
+ *   'gh run view --json status --jq .status',
+ *   'completed',
+ *   { timeout: 600000, interval: 10000, description: '等 CI 打包完成' }
+ * );
+ *
+ * @example
+ * // 等文件出现
+ * await waitFor('dir dist\\*.exe 2>nul', '.exe', { timeout: 120000 });
+ */
+declare function waitFor(
+  command: string,
+  expect: string,
+  options?: WaitForOptions
+): Promise<WaitForResult>;
+
 /**
  * 打开一个 Electron 浏览器窗口并返回窗口 ID。 打开浏览器后可以使用 injectJS 工具对窗口内容注入js , 以具备操控网页能力
  * @param url 要打开的网页 URL

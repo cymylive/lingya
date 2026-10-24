@@ -13,13 +13,28 @@ const scheduler = require('./scheduler');
 const feishuClient = require('../feishu/client');
 const { readConfig: readFeishuConfig } = require('../feishu/config');
 
-/** 解析目标窗口 ctx：优先任务指定的 profileId，否则当前活跃窗口 */
+/**
+ * 解析目标窗口 ctx（严格模式）。
+ *
+ * 【重要】任务必须指定 profileId，且该 profile 的窗口必须处于打开状态。
+ * 任一条件不满足就返回失败，绝不降级到其它窗口 —— 降级会导致：
+ *   - 用错账号发内容（番茄音乐项目 A/B 账号混发）
+ *   - 污染别的会话（任务提示词注入到无关对话）
+ *   - 用户以为任务没跑，实际在别处跑过了
+ *
+ * @returns {{ ok: boolean, ctx?: object, error?: string }}
+ */
 function resolveTargetCtx(task) {
-  if (task && task.profileId) {
-    const ctx = windowState.getWindowByProfileId(task.profileId);
-    if (ctx) return ctx;
+  if (!task || !task.profileId) {
+    return { ok: false, error: '任务未指定执行窗口（请在任务配置里选择目标窗口）' };
   }
-  return windowState.getMainContext();
+  const ctx = windowState.getWindowByProfileId(task.profileId);
+  if (!ctx) {
+    const p = profileManager.getProfileById(task.profileId);
+    const pname = (p && p.name) ? p.name : task.profileId;
+    return { ok: false, error: '任务指定的窗口「' + pname + '」未打开，已跳过本次执行' };
+  }
+  return { ok: true, ctx };
 }
 
 /** 推送飞书（目标为任务目标窗口绑定的群） */
@@ -27,10 +42,14 @@ async function pushFeishu(text, task) {
   try {
     const cfg = readFeishuConfig();
     if (!cfg.enabled) return;
-    const ctx = resolveTargetCtx(task);
+    const res = resolveTargetCtx(task);
+    const ctx = res.ok ? res.ctx : null;
     const profile = ctx && ctx.profileId ? profileManager.getProfileById(ctx.profileId) : null;
     const chatId = (profile && profile.feishuChatId) || '';
-    if (!chatId) return;
+    // 【不要因 chatId 为空就 return】
+    // 窗口未打开时正好最需要通知用户「任务已跳过」，此时拿不到 profile.feishuChatId，
+    // 但 sendText 内部会回退到全局 targetOpenId 单聊。
+    // 直接 return 会导致用户完全收不到通知（连「为什么没跑」都看不到）。
     await feishuClient.sendText(text, chatId);
   } catch (_) {}
 }
@@ -76,12 +95,16 @@ async function runTask(task) {
   console.log('[Schedule] 执行任务:', task.name);
   await pushFeishu('⏰ 定时任务开始：' + task.name, task);
 
-  const ctx = resolveTargetCtx(task);
-  if (!ctx) {
-    store.markRun(task.id, { success: false, error: '无可用窗口' });
-    await pushFeishu('❌ 定时任务失败（没有可用窗口）：' + task.name, task);
+  // 【严格模式】窗口不满足条件直接跳过，绝不降级到其它窗口执行。
+  // 降级会造成：用错账号发内容、污染无关会话、用户以为没跑实际在别处跑过。
+  const res = resolveTargetCtx(task);
+  if (!res.ok) {
+    console.warn('[Schedule] 跳过任务「' + task.name + '」：' + res.error);
+    store.markRun(task.id, { success: false, error: res.error });
+    await pushFeishu('⏭ 定时任务已跳过：' + task.name + '（' + res.error + '）', task);
     return;
   }
+  const ctx = res.ctx;
 
   // 1) 新开对话
   const opened = await openNewChat(ctx);
@@ -141,6 +164,10 @@ function registerScheduleIpc() {
   ipcMain.handle('schedule-add', async (_e, { name, cron: cronExpr, prompt, enabled, profileId, projectDir } = {}) => {
     if (!cron.isValidCron(cronExpr)) return { success: false, error: 'cron 表达式无效' };
     if (!prompt || !String(prompt).trim()) return { success: false, error: '任务指令不能为空' };
+    // 【必填】必须指定执行窗口。定时任务在后台跑，指定错窗口可能用错账号发内容。
+    if (!profileId || !String(profileId).trim()) {
+      return { success: false, error: '必须选择执行窗口（任务只会在该窗口打开时执行）' };
+    }
     const t = store.addTask({ name, cron: cronExpr, prompt, enabled, profileId, projectDir });
     return { success: true, task: t };
   });
@@ -149,6 +176,11 @@ function registerScheduleIpc() {
   ipcMain.handle('schedule-update', async (_e, { id, patch } = {}) => {
     if (patch && patch.cron && !cron.isValidCron(patch.cron)) {
       return { success: false, error: 'cron 表达式无效' };
+    }
+    // 防止把已指定的窗口清空（会导致任务无法执行）
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'profileId') &&
+        (!patch.profileId || !String(patch.profileId).trim())) {
+      return { success: false, error: '执行窗口不能为空（任务只会在该窗口打开时执行）' };
     }
     const t = store.updateTask(id, patch || {});
     if (!t) return { success: false, error: '任务不存在' };

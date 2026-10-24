@@ -48,6 +48,7 @@ const STATIC_TOOL_NAMES = [
   'open_browser_window',
   'inject_js',
   'view_image',
+  'wait_for',
   'mcp_list_servers',
   'mcp_get_tools',
   'nameConversation',

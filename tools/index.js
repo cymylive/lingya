@@ -24,6 +24,7 @@ const { MemorySaveTool, MemoryUpdateTool, MemoryDeleteTool, MemoryListTool } = r
 const { SkillListTool } = require('./SkillTool');
 const { WebSearchTool } = require('./WebSearchTool');
 const { ViewImageTool } = require('./ViewImageTool');
+const { WaitForTool } = require('./WaitForTool');
 const { BashBackgroundTool, BashOutputTool, BashKillTool } = require('./BackgroundTaskTool');
 const { NameConversationTool } = require('./NameConversationTool');
 const { ListPluginsTool } = require('./ListPluginsTool');
@@ -61,6 +62,7 @@ registry.register(new MemoryListTool());
   registry.register(new SkillListTool());
 registry.register(new WebSearchTool());
 registry.register(new ViewImageTool());
+registry.register(new WaitForTool());
 registry.register(new BashBackgroundTool());
 registry.register(new BashOutputTool());
 registry.register(new BashKillTool());
@@ -90,6 +92,7 @@ module.exports = {
   SkillListTool,
   WebSearchTool,
   ViewImageTool,
+  WaitForTool,
   BashBackgroundTool,
   BashOutputTool,
   BashKillTool,

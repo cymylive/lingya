@@ -693,12 +693,20 @@ async function processInterceptedResponse(text, force, interrupted) {
   //   hasXmlParam  = 同上，也不认 ｜｜DSML｜｜ parameter
   // 结果：条件恒为 false → 不提示 → 不执行 → 用户看到"AI 不说话了"。
   //
-  // 修复：只要出现 ｜｜DSML｜｜ 特征串就判定（不管前后是 < 、</ 还是空格），
-  // 同时保留标准 <invoke> 的检测作为兜底。
-  const hasDsmlMark = /｜｜\s*DSML\s*｜｜/i.test(raw);
-  const hasXmlInvoke = /<\s*(?:[\w-]+:)?invoke\s+name=/i.test(raw);
-  const hasXmlClose = /<\s*\/\s*(?:[\w-]+:)?invoke\s*>/i.test(raw);
-  const hasXmlParam = /<\s*(?:[\w-]+:)?parameter\s+name=/i.test(raw);
+  // 修复：只要出现 DSML 特征串就判定，同时保留标准 <invoke> 的检测作为兜底。
+  //
+  // 【2026-10-24 二次修复】AI 有时输出半角竖线带空格的变体：
+  //   < | DSML | | invoke>       ← 单竖线 + 空格
+  //   < | DSML | | parameter>    ← 同上
+  // 原正则 /｜｜\s*DSML\s*｜｜/ 要求两个全角竖线紧邻，全部漏判 →
+  // XML 文本被当普通回复放过，Agent 静默停摆（用户截图实测）。
+  //
+  // 新正则：竖线 [｜|] 允许 1~2 个、中间可有空格；
+  //         invoke/parameter 前允许任意非 > 字符（容忍 < | DSML | | invoke> 这种）。
+  const hasDsmlMark = /[｜|]\s*DSML\s*[｜|]/i.test(raw);
+  const hasXmlInvoke = /<\s*[^>]*?\binvoke\s+name=/i.test(raw);
+  const hasXmlClose = /<\s*\/\s*[^>]*?\binvoke\s*>/i.test(raw);
+  const hasXmlParam = /<\s*[^>]*?\bparameter\s+name=/i.test(raw);
   if (hasDsmlMark || (hasXmlInvoke && (hasXmlClose || hasXmlParam))) {
     if (xmlHintCount >= XML_HINT_MAX) {
       console.log('[LingYa][拦截] 已连续提示 ' + xmlHintCount + ' 次 XML 格式，停止发送');
@@ -1142,10 +1150,10 @@ async function manualRewrite() {
 
   console.log('[LingYa][手动改写] 走当前对话改写，目标长度=' + lastAi.length);
   sendMessageToChat(
-    '帮我把下面这段话改得委婉一点，让它更容易被接受，保留原技术需求。只输出改写后的话，不要解释。\n\n' +
+    '帮我把下面这段话改得委婉一点，让它更容易被接受，保留原技术需求。只输出改写后的话，不要解释。' + String.fromCharCode(10, 10) +
     lastAi.slice(0, 2000),
     '手动改写请求',
-    { auto: true }  // C1 fix
+    { auto: true }
   );
   return { success: true, mode: 'chat' };
 }
@@ -1161,4 +1169,4 @@ function resetGenerating() {
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, manualRewrite, onInterceptedResponse, onToolCall, resetGenerating, getQueueState, looksLikeUserQuestion, looksLikeStrongUserWait, DONE_HINT_RE };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, manualRewrite, onInterceptedResponse, onToolCall, resetGenerating, getQueueState, DONE_HINT_RE };
