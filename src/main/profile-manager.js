@@ -16,11 +16,27 @@ function getProfileFile() {
   return PROFILE_FILE;
 }
 
+/** 为缺 number 的 profile 按当前顺序补 1..n；返回是否发生了修改 */
+function ensureNumbers(profiles) {
+  let changed = false;
+  for (let i = 0; i < profiles.length; i++) {
+    const n = profiles[i].number;
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) {
+      profiles[i].number = i + 1;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function readProfiles() {
   try {
     const file = getProfileFile();
     if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf-8'));
+      const profiles = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      if (!Array.isArray(profiles)) return [];
+      if (ensureNumbers(profiles)) writeProfiles(profiles);
+      return profiles;
     }
   } catch (err) {
     console.error('[Profile] 读取 profile 列表失败:', err.message);
@@ -52,6 +68,7 @@ function createProfile(name, providerId) {
     providerId: pid,
     name: name || ('窗口' + (profiles.length + 1)),
     partition: 'persist:' + (pid ? pid + ':' : '') + id,
+    number: profiles.length + 1,
     createdAt: new Date().toISOString(),
     feishuChatId: '',
     feishuChatName: '',

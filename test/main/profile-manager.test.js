@@ -102,3 +102,51 @@ test('profile 列表持久化到磁盘', () => {
   assert.strictEqual(raw.length, 1);
   assert.strictEqual(raw[0].name, '持久化测试');
 });
+
+
+test('createProfile 自动分配递增 number', () => {
+  const pm = require('../../src/main/profile-manager');
+  const a = pm.createProfile('A');
+  const b = pm.createProfile('B');
+  assert.strictEqual(a.number, 1);
+  assert.strictEqual(b.number, 2);
+});
+
+test('readProfiles 为缺 number 的老数据补齐 1..n 并落盘', () => {
+  const file = path.join(userDataDir, 'profile-list.json');
+  fs.writeFileSync(file, JSON.stringify([
+    { id: 'p1', name: '旧A', providerId: 'deepseek', partition: 'persist:p1' },
+    { id: 'p2', name: '旧B', providerId: 'deepseek', partition: 'persist:p2' },
+    { id: 'p3', name: '旧C', providerId: 'deepseek', partition: 'persist:p3' },
+  ]), 'utf-8');
+  const pm = require('../../src/main/profile-manager');
+  const list = pm.readProfiles();
+  assert.deepStrictEqual(list.map(p => p.number), [1, 2, 3]);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(raw.map(p => p.number), [1, 2, 3]);
+});
+
+test('readProfiles 对已有 number 的数据不改写', () => {
+  const file = path.join(userDataDir, 'profile-list.json');
+  fs.writeFileSync(file, JSON.stringify([
+    { id: 'p1', name: 'A', number: 5 },
+    { id: 'p2', name: 'B', number: 9 },
+  ]), 'utf-8');
+  const pm = require('../../src/main/profile-manager');
+  const list = pm.readProfiles();
+  assert.deepStrictEqual(list.map(p => p.number), [5, 9]);
+});
+
+test('删除第一个 profile 后 getDefaultProfile 返回新的第一个', () => {
+  const pm = require('../../src/main/profile-manager');
+  const a = pm.createProfile('A');
+  const b = pm.createProfile('B');
+  pm.deleteProfile(a.id);
+  assert.strictEqual(pm.getDefaultProfile().id, b.id);
+});
+
+test('只有一个 profile 时 getDefaultProfile 返回它', () => {
+  const pm = require('../../src/main/profile-manager');
+  const a = pm.createProfile('独苗');
+  assert.strictEqual(pm.getDefaultProfile().id, a.id);
+});
