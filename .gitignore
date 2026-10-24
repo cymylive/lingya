@@ -46,6 +46,9 @@ temp/
 .cuckooCode/
 .claude/
 
+# Superpowers SDD workspace（plan 执行台账，本地临时产物）
+.superpowers/
+
 # .lingyaCode/ 调试脚本（保留文档与笔记，忽略一次性探针脚本）
 # 说明：LINGYA.md / README.md / notes/ / manifest.example.json 是项目资产，需跟踪
 .lingyaCode/*
