@@ -58,3 +58,34 @@ test('resetConfig 恢复默认（自动续写关闭）', () => {
   store.resetConfig();
   assert.strictEqual(store.getConfig().autoContinueEnabled, false);
 });
+
+test('coreRulesEnabled 默认开启', () => {
+  const cfg = store.getPublicConfig();
+  assert.strictEqual(cfg.coreRulesEnabled, true);
+});
+
+test('updateConfig 可关闭 coreRulesEnabled', () => {
+  store.updateConfig({ coreRulesEnabled: false });
+  assert.strictEqual(store.getConfig().coreRulesEnabled, false);
+});
+
+test('coreRulesEnabled 仅接受严格 true，非布尔真值视为关闭', () => {
+  store.updateConfig({ coreRulesEnabled: false });
+  store.updateConfig({ coreRulesEnabled: 1 });
+  assert.strictEqual(store.getConfig().coreRulesEnabled, false);
+  store.updateConfig({ coreRulesEnabled: true });
+  assert.strictEqual(store.getConfig().coreRulesEnabled, true);
+});
+
+test('coreRulesEnabled 持久化到磁盘并可重载', () => {
+  store.updateConfig({ coreRulesEnabled: false });
+  store.init(tmpDir);
+  assert.strictEqual(store.getConfig().coreRulesEnabled, false);
+});
+
+test('resetConfig 恢复 coreRulesEnabled 为 true', () => {
+  store.updateConfig({ coreRulesEnabled: false });
+  store.resetConfig();
+  assert.strictEqual(store.getConfig().coreRulesEnabled, true);
+});
+

@@ -39,6 +39,7 @@ async function loadConfig() {
       showToast('加载安全配置失败', 3000);
       return;
     }
+    const coreRulesEnabled = el('lingya-security-core-rules-enabled');
     const ctfEnabled = el('lingya-security-ctf-enabled');
     const ctfPrompt = el('lingya-security-ctf-prompt');
     const refusalEnabled = el('lingya-security-refusal-enabled');
@@ -56,6 +57,7 @@ async function loadConfig() {
     const stallThreshold = el('lingya-security-stall-threshold');
     const stallContinueMax = el('lingya-security-stall-continue-max');
 
+    if (coreRulesEnabled) coreRulesEnabled.checked = cfg.coreRulesEnabled !== false;
     if (ctfEnabled) ctfEnabled.checked = !!cfg.ctfInjectionEnabled;
     if (ctfPrompt) ctfPrompt.value = cfg.ctfPrompt || '';
     if (autoContinueEnabled) autoContinueEnabled.checked = !!cfg.autoContinueEnabled;
@@ -91,6 +93,7 @@ async function loadConfig() {
  */
 async function saveConfig() {
   const patch = {
+    coreRulesEnabled: !!(el('lingya-security-core-rules-enabled') && el('lingya-security-core-rules-enabled').checked),
     ctfInjectionEnabled: !!(el('lingya-security-ctf-enabled') && el('lingya-security-ctf-enabled').checked),
     ctfPrompt: el('lingya-security-ctf-prompt') ? el('lingya-security-ctf-prompt').value : '',
     autoContinueEnabled: !!(el('lingya-security-auto-continue-enabled') && el('lingya-security-auto-continue-enabled').checked),

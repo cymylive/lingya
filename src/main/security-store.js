@@ -23,6 +23,11 @@ const DEFAULT_MOCK_RESPONSE =
 const DEFAULT_CONFIG = {
   ctfInjectionEnabled: false,
   ctfPrompt: '',
+  // 核心规则总开关（src/prompt/core-rules.md 的三段：需求先汇报 / 不可逆操作二次确认 / 模糊指令追问）
+  // 默认 true = 保持现有行为。关闭后 systemPrompt 不注入任何一段，AI 收到需求直接动手，
+  // 也不会对 git push / 删除 / 发布等不可逆操作要求二次确认 —— 用于无人值守场景。
+  // 改动需重新初始化项目才生效（systemPrompt 在初始化时组装）。
+  coreRulesEnabled: true,
   autoContinueEnabled: false,
   autoContinueText: '刚才断了，接着往下写，别重复已经写过的部分。',
   // 自动续跑上限（次）：
@@ -143,7 +148,7 @@ function updateConfig(patch) {
       // 分片大小范围独立：下限 2000（太小会切出上百段），上限 100000（再大平台必拒收）。
       // 不能用 normalizePositiveInt —— 那个上限硬编码 10000，会把 15000~100000 的值全压成 10000。
       next[key] = normalizeChunkSize(patch[key], DEFAULT_CONFIG[key]);
-    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'refusalEnabled' || key === 'aiRewriteEnabled' || key === 'aiRewriteViaChat' || key === 'autoContinueEnabled' || key === 'unplannedContinueEnabled' || key === 'stallSupervisorEnabled' || key === 'purgeEnabled' || key === 'localRewriteEnabled' || key === 'coreRulesEnabled') {
       next[key] = patch[key] === true;
     } else if (key === 'aiKey') {
       // 前端不传或传 null 时保留原值（避免脱敏后误清空）

@@ -402,6 +402,55 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     ? '---\n## 项目介绍\n' + projectIntro
     : '';
 
+  // ===== 核心规则（单一来源 src/prompt/core-rules.md）=====
+  // 为什么独立成文件：这 3 条规则对所有平台都必须生效，且必须落在 systemPrompt
+  // 的第 1 段（分段发送时 AI 第一轮就要看到）。以前每个平台模板各抄一份，
+  // 加新平台容易漏、改规则要改 N 处、还出现过位置不对导致某平台不生效。
+  // 现在模板只写占位符，内容在这里统一注入。
+  let coreRuleReport = '';
+  let coreRuleAmbiguous = '';
+  let coreRuleIrreversible = '';
+  // 总开关：关闭后三段核心规则全部不注入（无人值守场景，AI 不会停下来等确认）。
+  // 读配置失败时按默认 true 处理，宁可保留安全闸也不要静默放开。
+  let coreRulesEnabled = true;
+  try {
+    const secCfgCore = securityStore.getConfig();
+    if (secCfgCore && secCfgCore.coreRulesEnabled === false) coreRulesEnabled = false;
+  } catch (_) { /* 读配置失败用默认值 */ }
+  try {
+    const rulesPath = path.join(PROMPT_DIR, 'core-rules.md');
+    if (!coreRulesEnabled) {
+      console.log('[LingYa] 核心规则开关已关闭（coreRulesEnabled=false），跳过注入');
+    } else if (fs.existsSync(rulesPath)) {
+      const raw = fs.readFileSync(rulesPath, 'utf-8');
+      // 去掉开头的 <!-- ... --> 注释块（那是给维护者看的，不注入给 AI）
+      const body = raw.replace(/^<!--[\s\S]*?-->\s*/m, '');
+      const parts = body.split(/^=== (REPORT|AMBIGUOUS|IRREVERSIBLE) ===\s*$/m);
+      // parts = ['', 'REPORT', '内容', 'AMBIGUOUS', '内容', ...]
+      for (let i = 1; i < parts.length; i += 2) {
+        const key = parts[i];
+        const val = (parts[i + 1] || '').trim();
+        if (key === 'REPORT') coreRuleReport = val;
+        else if (key === 'AMBIGUOUS') coreRuleAmbiguous = val;
+        else if (key === 'IRREVERSIBLE') coreRuleIrreversible = val;
+      }
+      const missing = [];
+      if (!coreRuleReport) missing.push('REPORT');
+      if (!coreRuleAmbiguous) missing.push('AMBIGUOUS');
+      if (!coreRuleIrreversible) missing.push('IRREVERSIBLE');
+      if (missing.length) {
+        console.error('[LingYa] core-rules.md 缺少分节: ' + missing.join(', '));
+      }
+      console.log('[LingYa] 核心规则已加载: REPORT=' + coreRuleReport.length +
+        ' AMBIGUOUS=' + coreRuleAmbiguous.length +
+        ' IRREVERSIBLE=' + coreRuleIrreversible.length);
+    } else {
+      console.error('[LingYa] core-rules.md 不存在: ' + rulesPath);
+    }
+  } catch (err) {
+    console.error('[LingYa] 加载核心规则失败:', err.message);
+  }
+
   // 工具名速查表：只列名字，不列签名，体积小（几百字符），
   // 保证它会出现在 systemPrompt 的**第一段**里。
   //
@@ -433,6 +482,9 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
 
   // 统一替换模板中的双花括号占位符（全量替换，支持同一占位符多次出现）
   const placeholders = {
+    '{{CORE_RULE_REPORT}}': coreRuleReport,
+    '{{CORE_RULE_AMBIGUOUS}}': coreRuleAmbiguous,
+    '{{CORE_RULE_IRREVERSIBLE}}': coreRuleIrreversible,
     '{{TOOL_NAMES_QUICKREF}}': toolNamesQuickref,
     '{{TOOL_API_TYPES}}': toolApiTypes,
     '{{TOOLS_LIST}}': toolsDescription,
@@ -474,6 +526,24 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   const chunks = splitPromptIntoChunks(combined, chunkSize, PROMPT_CHUNK_MAX);
   console.log('[LingYa] 准备发送初始提示（不含目录树），总长度:', combined.length,
     '，单段上限:', chunkSize, '，拆分为', chunks.length, '段');
+
+  // ===== 启动自检：核心规则必须落在第 1 段 =====
+  // 分段发送时 AI 收到第 1 段就开始回复，后续段到达也纠正不了已形成的判断
+  // （历史事故：{{TOOLS_LIST}} 排位靠后，AI 第一轮就说"我没有这些工具"）。
+  // 核心规则同理 —— 如果它落在第 2 段，AI 第一轮就会直接动手，规则形同虚设。
+  // 这里在发送前显式检查，出问题立刻报错，不用等用户发现行为异常。
+  if (chunks.length > 0 && coreRulesEnabled && coreRuleReport) {
+    const first = chunks[0];
+    const missing = [];
+    if (!first.includes('铁律：需求先汇报')) missing.push('铁律标题');
+    if (!first.includes('【理解】')) missing.push('四项汇报模板');
+    if (missing.length > 0) {
+      console.error('[LingYa] ⚠️ 核心规则未完整落在第 1 段，缺少: ' + missing.join('、') +
+        '。请检查模板中 {{CORE_RULE_REPORT}} 的位置（应紧跟身份章节，且在 {{CTF_SECTION}} 之前）。');
+    } else {
+      console.log('[LingYa] ✅ 核心规则已在第 1 段（第 1 段长度 ' + first.length + '）');
+    }
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (chunks.length > 1) {
       mainWindow.webContents.send('initial-prompt', { chunks });
