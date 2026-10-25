@@ -152,6 +152,33 @@ test('setSessionTitleById 广播 session-title-updated', () => {
   assert.ok(hit, '应发送 session-title-updated');
   assert.deepStrictEqual(hit[1], { sessionId: 'sess-b', title: '新名' });
 });
+// ===== [object Object] 标题清理 =====
+test('updateSessionTitle 拒绝写入 [object Object]', () => {
+  const store = makeStore();
+  const ok = store.updateSessionTitle('sess-x', '[object Object]');
+  assert.strictEqual(ok, false, '不应允许 [object Object] 作为标题落盘');
+  assert.strictEqual(store.readSessionStore()['sess-x'], undefined);
+});
+
+test('setSessionTitle 拒绝 [object Object] 标题', () => {
+  const store = makeStore();
+  const r = store.setSessionTitle('[object Object]');
+  assert.strictEqual(r.success, false);
+  assert.ok(String(r.error).includes('标题'));
+});
+
+test('setSessionTitleById 拒绝 [object Object] 标题', () => {
+  const store = makeStore();
+  const r = store.setSessionTitleById('sess-y', '[object Object]');
+  assert.strictEqual(r.success, false);
+});
+
+test('标题含 [object Object] 作为子串（如说明文档）仍允许', () => {
+  const store = makeStore();
+  const ok = store.updateSessionTitle('sess-z', '修复 [object Object] 显示问题');
+  assert.strictEqual(ok, true, '只有完全等于 [object Object] 才拦截');
+});
+
 
 // ===== 主标签标题跟随会话切换 =====
 

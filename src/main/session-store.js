@@ -149,11 +149,19 @@ function createSessionStore(profileId, storeDir, windowState) {
     } catch (_) { /* ignore */ }
   }
 
+  /**
+   * 标题是否为 String(对象) 的产物。
+   * 只拦「完全等于 [object Object]」——含该子串的正常标题（如「修复 [object Object] 显示」）必须放行。
+   */
+  function isStringifiedObject(t) {
+    return t === '[object Object]';
+  }
+
   /** 更新会话标题（AI 命名对话）。条目不存在时新建。 */
   function updateSessionTitle(sessionId, title) {
     if (!sessionId || !title) return false;
     const t = String(title).trim();
-    if (!t) return false;
+    if (!t || isStringifiedObject(t)) return false;
     const store = readSessionStore();
     const old = normalizeEntry(store[sessionId]);
     const now = new Date().toISOString();
@@ -176,6 +184,8 @@ function createSessionStore(profileId, storeDir, windowState) {
   function setSessionTitle(title) {
     const t = String(title || '').trim();
     if (!t) return { success: false, error: '标题为空' };
+    if (isStringifiedObject(t)) return { success: false, error: '标题格式错误（收到对象而非文本）' };
+    if (isStringifiedObject(t)) return { success: false, error: '标题格式错误（收到对象而非文本）' };
     if (state.currentSessionId) {
       updateSessionTitle(state.currentSessionId, t);
       return { success: true, sessionId: state.currentSessionId };
@@ -192,6 +202,7 @@ function createSessionStore(profileId, storeDir, windowState) {
   function setSessionTitleById(sessionId, title) {
     const t = String(title || '').trim();
     if (!t) return { success: false, error: '标题为空' };
+    if (isStringifiedObject(t)) return { success: false, error: '标题格式错误（收到对象而非文本）' };
     if (!sessionId) return setSessionTitle(t);
     if (!updateSessionTitle(sessionId, t)) {
       return { success: false, error: '写入会话标题失败' };

@@ -70,3 +70,57 @@ test('JsRunner 每次工具调用都分配独立 lifecycle ID（会话隔离）'
     tl.markDone = origMarkDone;
   }
 });
+
+// ===== 参数归一化兜底：单键对象应解出值，不能变 '[object Object]' =====
+const { ToolRegistry, Tool, ToolResult } = require('../../tools/ToolRegistry');
+
+test('JsRunner 单键对象参数自动解出值（{title_text:"x"} → "x"）', async () => {
+  const reg = new ToolRegistry();
+  const spy = new Tool('nameConversation', 'n', { type: 'object', properties: {} }, 'nameConversation(title)');
+  let received = null;
+  spy.execute = async (p) => { received = p; return ToolResult.success('ok'); };
+  reg.register(spy);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('await nameConversation({ title_text: "单键标题" })', process.cwd());
+  assert.strictEqual(r.success, true, r.error);
+  assert.strictEqual(received.title, '单键标题');
+});
+
+test('JsRunner 嵌套同名键解开（{title:{title:"x"}} → "x"）', async () => {
+  const reg = new ToolRegistry();
+  const spy = new Tool('nameConversation', 'n', { type: 'object', properties: {} }, 'nameConversation(title)');
+  let received = null;
+  spy.execute = async (p) => { received = p; return ToolResult.success('ok'); };
+  reg.register(spy);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('await nameConversation({ title: { title: "嵌套标题" } })', process.cwd());
+  assert.strictEqual(r.success, true, r.error);
+  assert.strictEqual(received.title, '嵌套标题');
+});
+
+test('JsRunner 多键对象不误伤（headers 等真对象保持原样）', async () => {
+  const reg = new ToolRegistry();
+  const spy = new Tool('web_fetch', 'w', { type: 'object', properties: {} }, 'webFetch(url,opts)');
+  let received = null;
+  spy.execute = async (p) => { received = p; return ToolResult.success('ok'); };
+  reg.register(spy);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('await webFetch("https://x", { headers: { a: 1, b: 2 } })', process.cwd());
+  assert.strictEqual(r.success, true, r.error);
+  assert.deepStrictEqual(received.headers, { a: 1, b: 2 });
+});
+
+test('JsRunner 对象参数完全无法解出时返回明确错误而非 [object Object]', async () => {
+  const reg = new ToolRegistry();
+  const spy = new Tool('nameConversation', 'n', { type: 'object', properties: {} }, 'nameConversation(title)');
+  let received = null;
+  spy.execute = async (p) => { received = p; return ToolResult.success('ok'); };
+  reg.register(spy);
+  const runner = new JsRunner(reg);
+  // 多键且无同名/别名键 → 无法安全解出，应保持对象让工具层报错
+  const r = await runner.run('await nameConversation({ a: 1, b: 2 })', process.cwd());
+  assert.strictEqual(r.success, true, r.error);
+  assert.strictEqual(typeof received.title, 'object');
+  assert.ok(!String(received.title).includes('[object Object]') || typeof received.title === 'object');
+});
+
