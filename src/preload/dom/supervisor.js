@@ -37,14 +37,17 @@ const STALL_WINDOW_MS = 300 * 1000;
  *   - 120 秒后 idleMs 超阈值 → 命中「无计划任务停滞」分支
  * → 反复发「停了一会儿了，接着往下做吧」，AI 只能回「没有任务」，再被催……死循环。
  *
- * userTaskStarted 只在用户发真实消息（非 auto）时置 true，
- * 因此「初始化完 → 用户开口前」这段空窗期不会催。
+ * planCreated 只在 AI 成功执行 todo_write 时置 true（见 tool-executor.js），
+ * 因此「初始化完 → AI 建计划前」这段空窗期不会催。
+ * 计划一旦建过就永久激活，直到会话切换才重置。
  *
  * 注意：只挡「发消息」的动作。fab 卡死自愈、DOM 兜底、状态机重置
  * 这些不发消息的修复动作必须照常执行（否则初始化期间出错就没人救了）。
  */
 function canNudge() {
-  return state.userTaskStarted === true;
+  // 用户要求：监督机制必须在创建计划后才激活（计划一建即一起激活）。
+  // 不再看 userTaskStarted —— 用户开口但 AI 还没建计划时，监督者不该介入。
+  return state.planCreated === true;
 }
 
 let timer = null;
@@ -109,6 +112,18 @@ async function handleTaskStateStall(now, max) {
   }
   lastStateStallAt = now;
   stateStallCount++;
+
+  // 【统一闸门 · 用户要求 ③A】无计划时状态机停滞也完全不管。
+  // 三类停滞（SENT / AWAITING / EXECUTING）全部挡掉，包括：
+  //   - SENT 的 showToast 提示（消息发送失败用户不会收到提示）
+  //   - AWAITING 的 DOM 兜底 + 催促
+  //   - EXECUTING 的催促
+  // 这是「监督机制必须在创建计划后才激活」的最严格执行方式。
+  // 未建计划的会话若卡死，只能靠用户手动介入。
+  if (!canNudge()) {
+    console.log('[LingYa][监督] 状态机停滞（' + stallInfo.state + '）但 AI 尚未创建计划，不做任何处理');
+    return false;
+  }
 
   const sec = Math.round(stallInfo.elapsedMs / 1000);
   console.log('[LingYa][监督] 状态机停滞：' + stallInfo.state + ' 已 ' + sec + 's（阈值 ' +
@@ -277,60 +292,17 @@ async function checkOnce() {
       state.awaitingUserInput = false;
       state.awaitingUserInputAt = 0;
     }
-    // ===== 无计划兜底（原 supervisor 的盲区）=====
-    // 场景：任务型会话（执行过工具）但没建 todo，AI 停在中途不动了。
-    // 原实现直接 return，这类会话永远不会被催促。
-    // 判断依据：本会话执行过工具 + 当前处于 IDLE（说明一轮循环已结束但任务未必完成）
-    //
-    // 【重要】必须排除「AI 已声明任务完成」的情况，否则会出现：
-    //   计划 7/7 全完成 + AI 明说"任务已完成" → 仍在催（用户实测反馈的 bug）
-    // 主防护在 intercept-observer 收尾处（命中 DONE_HINT 就 resetTaskFlags），
-    // 这里再加一道：检查最近一次拦截到的回复文本是否声明完成。
-    // 用户还没真实派过任务 → 不催（初始化期 AI 读 skill 也会置 sessionHadToolExecution，
-    // 不挡的话初始化完就开始反复催「接着往下做」，见 canNudge 注释）
-    if (state.sessionHadToolExecution && !canNudge()) {
-      console.log('[LingYa][监督] 无计划任务停滞但用户尚未派任务，跳过催促（初始化期）');
-      return;
-    }
-    if (state.sessionHadToolExecution) {
-      const snap = taskState.snapshot();
-      if (snap.state === taskState.STATES.IDLE) {
-        // 双重保险：查最近回复是否已声明完成
-        let declaredDone = false;
-        try {
-          const observer = require('./intercept-observer');
-          const lastText = observer.getLastProcessedText ? observer.getLastProcessedText() : '';
-          if (lastText && observer.DONE_HINT_RE && observer.DONE_HINT_RE.test(String(lastText))) {
-            declaredDone = true;
-            // 顺手复位标记，避免后续每轮都走到这里
-            try { state.resetTaskFlags(); } catch (_) {}
-            console.log('[LingYa][监督] 最近回复已声明任务完成，跳过无计划兜底');
-          }
-        } catch (_) { /* ignore */ }
-        if (declaredDone) return;
-        const nowMs = Date.now();
-        if (nowMs - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
-        if (stallCount < max) {
-          lastStallAt = nowMs;
-          stallCount++;
-          console.log('[LingYa][监督] 无计划任务停滞 ' + Math.round(idleMs / 1000) +
-            's，兜底续跑第 ' + stallCount + ' 次');
-          try { showToast('卡住了，已提醒继续', 4000); } catch (_) {}
-          sendMessageToChat(
-            '停了一会儿了，接着往下做吧。做完了跟我说“完成了”。',
-            '无计划兜底续跑',
-            { auto: true }
-          );
-          state.touch();
-        }
-      }
-    }
+    // 【无计划兜底已移除】
+    // 用户要求：监督机制必须在创建计划后才激活。原分支专门处理
+    // 「任务型会话但没建 todo，AI 停在中途」的情况 —— 与「无计划不介入」
+    // 的要求直接冲突，故整体删除。现在无计划时监督者不做任何催促，
+    // 只能靠用户手动推进。
     return;
   }
 
-  // 用户还没真实派过任务 → 不催（有计划也一样，初始化期不该催）
+  // 监督机制唯一激活条件：AI 已创建过计划（planCreated，见 tool-executor.js）
   if (!canNudge()) {
-    console.log('[LingYa][监督] 计划未完成但用户尚未派任务，跳过催促（初始化期）');
+    console.log('[LingYa][监督] 计划未完成但 AI 尚未创建计划，跳过催促');
     return;
   }
 

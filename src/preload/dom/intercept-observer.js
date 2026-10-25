@@ -456,10 +456,9 @@ async function continueIfPlanUnfinished(raw) {
 
   // ===== 分支 A：有未完成计划 → 催促继续 =====
   if (unfinished.length > 0) {
-    // 用户还没真实派过任务 → 不催。
-    // 初始化期 AI 读 skill 也可能建 todo，此时催「接着做：xxx」纯属添乱。
-    // 详细背景见 supervisor.js 的 canNudge 注释。
-    if (!state.userTaskStarted) return false;
+    // 【监督激活条件】AI 必须已创建过计划（planCreated，见 tool-executor.js）。
+    // 用户要求：监督机制必须在创建计划后才激活，计划一建即一起激活。
+    if (!state.planCreated) return false;
     const now = Date.now();
     // 【关键】窗口只按「上次实际催促的时刻」计算，不能在超限分支之前就刷新时间戳。
     // 原实现先刷新时间戳再判上限，导致 AI 每回一条就重置窗口，
@@ -486,36 +485,11 @@ async function continueIfPlanUnfinished(raw) {
   // 计划已完成或本就没有计划 → 重置计划预算
   planContinueCount = 0;
 
-  // ===== 分支 B：无计划兜底续跑 =====
-  // 触发条件（缺一不可）：
-  //   1) 开关开启（默认开）
-  //   2) 本会话执行过工具（任务型会话，排除纯问答）
-  //   3) AI 本轮未明说"任务已完成"
-  if (cfg && cfg.unplannedContinueEnabled === false) return false;
-  if (!state.sessionHadToolExecution) return false;
-  // 用户还没真实派过任务 → 不催（初始化期 AI 读 skill 会置 sessionHadToolExecution，
-  // 不挡的话初始化一结束就开始反复发「接着往下做吧，别停」）
-  if (!state.userTaskStarted) return false;
-  if (raw && DONE_HINT_RE.test(String(raw))) {
-    unplannedContinueCount = 0; // AI 说做完了 → 视为收尾，重置兜底预算
-    return false;
-  }
-
-  const now = Date.now();
-  if (now - lastUnplannedContinueAt > UNPLANNED_CONTINUE_WINDOW_MS) unplannedContinueCount = 0;
-  lastUnplannedContinueAt = now;
-  if (unplannedContinueCount >= planContinueMax) {
-    console.log('[LingYa][拦截] 无计划兜底续跑已达上限 ' + planContinueMax + '，停止');
-    return false;
-  }
-  unplannedContinueCount++;
-  console.log('[LingYa][拦截] 任务会话中断（执行过工具、无 todo 计划），兜底续跑第 ' + unplannedContinueCount + ' 次');
-  sendMessageToChat(
-    '接着往下做吧，别停。做完了跟我说一声“完成了”就行。',
-    '兜底续跑',
-    { auto: true }
-  );
-  return true;
+  // ===== 分支 B（无计划兜底续跑）：已移除 =====
+  // 用户要求：监督机制必须在创建计划后才激活。该分支专处理
+  // 「执行过工具但没建 todo，AI 停在中途」的情况，与「无计划不介入」冲突。
+  // 无计划的会话若停住，只能靠用户手动推进。
+  return false;
 }
 
 /**
@@ -528,6 +502,8 @@ async function continueOnInterruptFallback() {
   if (state.stopped) return false;
   // 正在分批发送初始提示：中断的是分段流程本身，不额外插催促
   if (state.awaitingNextInitialChunk) return false;
+  // 【监督激活条件】AI 必须已创建过计划，否则中断续跑也不介入
+  if (!state.planCreated) return false;
   let cfg = null;
   try { cfg = await window.electronAPI.getSecurityConfig(); } catch (_) { /* 用默认 */ }
   const max = (cfg && Number(cfg.autoContinueMax) > 0) ? Math.floor(Number(cfg.autoContinueMax)) : INTERRUPT_CONTINUE_MAX_DEFAULT;
@@ -1060,8 +1036,9 @@ function startInterceptObserver() {
       lastSid = sid;
       taskState.setSession(sid);
       try { taskState.reset('会话切换'); } catch (_) {}
-      // 新会话：监督者闸门复位，等用户真实派任务后才允许催促
+      // 新会话：监督者闸门复位，等 AI 创建计划后才允许催促
       state.userTaskStarted = false;
+      state.planCreated = false;
       state.initializationDone = false;
     }
     window.addEventListener('popstate', check);

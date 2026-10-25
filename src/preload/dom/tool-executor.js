@@ -257,6 +257,14 @@ async function handleToolCall(toolCall) {
       }
       renderResultCard(callId || ('tool_' + toolName), toolName, params, 'success', result.data);
 
+      // 【监督者激活】AI 建了计划 → 监督机制从此刻起生效。
+      // 用户要求：监督机制必须在创建计划后才激活，计划一建即一起激活。
+      // 放在成功分支里：todo_write 失败（参数非法等）不算建了计划。
+      if (toolName === 'todo_write' && !state.planCreated) {
+        state.planCreated = true;
+        console.log('[LingYa][监督] 检测到计划已创建，监督机制激活');
+      }
+
       // 后台任务登记：AI 这一轮结束后任务可能还在跑，状态条要能继续显示。
       // bash_background 的返回文本里带「任务 ID: bg_xxx」，从中提取。
       if (toolName === 'bash_background') {
