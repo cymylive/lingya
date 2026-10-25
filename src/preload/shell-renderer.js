@@ -1536,6 +1536,8 @@
       function num(id,label,val){ return '<div style="margin-top:6px;font-size:11px;color:var(--ck-text-dim);">'+label+'</div><input type="number" id="'+id+'" value="'+esc(val)+'" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'; }
       function ta(id,label,val){ return '<div style="margin-top:6px;font-size:11px;color:var(--ck-text-dim);">'+label+'</div><textarea id="'+id+'" rows="4" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;resize:vertical;">'+esc(val||'')+'</textarea>'; }
       var h='<div class="sh-card">';
+      h+=chk('sh-sec-corerules','核心规则（需求先汇报等确认 / 不可逆操作二次确认 / 模糊指令追问）','coreRulesEnabled');
+      h+='<div style="font-size:10.5px;color:var(--ck-text-dim);margin:-2px 0 8px 20px;line-height:1.5;">关闭后 AI 收到需求直接动手，也不会对 git push、删除文件、发布等不可逆操作要求确认。无人值守场景用。下次初始化项目时生效。</div>';
       h+=chk('sh-sec-ctf','CTF 提示词注入','ctfInjectionEnabled');
       h+=ta('sh-sec-ctfprompt','CTF 提示词',c.ctfPrompt);
       h+='<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--ck-border);font-size:12px;font-weight:600;color:var(--ck-title);">自动逆向改写</div>';
@@ -1572,7 +1574,7 @@
       if(sv) sv.addEventListener('click',function(){
         function v(id){ var e=document.getElementById(id); return e?e.value:''; }
         function ck(id){ var e=document.getElementById(id); return !!(e&&e.checked); }
-        var patch={ ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), promptChunkSize:v('sh-sec-chunksize'), promptChunkDelayMin:v('sh-sec-chunkdelay-min'), promptChunkDelayMax:v('sh-sec-chunkdelay-max'), mockResponse:v('sh-sec-mock') };
+        var patch={ coreRulesEnabled:ck('sh-sec-corerules'), ctfInjectionEnabled:ck('sh-sec-ctf'), ctfPrompt:v('sh-sec-ctfprompt'), refusalEnabled:ck('sh-sec-refusal'), localRewriteEnabled:ck('sh-sec-local'), aiRewriteEnabled:ck('sh-sec-ai'), aiRewriteViaChat:ck('sh-sec-aichat'), aiEndpoint:v('sh-sec-endpoint'), aiModel:v('sh-sec-model'), autoContinueEnabled:ck('sh-sec-autoc'), autoContinueText:v('sh-sec-autotext'), autoContinueMax:v('sh-sec-automax'), planContinueMax:v('sh-sec-planmax'), unplannedContinueEnabled:ck('sh-sec-unplanned'), stallSupervisorEnabled:ck('sh-sec-stall'), stallThresholdMs:(function(){ var s=Math.floor(Number(v('sh-sec-stallth'))); return s>0?s*1000:''; })(), stallContinueMax:v('sh-sec-stallmax'), promptChunkSize:v('sh-sec-chunksize'), promptChunkDelayMin:v('sh-sec-chunkdelay-min'), promptChunkDelayMax:v('sh-sec-chunkdelay-max'), mockResponse:v('sh-sec-mock') };
         var ky=v('sh-sec-key'); if(ky) patch.aiKey=ky;
         window.shellAPI.updateSecurityConfig(patch).then(function(){ toast2('已保存'); })['catch'](function(){ toast2('保存失败'); });
       });
