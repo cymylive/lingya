@@ -16,6 +16,7 @@
  */
 const state = require('./state');
 const taskState = require('./task-state');
+const { decide } = require('./nudge-policy');
 const { getFabState, setFabState, showToast } = require('../overlay/ui');
 const { sendMessageToChat } = require('./chat-input');
 
@@ -78,8 +79,6 @@ async function loadConfig() {
  */
 // fab「忙」状态超过这个时长视为卡死（工具崩了没复位），强制复位继续监督
 const FAB_STUCK_MS = 5 * 60 * 1000;
-// awaitingUserInput 超过这个时长视为误判（AI 只是说了句带「确认」的话），强制催
-const AWAITING_USER_TIMEOUT_MS = 3 * 60 * 1000;
 // stallCount 打满后的降频间隔：不再永久放弃，而是每 5 分钟催一次
 const STALL_RETRY_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -247,23 +246,12 @@ async function checkOnce() {
     }
   }
 
-  // === A) awaitingUserInput ===
+  // === A) AI 在等用户回答 ===
+  // 【2026-10-25 决策】强弱等待一视同仁，一律不催。
+  // 改造前弱等待有 3 分钟超时，实测会造成「AI 问了句『要不要继续』，3 分钟后被催，
+  // 于是它自己选了个方向继续跑，用户失去决策权」。用户明确选择取消该超时。
   if (state.awaitingUserInput) {
-    // 【强等待不催】AI 明确列出多个方案让用户挑（A./B. 选项列表、「你有两个选项」等），
-    // 这种等多久都合理 —— 用户可能几小时后才回来选。催促会让 AI 自己随便选一个
-    // 继续跑，用户彻底失去决策权（实测事故：AI 列出 A/B 两个方案后被催，自行选了 B）。
-    if (state.awaitingUserInputStrong) {
-      return;
-    }
-    const waited = now - (state.awaitingUserInputAt || 0);
-    if (waited < AWAITING_USER_TIMEOUT_MS) return;
-    console.log('[LingYa][监督] awaitingUserInput 已 ' + Math.round(waited / 1000) +
-      's，视为误判，清除标志并继续监督');
-    // 清掉标志，否则下次检查又要白等 3 分钟
-    state.awaitingUserInput = false;
-    state.awaitingUserInputAt = 0;
-    state.awaitingUserInputStrong = false;
-    // 不 return，继续往下；如果计划真完成了会查 todo 判断
+    return;
   }
 
   // 正在分批发送初始提示：等回复是正常流程，不是停滞
@@ -309,42 +297,38 @@ async function checkOnce() {
   // 停滞计数（时间窗口内累加，超窗口重置）
   if (now - lastStallAt > STALL_WINDOW_MS) stallCount = 0;
 
-  // === D) 打满后降频，不永久放弃 ===
-  // 原实现打满后直接 return，本次会话再也不会催；改为每 STALL_RETRY_INTERVAL_MS 催一次。
-  if (stallCount >= max) {
-    if (now - lastStallAt < STALL_RETRY_INTERVAL_MS) {
-      console.log('[LingYa][监督] 已达上限 ' + max + ' 次，降频等待 ' +
-        Math.round((STALL_RETRY_INTERVAL_MS - (now - lastStallAt)) / 1000) + 's');
+  // 【统一闸门】所有「要不要催」的判断都收敛到 nudge-policy.decide()，
+  // 与 continueIfPlanUnfinished / continueOnInterruptFallback 共用同一套标准。
+  const verdict = decide({
+    stopped: state.stopped,
+    awaitingNextInitialChunk: state.awaitingNextInitialChunk,
+    sessionId: state.currentSessionId,
+    activatedSessions: state.activatedSessions,
+    awaitingUserInput: state.awaitingUserInput,
+    taskDeclaredDone: state.taskDeclaredDone,
+    xmlDetected: false,  // 定时检查拿不到本轮 raw，格式错误由回复路径处理
+    enabled,
+    count: stallCount,
+    max,
+  });
+  if (verdict.action !== 'nudge') {
+    // 打满后降频：不是永久放弃，而是每 STALL_RETRY_INTERVAL_MS 再试一次
+    if (stallCount >= max) {
+      if (now - lastStallAt < STALL_RETRY_INTERVAL_MS) {
+        console.log('[LingYa][监督] ' + verdict.reason + '，降频等待 ' +
+          Math.round((STALL_RETRY_INTERVAL_MS - (now - lastStallAt)) / 1000) + 's');
+        return;
+      }
+      console.log('[LingYa][监督] 已超过 ' + Math.round(STALL_RETRY_INTERVAL_MS / 60000) +
+        ' 分钟未响应，重置计数继续催');
+      stallCount = 0;
+    } else {
+      console.log('[LingYa][监督] ' + verdict.reason + '，跳过催促');
       return;
     }
-    console.log('[LingYa][监督] 已超过 ' + Math.round(STALL_RETRY_INTERVAL_MS / 60000) +
-      ' 分钟未响应，重置计数继续催');
-    stallCount = 0;
   }
   lastStallAt = now;
   stallCount++;
-
-  // 【重要】AI 已声明「任务已完成」但 todo 里还有未完成项时，不要催。
-  //
-  // 场景：AI 说「任务已完成，但 todo 里有 3 项我判断不需要做了」，
-  //   或 todoWrite 工具执行失败导致 todo 没更新完。
-  //   此时 todo 仍是 unfinished，supervisor 会一直催 —— 用户看到的正是「AI 说完成了还在催」。
-  // 判断方式与无计划分支一致：查最近一次处理的回复文本。
-  try {
-    const observer = require('./intercept-observer');
-    const lastText = observer.getLastProcessedText ? observer.getLastProcessedText() : '';
-    if (lastText && observer.DONE_HINT_RE && observer.DONE_HINT_RE.test(String(lastText))) {
-      console.log('[LingYa][监督] 有计划但 AI 已声明任务完成，跳过催促（todo 可能未同步）');
-      stallCount = 0;
-      return;
-    }
-  } catch (_) { /* ignore */ }
-
-  // 双保险：上面的通用闸门在计数递增前，这里发送前再确认一次
-  if (!canNudge()) {
-    console.log('[LingYa][监督] 发送前复查：本会话监督机制未激活，跳过催促');
-    return;
-  }
 
   const next = unfinished.find((t) => t.status === 'in_progress') || unfinished[0];
   console.log('[LingYa][监督] 检测到停滞 ' + Math.round(idleMs / 1000) + 's，任务剩 ' +

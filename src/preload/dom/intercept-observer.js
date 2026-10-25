@@ -12,6 +12,8 @@ const { hasTool, toolNamesList } = require('../tool-names');
 const { detectRefusal, isStrongRefusal, classifyRefusal } = require('./refusal-detector');
 const state = require('./state');
 const taskState = require('./task-state');
+const { decide } = require('./nudge-policy');
+const { detectXmlFormat } = require('./xml-detect');
 
 const MAX_JS_RETRY = 3;
 // 连续 XML 提示次数（防止无限循环）
@@ -431,6 +433,44 @@ async function handleRefusalIfNeeded(raw) {
 }
 
 /**
+ * XML/DSML 格式错误检测与纠错提示。
+ *
+ * 【为什么抽成函数】改造前这段逻辑只在「正常完成」路径里跑，
+ * 「中断」路径（interrupted === true）完全跳过它，直接去催「接着做」——
+ * 用户实测：AI 输出 DSML 被判定为流中断，收到的却是催促而不是纠错提示。
+ * 抽出来后两条路径共用，顺序问题从根上消失。
+ *
+ * @param {string} raw 本轮 AI 回复全文
+ * @returns {boolean} true 表示已处理（发了纠错提示或已达上限），调用方应 return
+ */
+function checkXmlFormatAndCorrect(raw) {
+  if (!detectXmlFormat(raw)) return false;
+
+  if (xmlHintCount >= XML_HINT_MAX) {
+    console.log('[LingYa][拦截] 已连续提示 ' + xmlHintCount + ' 次 XML 格式，停止发送');
+    try {
+      const { showToast } = require('../overlay/ui');
+      if (showToast) showToast('AI 连续 ' + XML_HINT_MAX + ' 次使用 XML 格式调用工具，已停止自动纠正。请手动发一条消息让它改用 lingya 代码块。', 8000);
+    } catch (_) {}
+    return true;
+  }
+  xmlHintCount++;
+  console.log('[LingYa][拦截] 检测到 XML/DSML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
+  const nl = String.fromCharCode(10);
+  sendMessageToChat(
+    '格式写错了，用 ' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 包起来，不要用 XML。' + nl + nl +
+    '像这样：' + nl +
+    BT + BT + BT + 'lingya' + nl +
+    'const out = await bashOutput("TASK_ID", { wait: 60000 });' + nl +
+    'log(out);' + nl +
+    BT + BT + BT,
+    'XML工具调用提示',
+    { auto: true }
+  );
+  return true;
+}
+
+/**
  * 计划未完成时的自动续跑。
  * 本轮回复不含任何工具调用，但该会话 todo 列表仍有 pending/in_progress 项
  * —— 说明 AI 中途停下且没有推进计划，此时不应判定任务完成。
@@ -456,9 +496,24 @@ async function continueIfPlanUnfinished(raw) {
 
   // ===== 分支 A：有未完成计划 → 催促继续 =====
   if (unfinished.length > 0) {
-    // 【监督激活条件】本会话必须已激活（建过计划，见 supervisor-store）。
-    // 按会话独立、持久化 —— 切走再切回仍有效。
-    if (!state.activatedSessions.has(state.currentSessionId)) return false;
+    // 【统一闸门】与 supervisor 定时检查、中断兜底共用同一套判断标准，
+    // 避免「AI 在等用户 / 格式错误 / 已声明完成」时被抢答式催促。
+    const verdict = decide({
+      stopped: state.stopped,
+      awaitingNextInitialChunk: state.awaitingNextInitialChunk,
+      sessionId: state.currentSessionId,
+      activatedSessions: state.activatedSessions,
+      awaitingUserInput: state.awaitingUserInput,
+      taskDeclaredDone: state.taskDeclaredDone,
+      xmlDetected: false,  // 格式错误由 processInterceptedResponse 的上游分支先行处理
+      enabled: true,       // planContinue 有自己的上限，开关由 supervisor 统一控制
+      count: planContinueCount,
+      max: planContinueMax,
+    });
+    if (verdict.action !== 'nudge') {
+      console.log('[LingYa][拦截] ' + verdict.reason + '，跳过计划续跑');
+      return false;
+    }
     const now = Date.now();
     // 【关键】窗口只按「上次实际催促的时刻」计算，不能在超限分支之前就刷新时间戳。
     // 原实现先刷新时间戳再判上限，导致 AI 每回一条就重置窗口，
@@ -499,11 +554,26 @@ async function continueIfPlanUnfinished(raw) {
  * @returns {Promise<boolean>} 是否已发出催促
  */
 async function continueOnInterruptFallback() {
-  if (state.stopped) return false;
-  // 正在分批发送初始提示：中断的是分段流程本身，不额外插催促
-  if (state.awaitingNextInitialChunk) return false;
-  // 【监督激活条件】本会话未激活则不介入
-  if (!state.activatedSessions.has(state.currentSessionId)) return false;
+  // 中断兜底保留「无条件触发」语义（用户 2026-10-25 决策 1A）：
+  // 服务端把生成截断时，哪怕会话未激活也要救一次，否则真卡死没人管。
+  // 但 stopped / 分批发送 / 等用户 这四种情况下发催促本身就是错的，仍然要挡。
+  const preVerdict = decide({
+    stopped: state.stopped,
+    awaitingNextInitialChunk: state.awaitingNextInitialChunk,
+    sessionId: state.currentSessionId,
+    activatedSessions: state.activatedSessions,
+    awaitingUserInput: state.awaitingUserInput,
+    taskDeclaredDone: false,
+    xmlDetected: false,
+    enabled: true,
+    count: 0,
+    max: 0,
+    bypassGates: true,
+  });
+  if (preVerdict.action !== 'nudge') {
+    console.log('[LingYa][拦截] 中断兜底跳过：' + preVerdict.reason);
+    return false;
+  }
   let cfg = null;
   try { cfg = await window.electronAPI.getSecurityConfig(); } catch (_) { /* 用默认 */ }
   const max = (cfg && Number(cfg.autoContinueMax) > 0) ? Math.floor(Number(cfg.autoContinueMax)) : INTERRUPT_CONTINUE_MAX_DEFAULT;
@@ -593,6 +663,33 @@ async function processInterceptedResponse(text, force, interrupted) {
   // 否则"一开始就断"的场景会直接 return → 任务卡死。
   if (interrupted) {
     console.log('[LingYa][拦截] 检测到生成中断（服务端已停止/流断开），raw 长度=' + raw.length);
+
+    // 【顺序修复 · 2026-10-25】
+    // 改造前这里直接跳去催促，跳过了 XML 检测和「AI 在等用户」判断。
+    // 用户实测：AI 输出 DSML 被判定为流中断 → 收到的却是「接着做：XXX」催促，
+    // 格式问题一次都没被纠正；AI 问「要我继续吗」也会被抢答。
+    // 现在按与正常路径一致的顺序先跑这两道检测。
+
+    // 1) 格式错误 → 纠错提示优先
+    if (raw && checkXmlFormatAndCorrect(raw)) {
+      console.log('[LingYa][拦截] 中断路径：已发格式纠错提示，不再催促');
+      return;
+    }
+
+    // 2) AI 在等用户回答 → 球在用户那边，不催
+    if (raw) {
+      const waitJudge = judgeUserWait(raw);
+      if (waitJudge.matched) {
+        state.awaitingUserInput = true;
+        state.awaitingUserInputAt = Date.now();
+        state.awaitingUserInputStrong = waitJudge.strong;
+        console.log('[LingYa][拦截] 中断路径：AI 在向用户提问，暂停续跑');
+        try { taskState.reset('AI 在向用户提问（中断路径）'); } catch (_) {}
+        try { markTaskDone(); } catch (_) {}
+        return;
+      }
+    }
+
     const handled = await handleInterruptedIfNeeded(raw);
     if (handled) return;
     console.log('[LingYa][拦截] 生成中断且未自动续写，回退到计划续跑');
@@ -686,36 +783,8 @@ async function processInterceptedResponse(text, force, interrupted) {
   //
   // 新正则：竖线 [｜|] 允许 1~2 个、中间可有空格；
   //         invoke/parameter 前允许任意非 > 字符（容忍 < | DSML | | invoke> 这种）。
-  const hasDsmlMark = /[｜|]\s*DSML\s*[｜|]/i.test(raw);
-  const hasXmlInvoke = /<\s*[^>]*?\binvoke\s+name=/i.test(raw);
-  const hasXmlClose = /<\s*\/\s*[^>]*?\binvoke\s*>/i.test(raw);
-  const hasXmlParam = /<\s*[^>]*?\bparameter\s+name=/i.test(raw);
-  if (hasDsmlMark || (hasXmlInvoke && (hasXmlClose || hasXmlParam))) {
-    if (xmlHintCount >= XML_HINT_MAX) {
-      console.log('[LingYa][拦截] 已连续提示 ' + xmlHintCount + ' 次 XML 格式，停止发送');
-      // 【修复】原实现直接 return 静默丢弃，用户完全不知道为什么停了。
-      // 这里给出可见提示，至少让人知道发生了什么、该怎么办。
-      try {
-        const { showToast } = require('../overlay/ui');
-        if (showToast) showToast('AI 连续 ' + XML_HINT_MAX + ' 次使用 XML 格式调用工具，已停止自动纠正。请手动发一条消息让它改用 lingya 代码块。', 8000);
-      } catch (_) {}
-      return;
-    }
-    xmlHintCount++;
-    console.log('[LingYa][拦截] 检测到 XML/DSML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
-    const nl = String.fromCharCode(10);
-    sendMessageToChat(
-      '格式写错了，用 ' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 包起来，不要用 XML。' + nl + nl +
-      '像这样：' + nl +
-      BT + BT + BT + 'lingya' + nl +
-      'const out = await bashOutput("TASK_ID", { wait: 60000 });' + nl +
-      'log(out);' + nl +
-      BT + BT + BT,
-      'XML工具调用提示',
-      { auto: true }
-    );
-    return;
-  }
+  // 具体检测与提示逻辑见 checkXmlFormatAndCorrect（与中断路径共用）
+  if (checkXmlFormatAndCorrect(raw)) return;
 
   // 4. 拒绝回复检测与拦截（仅在无工具调用的纯文本回复时进行）
   try {
