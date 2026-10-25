@@ -143,6 +143,13 @@ try {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }
 
+// 初始化监督机制激活状态存储（按会话独立、持久化、无上限）
+try {
+  require('./supervisor-store').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化监督激活状态存储失败:', err.message);
+}
+
 // 初始化 Agent 状态存储（Plan / Build 模式，per-profile）
 try {
   require('./agent-store').init(app.getPath('userData'));

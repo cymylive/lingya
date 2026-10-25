@@ -31,23 +31,23 @@ const STALL_WINDOW_MS = 300 * 1000;
  * 是否允许发送催促消息（闸门）。
  *
  * 【为什么需要】初始化项目时 systemPrompt 分多段自动发出（都是 auto 消息），
- * AI 读完回一句「已就绪」，用户还没开口。此时：
- *   - sessionHadToolExecution = true（AI 初始化时读过 skill / 调过工具）
- *   - lastActivityAt 停在「AI 回复已就绪」那一刻
- *   - 120 秒后 idleMs 超阈值 → 命中「无计划任务停滞」分支
- * → 反复发「停了一会儿了，接着往下做吧」，AI 只能回「没有任务」，再被催……死循环。
+ * AI 读完回一句「已就绪」，用户还没开口。若不设闸门，120 秒后会命中
+ * 「停滞」分支反复催促，AI 只能回「没有任务」，再被催……死循环。
  *
- * planCreated 只在 AI 成功执行 todo_write 时置 true（见 tool-executor.js），
- * 因此「初始化完 → AI 建计划前」这段空窗期不会催。
- * 计划一旦建过就永久激活，直到会话切换才重置。
+ * 【激活语义】按会话独立、持久化、无上限：
+ *   - 某会话 AI 建过 todo 计划 → 该会话永久激活
+ *   - 切到别的会话 → 各自的激活状态互不影响
+ *   - 切回原会话 / 重启 LingYa → 仍保持激活（状态存在 supervisor-store）
+ *
+ * 状态来源：state.activatedSessions（内存镜像，启动时从主进程同步）。
  *
  * 注意：只挡「发消息」的动作。fab 卡死自愈、DOM 兜底、状态机重置
  * 这些不发消息的修复动作必须照常执行（否则初始化期间出错就没人救了）。
  */
 function canNudge() {
-  // 用户要求：监督机制必须在创建计划后才激活（计划一建即一起激活）。
-  // 不再看 userTaskStarted —— 用户开口但 AI 还没建计划时，监督者不该介入。
-  return state.planCreated === true;
+  const sid = state.currentSessionId;
+  if (!sid) return false;
+  return state.activatedSessions.has(sid);
 }
 
 let timer = null;
@@ -300,9 +300,9 @@ async function checkOnce() {
     return;
   }
 
-  // 监督机制唯一激活条件：AI 已创建过计划（planCreated，见 tool-executor.js）
+  // 监督机制激活条件：本会话是否已激活（见 canNudge 的注释）
   if (!canNudge()) {
-    console.log('[LingYa][监督] 计划未完成但 AI 尚未创建计划，跳过催促');
+    console.log('[LingYa][监督] 本会话监督机制未激活（未建过计划），跳过催促');
     return;
   }
 
@@ -342,7 +342,7 @@ async function checkOnce() {
 
   // 双保险：上面的通用闸门在计数递增前，这里发送前再确认一次
   if (!canNudge()) {
-    console.log('[LingYa][监督] 有计划但用户尚未派任务，跳过催促（初始化期）');
+    console.log('[LingYa][监督] 发送前复查：本会话监督机制未激活，跳过催促');
     return;
   }
 

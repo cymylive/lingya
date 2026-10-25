@@ -456,9 +456,9 @@ async function continueIfPlanUnfinished(raw) {
 
   // ===== 分支 A：有未完成计划 → 催促继续 =====
   if (unfinished.length > 0) {
-    // 【监督激活条件】AI 必须已创建过计划（planCreated，见 tool-executor.js）。
-    // 用户要求：监督机制必须在创建计划后才激活，计划一建即一起激活。
-    if (!state.planCreated) return false;
+    // 【监督激活条件】本会话必须已激活（建过计划，见 supervisor-store）。
+    // 按会话独立、持久化 —— 切走再切回仍有效。
+    if (!state.activatedSessions.has(state.currentSessionId)) return false;
     const now = Date.now();
     // 【关键】窗口只按「上次实际催促的时刻」计算，不能在超限分支之前就刷新时间戳。
     // 原实现先刷新时间戳再判上限，导致 AI 每回一条就重置窗口，
@@ -502,8 +502,8 @@ async function continueOnInterruptFallback() {
   if (state.stopped) return false;
   // 正在分批发送初始提示：中断的是分段流程本身，不额外插催促
   if (state.awaitingNextInitialChunk) return false;
-  // 【监督激活条件】AI 必须已创建过计划，否则中断续跑也不介入
-  if (!state.planCreated) return false;
+  // 【监督激活条件】本会话未激活则不介入
+  if (!state.activatedSessions.has(state.currentSessionId)) return false;
   let cfg = null;
   try { cfg = await window.electronAPI.getSecurityConfig(); } catch (_) { /* 用默认 */ }
   const max = (cfg && Number(cfg.autoContinueMax) > 0) ? Math.floor(Number(cfg.autoContinueMax)) : INTERRUPT_CONTINUE_MAX_DEFAULT;
@@ -1026,6 +1026,17 @@ function startInterceptObserver() {
     }
     lastSid = readSid();
     taskState.setSession(lastSid);
+    // 【监督激活】启动时把当前会话 ID 同步到 state，并从主进程拉取已激活会话列表。
+    // 为什么必须做：canNudge() 依赖 state.currentSessionId 与 activatedSessions，
+    // 二者都只在内存里；重启 LingYa 后若不拉取，之前激活过的会话会被当成未激活。
+    state.currentSessionId = lastSid;
+    try {
+      window.electronAPI.listActivatedSupervisors().then((r) => {
+        if (!r || !r.success || !Array.isArray(r.sessions)) return;
+        for (const sid of r.sessions) state.activatedSessions.add(sid);
+        console.log('[LingYa][监督] 已从磁盘恢复激活会话 ' + r.sessions.length + ' 个');
+      }).catch(() => {});
+    } catch (_) { /* IPC 不可用不阻断 */ }
 
     function check() {
       const sid = readSid();
@@ -1036,10 +1047,19 @@ function startInterceptObserver() {
       lastSid = sid;
       taskState.setSession(sid);
       try { taskState.reset('会话切换'); } catch (_) {}
-      // 新会话：监督者闸门复位，等 AI 创建计划后才允许催促
       state.userTaskStarted = false;
-      state.planCreated = false;
       state.initializationDone = false;
+      // 【监督激活】按会话独立：只更新当前会话 ID，不清空 activatedSessions。
+      // 切到别的会话时 canNudge() 查集合自然返回 false（若该会话没建过计划）。
+      state.currentSessionId = sid;
+      // 首页暂存的激活请求：会话 ID 一出现立即补激活
+      if (sid && state.pendingActivation) {
+        state.pendingActivation = false;
+        try {
+          const { activateSupervisorForCurrentSession } = require('./tool-executor');
+          activateSupervisorForCurrentSession();
+        } catch (_) { /* ignore */ }
+      }
     }
     window.addEventListener('popstate', check);
     window.addEventListener('hashchange', check);

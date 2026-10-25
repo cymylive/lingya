@@ -13,6 +13,7 @@ const { isDangerous } = require('./dangerous-commands');
 const memoryStore = require('./memory-store');
 const skillStore = require('./skill-store');
 const securityStore = require('./security-store');
+const supervisorStore = require('./supervisor-store');
 const agentStore = require('./agent-store');
 const { getAgent, listAgents } = require('./agents');
 const refusalRewriter = require('./refusal-rewriter');
@@ -705,6 +706,36 @@ function registerIpcHandlers() {
     const profileId = ctx ? ctx.profileId : null;
     activeProcesses.clearAborted(profileId);
     return { success: true };
+  });
+
+  // ===== 监督机制激活状态（按会话独立、持久化）=====
+  // 查询：某会话是否已激活监督机制
+  ipcMain.handle('supervisor-state-get', async (_event, { sessionId } = {}) => {
+    try {
+      return { success: true, activated: supervisorStore.isActivated(sessionId) };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 激活：AI 在本会话建过 todo 计划时调用。幂等，重复调用不覆盖 activatedAt。
+  ipcMain.handle('supervisor-state-activate', async (_event, { sessionId } = {}) => {
+    if (!sessionId) return { success: false, error: '缺少 sessionId' };
+    try {
+      const isNew = supervisorStore.activate(sessionId);
+      return { success: true, newlyActivated: isNew };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 列出所有已激活会话（调试/诊断用）
+  ipcMain.handle('supervisor-state-list', async () => {
+    try {
+      return { success: true, sessions: supervisorStore.listActivated() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   });
 
   // 执行 JS 脚本

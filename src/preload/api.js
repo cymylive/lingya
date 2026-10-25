@@ -31,6 +31,9 @@ let electronAPI = {
   executeTool: (toolName, params, callId) => {
     return ipcRenderer.invoke('execute-tool', { toolName, params, callId });
   },
+  isSupervisorActivated: (sessionId) => ipcRenderer.invoke('supervisor-state-get', { sessionId }),
+  activateSupervisor: (sessionId) => ipcRenderer.invoke('supervisor-state-activate', { sessionId }),
+  listActivatedSupervisors: () => ipcRenderer.invoke('supervisor-state-list'),
   executeJs: (code, callId) => {
     return ipcRenderer.invoke('execute-js', { code, callId });
   },

@@ -16,6 +16,33 @@ let isExecuting = false;
 const HISTORY_OUTPUT_LIMIT = 8 * 1024;  // 8KB
 
 /**
+ * 激活本会话的监督机制。
+ *
+ * 触发条件：AI 在本会话创建过 todo 计划（调用 todoWrite / todo_write 成功）。
+ * 语义：按会话独立、持久化、无上限。会话 ID 未就绪（首页新对话）时暂存，
+ * 等 URL 出现后由 intercept-observer 的会话切换监听补激活。
+ *
+ * 为什么需要单独的函数：三条触发路径（JS 路径主/兜底、JSON 路径）共用同一逻辑。
+ */
+function activateSupervisorForCurrentSession() {
+  const sid = state.currentSessionId;
+  if (!sid) {
+    // 新对话还没生成 URL：暂存，等会话 ID 出现再激活
+    if (!state.pendingActivation) {
+      state.pendingActivation = true;
+      console.log('[LingYa][监督] 会话ID未就绪，暂存激活请求');
+    }
+    return;
+  }
+  if (state.activatedSessions.has(sid)) return;  // 已激活，幂等
+  state.activatedSessions.add(sid);
+  console.log('[LingYa][监督] 本会话监督机制已激活: ' + sid.slice(0, 8));
+  try {
+    window.electronAPI.activateSupervisor(sid).catch(() => {});
+  } catch (_) { /* IPC 不可用时不阻断业务 */ }
+}
+
+/**
  * 截断历史记录的输出，避免大结果常驻内存
  * @param {string} text
  * @returns {string}
@@ -121,6 +148,18 @@ async function handleJsToolScript(code) {
         try { idempotency.record('__js_script__', { code: code }, result, jsIdemScope); } catch (_) {}
       }
     }
+
+    // 【监督激活 · JS 路径】
+    // 主判定：主进程 JsRunner 如实回报本次脚本实际调用过的工具名 —— 唯一准确来源。
+    // 兜底：老版本主进程不回报 toolCalls 时，退化为扫代码字符串（可能漏判，聊胜于无）。
+    try {
+      const calledTools = (result && Array.isArray(result.toolCalls)) ? result.toolCalls : null;
+      if (calledTools) {
+        if (calledTools.includes('todo_write')) activateSupervisorForCurrentSession();
+      } else if (/\btodoWrite\s*\(/.test(code)) {
+        activateSupervisorForCurrentSession();
+      }
+    } catch (_) { /* 激活失败不影响工具执行结果 */ }
 
     const resultSection = document.getElementById('lingya-result-section');
     const resultStatus = document.getElementById('lingya-result-status');
@@ -257,13 +296,9 @@ async function handleToolCall(toolCall) {
       }
       renderResultCard(callId || ('tool_' + toolName), toolName, params, 'success', result.data);
 
-      // 【监督者激活】AI 建了计划 → 监督机制从此刻起生效。
-      // 用户要求：监督机制必须在创建计划后才激活，计划一建即一起激活。
+      // 【监督激活 · JSON 路径】AI 通过 JSON 工具调用建了计划 → 激活本会话监督机制。
       // 放在成功分支里：todo_write 失败（参数非法等）不算建了计划。
-      if (toolName === 'todo_write' && !state.planCreated) {
-        state.planCreated = true;
-        console.log('[LingYa][监督] 检测到计划已创建，监督机制激活');
-      }
+      if (toolName === 'todo_write') activateSupervisorForCurrentSession();
 
       // 后台任务登记：AI 这一轮结束后任务可能还在跑，状态条要能继续显示。
       // bash_background 的返回文本里带「任务 ID: bg_xxx」，从中提取。
@@ -346,6 +381,7 @@ async function handleToolCall(toolCall) {
 }
 
 module.exports = {
+  activateSupervisorForCurrentSession,
   handleToolCall,
   handleJsToolScript,
   notifyToolCallDetected,

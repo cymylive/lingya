@@ -94,13 +94,19 @@ module.exports = {
   // 会话切换时重置（见 intercept-observer 的 watchSessionForStateReset）。
   // 注意：它现在只用于「用户是否已开口」这类展示/判断，不再控制监督者。
   userTaskStarted: false,
-  // planCreated：本会话 AI 是否已创建过 todo 计划。
-  // 【监督者唯一激活条件】用户要求「监督机制必须放在创建计划才能激活，
-  // 相当于任务计划一旦创建，监督机制也一起激活」。
-  // 语义：一旦建过计划就永久激活（即使后续计划被清空/全完成也不失效），
-  // 会话切换时重置（新会话 = 重新等计划）。
-  // 置位点：tool-executor.js 的 handleToolCall，todo_write 执行成功时。
-  planCreated: false,
+  // ===== 监督机制激活状态（按会话独立、持久化）=====
+  // 用户要求：某会话创建过 todo 计划后，只有这个会话的监督机制持续生效，各会话独立。
+  // 语义：一旦某会话建过计划就永久激活，切走再切回仍有效，重启 LingYa 也有效（落盘）。
+  //
+  // 当前会话 ID（由 intercept-observer 的会话切换监听更新）。
+  // 为空表示还在首页（新对话尚未生成 URL）。
+  currentSessionId: null,
+  // 已激活会话 ID 的内存镜像（Set<string>），启动时从主进程同步一次，
+  // 之后每次激活就地更新。判定时用它而不是每次都 await IPC。
+  activatedSessions: new Set(),
+  // 会话 ID 尚未就绪（首页）时 AI 建了计划 → 暂存 true，
+  // 等 URL 出现（currentSessionId 有值）后立即补激活。与 pendingTitle 同思路。
+  pendingActivation: false,
 
   // 是否为「强等待」：AI 明确列出多个方案让用户挑（A./B. 列表、「你有两个选项」等）。
   // 这种等多久都合理 —— supervisor 不做超时催促。
