@@ -1996,7 +1996,10 @@
 
   function renderWindowsView(el){
     el.innerHTML = panel('窗口管理',
-      '<button class="sh-btn primary" id="sh-win-new" style="margin-bottom:6px;">新建窗口</button>'+
+      '<div style="display:flex;gap:6px;margin-bottom:6px;">'+
+        '<button class="sh-btn primary" id="sh-win-new" style="flex:1;">新建窗口</button>'+
+        '<button class="sh-btn" id="sh-win-refresh" title="重新读取窗口列表" style="flex-shrink:0;">刷新</button>'+
+      '</div>'+
       '<div id="sh-win-body" class="sh-empty">加载中…</div>');
     function load(){
       if(!window.shellAPI||!window.shellAPI.listProfiles) return;
@@ -2044,6 +2047,7 @@
       })['catch'](function(){});
     }
     var nb=document.getElementById('sh-win-new'); if(nb) nb.addEventListener('click',function(){ window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); load(); })['catch'](function(){}); });
+    var rf=document.getElementById('sh-win-refresh'); if(rf) rf.addEventListener('click',function(){ load(); toast2('已刷新'); });
     load();
   }
 
