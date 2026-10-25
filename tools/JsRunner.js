@@ -388,6 +388,12 @@ class JsRunner {
     const sessionId = (options && options.sessionId) || null;
     // 收集本次脚本加载的图片，随结果一起回传（供多模态附件注入）
     const imageCollector = [];
+    // 收集本次脚本实际调用过的工具名，随结果回传。
+    // 为什么需要：preload 侧要判断「AI 是否建过 todo 计划」来激活监督机制，
+    // 而 AI 实际写的是 ```lingya 代码块里的 todoWrite(...)，走的是 JS 执行路径，
+    // preload 拿不到「真实执行了哪些工具」这个信息。靠字符串匹配代码容易漏判，
+    // 这里由执行层如实记录，是唯一准确的信息源。
+    const toolCallLog = [];
 
     const startTime = Date.now();
     const deadlineMs = RUN_DEADLINE;
@@ -410,6 +416,8 @@ class JsRunner {
       } catch (e) {
         args = {};
       }
+      // 如实记录本次工具调用（不论成败、是否被拦），供上层判定监督激活条件
+      toolCallLog.push(op);
 
       // ★ 为本次工具调用分配独立 ID（本模块分配，按会话隔离）
       const tlSessionKey = (profileId || 'p') + '::' + (sessionId || 's');
@@ -532,11 +540,12 @@ class JsRunner {
         success: true,
         output: output || '(脚本执行完成，无输出)\n如需输出请使用 log() 方法',
         images: imageCollector,
+        toolCalls: toolCallLog,
       };
     } catch (err) {
       console.error('[JsRunner] 脚本执行失败:', err && err.stack ? err.stack : String(err));
       console.error('[JsRunner] [诊断] 失败代码(JSON转义): ' + JSON.stringify(code));
-      return { success: false, error: err && err.message ? err.message : String(err) };
+      return { success: false, error: err && err.message ? err.message : String(err), toolCalls: toolCallLog };
     } finally {
       if (settleTimer) clearTimeout(settleTimer);
       // 整个脚本执行结束：释放沙箱与累积结果后触发一次 GC

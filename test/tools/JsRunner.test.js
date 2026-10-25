@@ -124,3 +124,45 @@ test('JsRunner 对象参数完全无法解出时返回明确错误而非 [object
   assert.ok(!String(received.title).includes('[object Object]') || typeof received.title === 'object');
 });
 
+// ===== toolCalls 回传（供监督者激活判定）=====
+test('JsRunner 回传本次脚本实际调用过的工具名', async () => {
+  const reg = new ToolRegistry();
+  const w = new Tool('todo_write', 't', { type: 'object', properties: {} }, 'todoWrite(todos)');
+  w.execute = async () => ToolResult.success({ ok: 1 });
+  reg.register(w);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('await todoWrite([{content:"a"}]); await todoWrite([{content:"b"}]);', process.cwd());
+  assert.strictEqual(r.success, true, r.error);
+  assert.ok(Array.isArray(r.toolCalls), 'toolCalls 应为数组');
+  assert.deepStrictEqual(r.toolCalls, ['todo_write', 'todo_write']);
+});
+
+test('JsRunner 未调用工具时 toolCalls 为空数组', async () => {
+  const runner = new JsRunner(registry);
+  const r = await runner.run('const x = 1;', process.cwd());
+  assert.strictEqual(r.success, true);
+  assert.deepStrictEqual(r.toolCalls, []);
+});
+
+test('JsRunner 工具失败也记录（调用过就算）', async () => {
+  const reg = new ToolRegistry();
+  const w = new Tool('todo_write', 't', { type: 'object', properties: {} }, 'todoWrite(todos)');
+  w.execute = async () => ToolResult.error('boom');
+  reg.register(w);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('try { await todoWrite([]); } catch (e) {}', process.cwd());
+  assert.deepStrictEqual(r.toolCalls, ['todo_write']);
+});
+
+test('JsRunner 失败结果也带 toolCalls', async () => {
+  const reg = new ToolRegistry();
+  const w = new Tool('todo_write', 't', { type: 'object', properties: {} }, 'todoWrite(todos)');
+  w.execute = async () => ToolResult.success({ ok: 1 });
+  reg.register(w);
+  const runner = new JsRunner(reg);
+  const r = await runner.run('await todoWrite([]); throw new Error("炸了");', process.cwd());
+  assert.strictEqual(r.success, false);
+  assert.deepStrictEqual(r.toolCalls, ['todo_write'], '失败时也要回传已调用的工具');
+});
+
+
