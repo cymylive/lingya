@@ -48,6 +48,9 @@ const { EventEmitter } = require('events');
 const pluginEvents = new EventEmitter();
 pluginEvents.setMaxListeners(0);
 
+// 插件注册的提示词段落：placeholder -> getter
+const pluginPromptSections = new Map();
+
 /**
  * 初始化：确定插件目录 + 播种随应用附带的示例插件
  * @param {string} storeDir  userData 目录
@@ -233,6 +236,23 @@ function createContext(plugin) {
       const full = plugin.id + ':' + channel;
       pluginIpcHandlers.set(full, { pluginId: plugin.id, channel, handler });
       const dispose = () => { pluginIpcHandlers.delete(full); };
+      disposers.push(dispose);
+      return dispose;
+    },
+
+    /**
+     * 注册一段系统提示词内容。
+     * 宿主在组装 systemPrompt 时会调用所有已注册的 getter，替换模板中的对应占位符。
+     * @param {string} placeholder 占位符名称（不含花括号），如 'CORE_RULE_REPORT'
+     * @param {Function} getter  () => string，返回要注入的内容
+     * @returns {Function} disposer
+     */
+    registerPromptSection(placeholder, getter) {
+      if (!placeholder || typeof getter !== 'function') {
+        throw new Error('registerPromptSection: 需要 placeholder 和 getter 函数');
+      }
+      pluginPromptSections.set(placeholder, getter);
+      const dispose = () => { pluginPromptSections.delete(placeholder); };
       disposers.push(dispose);
       return dispose;
     },
@@ -685,6 +705,18 @@ async function importPlugin(buf) {
 
   const destDir = path.join(PLUGINS_DIR, manifest.id);
   const existed = fs.existsSync(destDir);
+
+  // 【关键】覆盖安装前，必须先卸载旧实例。
+  // 否则：1) 文件被进程占用，Windows 下 rmSync 会报 EBUSY
+  //       2) 稍后 loadPlugin 会因 loaded.has(id) 为 true 直接拒绝加载，导致面板白屏
+  if (loaded.has(manifest.id)) {
+    unloadPlugin(manifest.id);
+  }
+
+  // 【关键】Windows 下 fs.watch 会锁定目录句柄，导致 rmSync 抛出 EPERM/EBUSY。
+  // 必须临时关闭监听，操作完成后再恢复。
+  stopWatching();
+
   try {
     if (existed) fs.rmSync(destDir, { recursive: true, force: true });
     fs.renameSync(root, destDir);
@@ -693,6 +725,9 @@ async function importPlugin(buf) {
   } catch (err) {
     try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch (_) {}
     return { success: false, error: '写入插件目录失败: ' + err.message };
+  } finally {
+    // 恢复监听（此时扫描到的插件目录已经是最新状态）
+    startWatching();
   }
 
   // 默认启用新导入的插件
@@ -728,8 +763,28 @@ function deletePlugin(pluginId) {
   }
 }
 
+/**
+ * 获取所有插件注册的提示词内容。
+ * @returns {Object} { placeholder: content }
+ */
+function getPluginPromptSections() {
+  const out = {};
+  for (const [placeholder, getter] of pluginPromptSections) {
+    try {
+      const text = getter();
+      if (typeof text === 'string' && text.trim()) {
+        out[placeholder] = text;
+      }
+    } catch (err) {
+      console.error('[PluginHost] 提示词段落生成失败 (' + placeholder + '):', err.message);
+    }
+  }
+  return out;
+}
+
 module.exports = {
   init,
+  getPluginPromptSections,
   getPluginsDir,
   seedBundledPlugins,
   scanPlugins,

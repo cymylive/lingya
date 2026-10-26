@@ -55,8 +55,8 @@ function initFeishuBridge() {
   // 1. 用户消息（经 LingYa 发送）→ 上报
   onUserMessageSent((text, tag) => {
     if (!enabled || !text) return;
-    // 系统消息（自动续写/拒绝改写/工具结果回传等）不上报
-    const SYSTEM_TAGS = ['自动续写', '拒绝改写请求', '拒绝改写回传', '拒绝拦截', 'XML工具调用提示', 'CTF注入', '飞书'];
+    // 系统消息（拒绝改写/工具结果回传等）不上报
+    const SYSTEM_TAGS = ['拒绝改写请求', '拒绝改写回传', '拒绝拦截', 'XML工具调用提示', 'CTF注入', '飞书'];
     if (tag && SYSTEM_TAGS.indexOf(tag) !== -1) return;
     report({ type: 'user-message', text: text, tag: tag || '' });
   });

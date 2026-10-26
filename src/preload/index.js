@@ -109,38 +109,7 @@ function init() {
     console.error('[LingYa][致命] 拦截器启动失败，Agent 循环不可用:', err);
   }
 
-  // 第 1 层：手动触发拒绝改写（依赖 interceptObserver，与 UI 显示无关）
-  try {
-    if (interceptObserver && window.electronAPI && window.electronAPI.onManualRewrite) {
-      window.electronAPI.onManualRewrite((payload) => {
-        const requestId = (payload && payload.requestId) || '';
-        interceptObserver.manualRewrite().then((res) => {
-          try {
-            if (window.electronAPI.sendManualRewriteResult) {
-              window.electronAPI.sendManualRewriteResult(requestId, res || { success: false, error: '空结果' });
-            }
-          } catch (_) {}
-        }).catch((err) => {
-          try {
-            if (window.electronAPI.sendManualRewriteResult) {
-              window.electronAPI.sendManualRewriteResult(requestId, { success: false, error: err.message });
-            }
-          } catch (_) {}
-        });
-      });
-    }
-  } catch (err) {
-    console.error('[LingYa][致命] 手动改写监听注册失败:', err);
-  }
-
-  // 第 1 层：停滞监督者（兜底心跳，绝不能因 UI 失败而丢）
-  try {
-    require('./dom/supervisor').startSupervisor();
-  } catch (err) {
-    console.error('[LingYa][致命] 监督者启动失败:', err);
-  }
-
-  // ===== 第 2 层：UI 初始化（失败只影响显示，不影响执行）=====
+  // ===== 第 2 层：UI 初始化（失败只影响显示）=====
   try {
     ui.injectCSS();
     ui.injectOverlay();
@@ -192,9 +161,18 @@ function init() {
     // ===== 执行插件注册的 preload 脚本 =====
     // 插件通过 ctx.registerPreload(scriptText) 注册脚本，主进程收集后经 IPC 返回，
     // 这里在页面渲染进程里执行（可挂钩 DOM / 网络）。
+    //
+    // 执行前先装好 window.__lingyaPluginAPI：插件脚本是裸函数，不能 require
+    // 内部模块，靠这个对象发送消息 / 读运行时状态。
+    try {
+      require('./plugin-api').install();
+    } catch (err) {
+      console.error('[LingYa] 安装插件运行时 API 失败:', err && err.message);
+    }
+
     try {
       if (window.electronAPI && window.electronAPI.getPluginPreloads) {
-        // 延迟到下一个宏任务再执行，避免同步阻塞 init 主流程（否则会影响 supervisor 的 setInterval 精度）
+        // 延迟到下一个宏任务再执行，避免同步阻塞 init 主流程
         setTimeout(function () {
           window.electronAPI.getPluginPreloads().then(function (r) {
             if (!r || !r.success) return;

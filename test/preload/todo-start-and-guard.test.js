@@ -42,7 +42,7 @@ test('开始处理按钮必须有 CSS 样式', () => {
 test('存储层必须导出系统消息黑名单', () => {
   const src = read('tools/UserTodoStore.js');
   assert.ok(src.includes('SYSTEM_PREFIXES'), '必须定义黑名单');
-  assert.ok(src.includes('【监督续跑】'), '必须包含监督续跑前缀');
+  assert.ok(src.includes('【系统提示】'), '必须包含系统提示前缀');
   assert.ok(src.includes('must not be a system message'), '必须抛出明确错误');
 });
 

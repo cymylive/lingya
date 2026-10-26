@@ -274,12 +274,12 @@ function onUserMessageSent(cb) {
 async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
   state.touch(); // 发消息 = 有活动
   const isAuto = !!(opts && opts.auto);
-  // 【重要】自动续跑（监督者/计划续跑/兜底续跑/中断续跑等）绝不能清除 stopped ——
-  // 否则用户点了停止后，程序自己发的催促消息会把 stopped 清掉，任务原地复活。
+  // 【重要】程序自动发送的消息绝不能清除 stopped ——
+  // 否则用户点了停止后，程序自己发的消息会把 stopped 清掉，任务原地复活。
   // 这类消息在 stopped 状态下应当直接丢弃。
   if (isAuto) {
     if (state.stopped) {
-      console.log('[LingYa] 已停止，丢弃自动续跑消息（' + (tag || '') + '）');
+      console.log('[LingYa] 已停止，丢弃自动消息（' + (tag || '') + '）');
       return false;
     }
   } else if (state.stopped) {
@@ -378,7 +378,7 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
     console.log('[LingYa] 等待结束，开始触发发送');
     // triggerSend 返回 Promise<boolean>：可信点击/可信 Enter 全部失败时为 false。
     // 失败时不能继续往下走 —— 否则会误记 lastRequestStartAt、误切状态机到 SENT，
-    // 后续监督者会以为「消息已发出但没回复」，白白等一轮超时。
+    // 状态条会一直显示「已发送」，白白等一轮超时。
     let sent = false;
     try { sent = await triggerSend(input); } catch (err) {
       console.error('[LingYa] 触发发送异常:', err && err.message);
@@ -390,7 +390,6 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
     // 记录本次请求发出时刻，供 intercept-observer 计算思考耗时
     state.lastRequestStartAt = Date.now();
     // 状态机：已发出，等 AI 开始生成（intercept-observer 收到 lingya-ai-start 后会切 AWAITING）
-    // 若 30s 内仍未切走，监督者会判定「消息可能没发出去」并重试
     try {
       taskState.transition(taskState.STATES.SENT, {
         lastSentTag: String(tag || ''),
@@ -432,9 +431,7 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
       try {
         state.lastUserMessage = String(msg || '');
         state.lastUserMessageAt = Date.now();
-        // 用户真实派过任务 → 解锁监督者催促。
-        // 初始化期间发的都是 auto 消息，不会走到这里，所以监督者不会在
-        // 「刚初始化完、用户还没开口」的空窗期乱催。
+        // 标记用户已真实派过任务（初始化期间发的都是 auto 消息，不会走到这里）
         state.userTaskStarted = true;
       } catch (_) {}
     }

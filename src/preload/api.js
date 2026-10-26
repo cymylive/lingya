@@ -31,9 +31,6 @@ let electronAPI = {
   executeTool: (toolName, params, callId) => {
     return ipcRenderer.invoke('execute-tool', { toolName, params, callId });
   },
-  isSupervisorActivated: (sessionId) => ipcRenderer.invoke('supervisor-state-get', { sessionId }),
-  activateSupervisor: (sessionId) => ipcRenderer.invoke('supervisor-state-activate', { sessionId }),
-  listActivatedSupervisors: () => ipcRenderer.invoke('supervisor-state-list'),
   executeJs: (code, callId) => {
     return ipcRenderer.invoke('execute-js', { code, callId });
   },
@@ -191,19 +188,12 @@ let electronAPI = {
   resetSecurityConfig: () => {
     return ipcRenderer.invoke('security-reset-config');
   },
-  rewriteRefusal: (refusalText) => {
-    return ipcRenderer.invoke('security-rewrite-refusal', { refusalText });
-  },
   getCtfPrompt: () => {
     return ipcRenderer.invoke('security-get-ctf-prompt');
   },
 
 
 
-  // I2：覆盖层面板的「立即改写」按钮（与侧边栏同一个 IPC）
-  manualRewrite: () => {
-    return ipcRenderer.invoke('security-manual-rewrite');
-  },
   // ========== MCP 相关 API ==========
   listMcpServers: () => {
     return ipcRenderer.invoke('list-mcp-servers');

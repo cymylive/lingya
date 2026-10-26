@@ -21,8 +21,7 @@ test('stripToolBlocks 无代码块时原样返回', () => {
 });
 
 test('shouldSkipTag 过滤系统消息', () => {
-  assert.strictEqual(log.shouldSkipTag('自动续写'), true);
-  assert.strictEqual(log.shouldSkipTag('监督续跑'), true);
+  assert.strictEqual(log.shouldSkipTag('拒绝拦截'), true);
   assert.strictEqual(log.shouldSkipTag('压缩-摘要'), true);
   assert.strictEqual(log.shouldSkipTag('工具=bash'), true);
   assert.strictEqual(log.shouldSkipTag('JS汇总'), true);

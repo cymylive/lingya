@@ -16,7 +16,7 @@ module.exports = {
   // 的轮询可能同时拿到输入框、各自发起一次发送。用这个集合兜住。
   initialPromptSentChunks: null,
   // 分批模式下：已发完一段，正等本轮回复结束后发下一段。
-  // 为 true 时暂停自动续跑/监督者，否则会和分批发送抢着发消息。
+  // 为 true 时暂停自动发送，否则会和分批发送抢着发消息。
   awaitingNextInitialChunk: false,
   // 分批暂缓计数：AI 连续回复都含工具调用时，「等它干完再发下一段」可能永远等不到。
   // 累计到阈值（次数或时长）就强制把剩余段合并发出，避免整条 Agent 循环被永久屏蔽。
@@ -66,51 +66,24 @@ module.exports = {
   // 是否正在等待"用当前对话改写拒绝"的回复：为 true 时，下一条 AI 回复当作改写结果发出去
   awaitingRefusalRewrite: false,
   // 最近一次"活动"时间戳（AI 响应/工具执行/发送消息都会更新）。
-  // 供停滞监督者判断"任务是否卡住"。
   lastActivityAt: Date.now(),
-  // 本会话是否执行过工具（任务型会话标记），供监督者判断是否该催
+  // 本会话是否执行过工具（任务型会话标记）
   sessionHadToolExecution: false,
   // AI 最近一条回复是否在向用户提问/等决策。
-  // 为 true 时：球在用户那边，自动续跑/监督者都应暂停催促（催也白催）。
   awaitingUserInput: false,
-  // AI 是否已明确声明「任务已完成」。
-  // 为 true 时：监督者不再催促（哪怕 todo 里还有未完成项 —— 那是 AI 判断不需要做的）。
-  // 关键区别：todo 是 AI 自己写的计划，声明完成是 AI 对「工作是否结束」的最终判断，
-  // 后者优先级更高。下次 AI 调用工具（markToolExecuted）时自动复位。
+  // AI 是否已明确声明「任务已完成」。下次 AI 调用工具（markToolExecuted）时自动复位。
   taskDeclaredDone: false,
-  // awaitingUserInput 置位的时刻。监督者用它在「等太久且计划未完成」时判定为误判，强制催。
+  // awaitingUserInput 置位的时刻。
   awaitingUserInputAt: 0,
-  // ===== 监督者激活闸门 =====
-  // 背景：初始化项目时，systemPrompt 会分多段自动发出（都是 auto 消息），
-  // AI 读完回一句「已就绪」，此时用户还没派任何任务。但监督者看到
-  // 「sessionHadToolExecution=true（AI 初始化时读过 skill）+ 长时间无活动」
-  // 就判定为「无计划任务停滞」，开始反复发「停了一会儿了，接着往下做吧」。
-  // 实测会一直卡在这个循环里，因为初始化本来就没有任务可做。
-  //
-  // 解法：监督者只在「用户已真实派过任务」后才允许发催促消息。
   // initializationDone：systemPrompt 全部分段已发送完毕
   initializationDone: false,
-  // userTaskStarted：用户发过至少一条真实消息（非 auto 催促/工具回传）。
+  // userTaskStarted：用户发过至少一条真实消息（非 auto 工具回传）。
   // 会话切换时重置（见 intercept-observer 的 watchSessionForStateReset）。
-  // 注意：它现在只用于「用户是否已开口」这类展示/判断，不再控制监督者。
   userTaskStarted: false,
-  // ===== 监督机制激活状态（按会话独立、持久化）=====
-  // 用户要求：某会话创建过 todo 计划后，只有这个会话的监督机制持续生效，各会话独立。
-  // 语义：一旦某会话建过计划就永久激活，切走再切回仍有效，重启 LingYa 也有效（落盘）。
-  //
   // 当前会话 ID（由 intercept-observer 的会话切换监听更新）。
   // 为空表示还在首页（新对话尚未生成 URL）。
   currentSessionId: null,
-  // 已激活会话 ID 的内存镜像（Set<string>），启动时从主进程同步一次，
-  // 之后每次激活就地更新。判定时用它而不是每次都 await IPC。
-  activatedSessions: new Set(),
-  // 会话 ID 尚未就绪（首页）时 AI 建了计划 → 暂存 true，
-  // 等 URL 出现（currentSessionId 有值）后立即补激活。与 pendingTitle 同思路。
-  pendingActivation: false,
-
   // 是否为「强等待」：AI 明确列出多个方案让用户挑（A./B. 列表、「你有两个选项」等）。
-  // 这种等多久都合理 —— supervisor 不做超时催促。
-  // 弱等待（结尾问号等）仍会在 3 分钟后被判误判并催，避免 AI 随口一句「要吗」卡死流程。
   awaitingUserInputStrong: false,
   // 最近一次实际使用的发送方式（用于界面显示，排查发送链路）：
   // 'provider-native' 站点原生 / 'trusted-click' 可信点击发送按钮 /

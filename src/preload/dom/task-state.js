@@ -2,13 +2,12 @@
  * 任务状态机 —— Agent 循环的单一真相源
  *
  * 为什么需要：
- *   现有续跑逻辑全部挂在 'lingya-ai-response' 事件上。事件不来（hook 失效、流没收尾、
+ *   Agent 循环挂在 'lingya-ai-response' 事件上。事件不来（hook 失效、流没收尾、
  *   页面异常）→ 整条链静默死亡，任务卡死且无任何提示。
- *   监督者虽是定时器，但只查 todo，无计划的任务型会话是盲区。
  *
  *   把一次 Agent 循环建模成显式状态，每个状态记录进入时刻并持久化到 localStorage：
  *     - 页面刷新后能读回「上次停在哪」，不重复也不丢
- *     - 监督者可以按状态 + 超时判断，而不是靠猜
+ *     - UI 可按状态 + 超时判断，而不是靠猜
  *     - 超时边界清晰：AWAITING 超时=事件可能丢了；EXECUTING 超时=工具卡死
  *
  * 状态流转：
@@ -68,7 +67,7 @@ let saveTimer = null;
 
 // ===== 订阅机制：状态机是唯一真相源，UI 由它驱动 =====
 // 为什么需要：原来 setTaskStatus() / setFabState() 散落在 intercept-observer、
-// tool-executor、supervisor 各处手动调用，任何一处漏调 UI 就停在上一个状态。
+// tool-executor 等处手动调用，任何一处漏调 UI 就停在上一个状态。
 // 现在所有 UI 订阅 transition/touch/reset，状态机变了 UI 必然跟着变。
 const listeners = new Set();
 let tickTimer = null;
@@ -194,7 +193,7 @@ function setQueued(queued) {
  *   - 持久化里没有 sessionId（旧版数据）→ 不恢复，保守处理
  *   - 当前也没有 sessionId（首页/新对话）→ 不恢复
  *   - 两者都有但不一致（切换了会话）→ 不恢复
- *   - 两者一致（同一会话刷新页面）→ 恢复，让 supervisor 能接着兜底
+ *   - 两者一致（同一会话刷新页面）→ 恢复状态
  *
  * @param {string} [sessionId] 当前会话 ID；不传则用 setSession 记录的值
  */
@@ -252,7 +251,7 @@ function reset(reason) {
 }
 
 /**
- * 判断当前是否停滞（供监督者调用）
+ * 判断当前是否停滞（供 UI / 诊断调用）
  * @returns {{stalled: boolean, state: string, elapsedMs: number, thresholdMs: number, reason: string}}
  */
 function checkStall() {

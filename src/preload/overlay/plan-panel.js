@@ -367,8 +367,7 @@ async function refreshUserTodos() {
 // 系统消息前缀（与 tools/UserTodoStore.js 的 SYSTEM_PREFIXES 保持一致）
 // 前端预检只为给出友好提示，真正的硬防线在存储层。
 const SYSTEM_PREFIXES_UI = [
-  '【监督续跑】', '【自动续跑】', '【系统提示】', '【工具执行结果】',
-  '【JS 执行结果', '【计划续跑】', '【兜底续跑】', '【中断续跑】',
+  '【系统提示】', '【工具执行结果】', '【JS 执行结果',
 ];
 
 async function submitUserTodo() {

@@ -5,7 +5,7 @@ const {
   detectRefusal,
   isStrongRefusal,
   classifyRefusal,
-} = require('../../src/preload/dom/refusal-detector');
+} = require('../../plugins/refusal-rewriter/lib/refusal-detector');
 
 // ===== 回归：detectRefusal 原有行为不变 =====
 test('detectRefusal 识别强拒绝短语', () => {

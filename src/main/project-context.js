@@ -14,6 +14,7 @@ const skillStore = require('./skill-store');
 const securityStore = require('./security-store');
 const agentStore = require('./agent-store');
 const { getAgent } = require('./agents');
+const pluginHost = require('./plugin-host');
 
 // 初始提示分批发送的参数
 // 单段目标字符数：每段不超过这个值，接近人类粘贴长文的量级。
@@ -402,53 +403,20 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     ? '---\n## 项目介绍\n' + projectIntro
     : '';
 
-  // ===== 核心规则（单一来源 src/prompt/core-rules.md）=====
-  // 为什么独立成文件：这 3 条规则对所有平台都必须生效，且必须落在 systemPrompt
-  // 的第 1 段（分段发送时 AI 第一轮就要看到）。以前每个平台模板各抄一份，
-  // 加新平台容易漏、改规则要改 N 处、还出现过位置不对导致某平台不生效。
-  // 现在模板只写占位符，内容在这里统一注入。
-  let coreRuleReport = '';
-  let coreRuleAmbiguous = '';
-  let coreRuleIrreversible = '';
-  // 总开关：关闭后三段核心规则全部不注入（无人值守场景，AI 不会停下来等确认）。
-  // 读配置失败时按默认 true 处理，宁可保留安全闸也不要静默放开。
-  let coreRulesEnabled = true;
-  try {
-    const secCfgCore = securityStore.getConfig();
-    if (secCfgCore && secCfgCore.coreRulesEnabled === false) coreRulesEnabled = false;
-  } catch (_) { /* 读配置失败用默认值 */ }
-  try {
-    const rulesPath = path.join(PROMPT_DIR, 'core-rules.md');
-    if (!coreRulesEnabled) {
-      console.log('[LingYa] 核心规则开关已关闭（coreRulesEnabled=false），跳过注入');
-    } else if (fs.existsSync(rulesPath)) {
-      const raw = fs.readFileSync(rulesPath, 'utf-8');
-      // 去掉开头的 <!-- ... --> 注释块（那是给维护者看的，不注入给 AI）
-      const body = raw.replace(/^<!--[\s\S]*?-->\s*/m, '');
-      const parts = body.split(/^=== (REPORT|AMBIGUOUS|IRREVERSIBLE) ===\s*$/m);
-      // parts = ['', 'REPORT', '内容', 'AMBIGUOUS', '内容', ...]
-      for (let i = 1; i < parts.length; i += 2) {
-        const key = parts[i];
-        const val = (parts[i + 1] || '').trim();
-        if (key === 'REPORT') coreRuleReport = val;
-        else if (key === 'AMBIGUOUS') coreRuleAmbiguous = val;
-        else if (key === 'IRREVERSIBLE') coreRuleIrreversible = val;
-      }
-      const missing = [];
-      if (!coreRuleReport) missing.push('REPORT');
-      if (!coreRuleAmbiguous) missing.push('AMBIGUOUS');
-      if (!coreRuleIrreversible) missing.push('IRREVERSIBLE');
-      if (missing.length) {
-        console.error('[LingYa] core-rules.md 缺少分节: ' + missing.join(', '));
-      }
-      console.log('[LingYa] 核心规则已加载: REPORT=' + coreRuleReport.length +
-        ' AMBIGUOUS=' + coreRuleAmbiguous.length +
-        ' IRREVERSIBLE=' + coreRuleIrreversible.length);
-    } else {
-      console.error('[LingYa] core-rules.md 不存在: ' + rulesPath);
-    }
-  } catch (err) {
-    console.error('[LingYa] 加载核心规则失败:', err.message);
+  // ===== 核心规则（由插件注入）=====
+  // 核心规则现已抽离为独立插件（plugins/core-rules），通过 ctx.registerPromptSection 注入。
+  // 这样做的好处：不需要核心规则的用户可以不装插件；需要定制的用户可以改插件配置。
+  const pluginSections = pluginHost.getPluginPromptSections();
+  const coreRuleReport = pluginSections.CORE_RULE_REPORT || '';
+  const coreRuleAmbiguous = pluginSections.CORE_RULE_AMBIGUOUS || '';
+  const coreRuleIrreversible = pluginSections.CORE_RULE_IRREVERSIBLE || '';
+  const coreRulesEnabled = !!(coreRuleReport || coreRuleAmbiguous || coreRuleIrreversible);
+  if (coreRulesEnabled) {
+    console.log('[LingYa] 核心规则已由插件加载: REPORT=' + coreRuleReport.length +
+      ' AMBIGUOUS=' + coreRuleAmbiguous.length +
+      ' IRREVERSIBLE=' + coreRuleIrreversible.length);
+  } else {
+    console.log('[LingYa] 未检测到核心规则插件，跳过注入');
   }
 
   // 工具名速查表：只列名字，不列签名，体积小（几百字符），

@@ -64,11 +64,3 @@ test('空输入不误判', () => {
   assert.strictEqual(detectXmlFormat(undefined), false);
 });
 
-test('检测位置必须在【主流程】的计划续跑之前（保证无计划时也能纠正）', () => {
-  const src = fs.readFileSync(OBSERVER, 'utf-8');
-  const xmlPos = src.indexOf('checkXmlFormatAndCorrect(raw)');
-  assert.ok(xmlPos > 0, '找不到 XML 检测调用');
-  const planPos = src.lastIndexOf('if (await continueIfPlanUnfinished(raw)) return;');
-  assert.ok(planPos > 0, '找不到主流程的计划续跑调用');
-  assert.ok(xmlPos < planPos, 'XML 检测必须在主流程计划续跑之前，否则无计划会话不会被纠正');
-});

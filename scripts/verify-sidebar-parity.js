@@ -59,8 +59,6 @@ const FEATURES = {
   '技能-导入': /importSkillFolder/,
   '安全-CTF': /sh-sec-ctf/,
   '安全-拒绝拦截': /refusalEnabled|sh-sec-refusal/,
-  '安全-自动续写': /sh-sec-autoc/,
-  '安全-停滞监督': /sh-sec-stall/,
   '安全-重置': /sh-sec-reset/,
   '安全-立即注入': /sh-sec-inject/,
   '定时-新建': /sh-sc-new/,

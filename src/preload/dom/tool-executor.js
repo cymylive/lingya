@@ -16,33 +16,6 @@ let isExecuting = false;
 const HISTORY_OUTPUT_LIMIT = 8 * 1024;  // 8KB
 
 /**
- * 激活本会话的监督机制。
- *
- * 触发条件：AI 在本会话创建过 todo 计划（调用 todoWrite / todo_write 成功）。
- * 语义：按会话独立、持久化、无上限。会话 ID 未就绪（首页新对话）时暂存，
- * 等 URL 出现后由 intercept-observer 的会话切换监听补激活。
- *
- * 为什么需要单独的函数：三条触发路径（JS 路径主/兜底、JSON 路径）共用同一逻辑。
- */
-function activateSupervisorForCurrentSession() {
-  const sid = state.currentSessionId;
-  if (!sid) {
-    // 新对话还没生成 URL：暂存，等会话 ID 出现再激活
-    if (!state.pendingActivation) {
-      state.pendingActivation = true;
-      console.log('[LingYa][监督] 会话ID未就绪，暂存激活请求');
-    }
-    return;
-  }
-  if (state.activatedSessions.has(sid)) return;  // 已激活，幂等
-  state.activatedSessions.add(sid);
-  console.log('[LingYa][监督] 本会话监督机制已激活: ' + sid.slice(0, 8));
-  try {
-    window.electronAPI.activateSupervisor(sid).catch(() => {});
-  } catch (_) { /* IPC 不可用时不阻断业务 */ }
-}
-
-/**
  * 截断历史记录的输出，避免大结果常驻内存
  * @param {string} text
  * @returns {string}
@@ -149,18 +122,6 @@ async function handleJsToolScript(code) {
       }
     }
 
-    // 【监督激活 · JS 路径】
-    // 主判定：主进程 JsRunner 如实回报本次脚本实际调用过的工具名 —— 唯一准确来源。
-    // 兜底：老版本主进程不回报 toolCalls 时，退化为扫代码字符串（可能漏判，聊胜于无）。
-    try {
-      const calledTools = (result && Array.isArray(result.toolCalls)) ? result.toolCalls : null;
-      if (calledTools) {
-        if (calledTools.includes('todo_write')) activateSupervisorForCurrentSession();
-      } else if (/\btodoWrite\s*\(/.test(code)) {
-        activateSupervisorForCurrentSession();
-      }
-    } catch (_) { /* 激活失败不影响工具执行结果 */ }
-
     const resultSection = document.getElementById('lingya-result-section');
     const resultStatus = document.getElementById('lingya-result-status');
     const resultOutput = document.getElementById('lingya-result-output');
@@ -217,7 +178,7 @@ async function handleJsToolScript(code) {
     //
     // 原实现的死区：EXECUTING 只有 ai-start / ai-response 事件能切走。
     // 若 AI 不回复（已停止、撞风控、网络断），状态机会一直挂在 EXECUTING，
-    // 要等监督者 720 秒（12 分钟）后才发现「工具卡死」——实际工具早就跑完了，
+    // 要等状态机超时（12 分钟）后才发现「工具卡死」——实际工具早就跑完了，
     // 界面白白显示 12 分钟「正在执行工具」。
     //
     // 正常路径下 sendToolResultToChat 已把结果发出去，语义就是「等 AI 响应」，
@@ -296,10 +257,6 @@ async function handleToolCall(toolCall) {
       }
       renderResultCard(callId || ('tool_' + toolName), toolName, params, 'success', result.data);
 
-      // 【监督激活 · JSON 路径】AI 通过 JSON 工具调用建了计划 → 激活本会话监督机制。
-      // 放在成功分支里：todo_write 失败（参数非法等）不算建了计划。
-      if (toolName === 'todo_write') activateSupervisorForCurrentSession();
-
       // 后台任务登记：AI 这一轮结束后任务可能还在跑，状态条要能继续显示。
       // bash_background 的返回文本里带「任务 ID: bg_xxx」，从中提取。
       if (toolName === 'bash_background') {
@@ -369,7 +326,7 @@ async function handleToolCall(toolCall) {
     try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
     // 同 handleJsToolScript：工具跑完必须切出 EXECUTING，否则状态机会挂到
-    // 监督者 720 秒超时才发现（那时工具早已完成，界面白显示 12 分钟）。
+    // 状态机超时才发现（那时工具早已完成，界面白显示 12 分钟）。
     try {
       const ts = require('./task-state');
       if (ts.snapshot().state === ts.STATES.EXECUTING) {
@@ -381,7 +338,6 @@ async function handleToolCall(toolCall) {
 }
 
 module.exports = {
-  activateSupervisorForCurrentSession,
   handleToolCall,
   handleJsToolScript,
   notifyToolCallDetected,

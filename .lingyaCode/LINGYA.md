@@ -314,6 +314,17 @@ npm run build:mac:local             # macOS
 - 渲染进程调主进程一律通过 `window.electronAPI`（api.js 定义）
 - 危险命令（rm -rf / format 等）由 dangerous-commands.js 拦截
 
+### 写插件前必读
+
+**任何插件开发任务，动手前必须先完整读 `docs/PLUGIN-DEV.md`。**
+
+该文档记录了插件加载契约、ctx 全部能力、三种典型形态模板、以及 15 个实际踩过的坑。
+不读直接写，大概率会在 preload 脚本能不能 require、发送消息走哪个通道、
+render() 何时执行这些问题上反复试错。
+
+插件入口用 ESM（`export function apply(ctx)`）是**唯一例外** —— 插件会被 esbuild 打包，
+与项目其余部分的 CommonJS 约定不冲突。
+
 ### 修改原则
 
 - **外科手术式修改**：最小改动范围，不顺手重构无关代码
@@ -356,6 +367,7 @@ npm run build:mac:local             # macOS
 | 文件 | 内容 |
 |------|------|
 | `README.md` | 项目介绍、功能列表、使用指南 |
+| `docs/PLUGIN-DEV.md` | **插件开发文档**（写新插件前必读） |
 | `RENAME-LINGYA.md` | 改名记录 + GPL 合规 + 回滚方式 |
 | `SECURITY-MOD.md` | 安全增强 MOD 详细说明 |
 | `MOD-INSTALL.md` | 历史 mod 记录 |

@@ -67,7 +67,6 @@ const api = {
   updateSecurityConfig: (config) => ipcRenderer.invoke('security-update-config', { config }),
   resetSecurityConfig: () => ipcRenderer.invoke('security-reset-config'),
   getCtfPrompt: () => ipcRenderer.invoke('security-get-ctf-prompt'),
-  triggerManualRewrite: () => ipcRenderer.invoke('security-manual-rewrite'),
   // 定时任务
   listSchedules: () => ipcRenderer.invoke('schedule-list'),
   addSchedule: (task) => ipcRenderer.invoke('schedule-add', task),
