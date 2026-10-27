@@ -272,20 +272,28 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // （实测：AI 音乐项目初始化时注入了「好分数题库采集 CPU 跑满」）。
   const relevancePrompt = [selectedDir, path.basename(selectedDir) || ''].join(' ').trim();
 
-  // 长期记忆注入块（全局记忆，按 token 预算选择）
+  // 长期记忆注入块
+  //
+  // 【为什么用全量版而非 Minimal】Minimal 只给 3 条摘要，模型看不到其余 453 条
+  // 的存在，就不会主动 memoryList() 检索 —— 它不知道自己不知道什么。
+  // 全量版 = 少量正文 + **全部条目索引**（仅 id/type/名称），让"有什么"完全可见，
+  // 体积实测约 19K 字符（456 条），远低于当年 26.8 万字符的爆量事故。
   let memorySection = '';
   try {
-    memorySection = memoryStore.buildMemorySectionMinimal({ prompt: relevancePrompt });
-    console.log('[LingYa] 记忆注入块长度(minimal):', memorySection.length);
+    memorySection = memoryStore.buildMemorySection({ prompt: relevancePrompt });
+    console.log('[LingYa] 记忆注入块长度(full):', memorySection.length);
   } catch (err) {
     console.error('[LingYa] 构建记忆注入块失败:', err.message);
   }
 
-  // 技能注入块（仅已启用技能，按 token 预算选择）
+  // 技能注入块
+  //
+  // 同样用全量版：173 个本地技能全部进索引（名称 + 首句简介 + 相对路径），
+  // 正文仍靠 read SKILL.md 按需取。实测约 15K 字符。
   let skillSection = '';
   try {
-    skillSection = skillStore.buildSkillSectionMinimal({ prompt: relevancePrompt });
-    console.log('[LingYa] 技能注入块长度(minimal):', skillSection.length);
+    skillSection = skillStore.buildSkillSection({});
+    console.log('[LingYa] 技能注入块长度(full):', skillSection.length);
   } catch (err) {
     console.error('[LingYa] 构建技能注入块失败:', err.message);
   }
