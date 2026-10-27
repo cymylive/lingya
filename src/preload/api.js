@@ -43,6 +43,10 @@ let electronAPI = {
   stopExecution: () => {
     return ipcRenderer.invoke('abort-execution');
   },
+  // 抢占上一轮前台工具执行（新工具调用到来时），后台任务不受影响
+  preemptExecution: (payload) => {
+    return ipcRenderer.invoke('preempt-execution', payload || {});
+  },
   // 内存诊断 / 手动回收
   memoryStatus: () => ipcRenderer.invoke('memory-status'),
   memoryCollect: () => ipcRenderer.invoke('memory-collect'),

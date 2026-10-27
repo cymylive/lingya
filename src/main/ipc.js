@@ -672,6 +672,29 @@ function registerIpcHandlers() {
     return { success: true, killed };
   });
 
+  // 抢占当前会话的上一轮前台工具执行（后台任务保留）
+  //
+  // 与 abort-execution 的区别：
+  //  - abort-execution 是用户点「停止」：killAll（前台+后台）+ 置中止标志
+  //  - preempt-execution 是新工具调用抢占：killForeground（只杀前台）+ 置中止标志
+  // 后台任务（bashBackground 起的构建/服务/爬虫）设计上就长跑，由 AI 自己
+  // bashKill 收尾，抢占时误杀会让用户丢工作成果，因此必须区分。
+  ipcMain.handle('preempt-execution', async (event, payload) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      const profileId = (payload && payload.profileId) || (ctx ? ctx.profileId : null);
+      const sessionId = (payload && payload.sessionId) || resolveSessionId(ctx, event.sender);
+      const key = activeProcesses.abortKey(profileId, sessionId);
+      // 先置标志再杀：让正在跑的 JS 沙箱下一次工具调用立刻返回失败，
+      // 与 kill 并行生效，避免杀完进程后脚本还在继续往下走。
+      activeProcesses.markAborted(key);
+      const killed = activeProcesses.killForeground(key);
+      return { success: true, killed };
+    } catch (err) {
+      return { success: false, killed: 0, error: err.message };
+    }
+  });
+
   // ========== 内存诊断 / 手动回收 ==========
   ipcMain.handle('memory-status', async () => {
     try { return { success: true, ...memoryJanitor.status(), lifecycle: toolLifecycle.stats() }; }
