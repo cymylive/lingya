@@ -312,6 +312,9 @@ async function processInterceptedResponse(text, force, interrupted) {
     xmlHintCount = 0;
     queueErrorContinueCount = 0; // 链路正常，重置异常兜底预算
     state.markToolExecuted(); // 本会话已执行过工具 → 允许无计划兜底续跑
+    // 抢占后立刻清掉排队态：本条回复马上要执行工具，面板必须显示执行态
+    // 而不是「排队等待处理」，否则用户看到的仍是卡住的旧症状。
+    try { taskState.setQueued(false); } catch (_) {}
     // 状态机：进入工具执行阶段（超时阈值 720s，覆盖 JsRunner 的 660s deadline）
     try { taskState.transition(taskState.STATES.EXECUTING); } catch (_) {}
     emitToolCall({ phase: 'start' });

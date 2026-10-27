@@ -16,6 +16,10 @@ const active = new Set();
 // 同一窗口内的 A 会话停止也不应影响 B 会话（多标签页/多会话共存）。
 // 不传 key 的旧调用点退化为 '__global'，行为与原来一致。
 const abortedKeys = new Set();
+// 中止原因：key -> 'stop' | 'preempt'
+// 为什么要区分：AI 看到「用户停止」应停下等指令，看到「被抢占」则知道自己
+// 这轮已被新调用取代、不必重试。文案混用会让 AI 误判用户意图。
+const abortReasons = new Map();
 const GLOBAL_KEY = '__global';
 
 /**
@@ -132,8 +136,27 @@ function count() {
  * @param {string} [key] 隔离键（建议用 abortKey(profileId, sessionId)）。
  *   不传则记为全局，影响所有窗口/会话。
  */
-function markAborted(key) {
-  abortedKeys.add(key || GLOBAL_KEY);
+/**
+ * 标记为已中止（停止任务或抢占时调用）。
+ * @param {string} [key] 隔离键（建议用 abortKey(profileId, sessionId)）
+ * @param {'stop'|'preempt'} [reason] 中止原因，默认 stop（用户主动停止）
+ */
+function markAborted(key, reason) {
+  const k = key || GLOBAL_KEY;
+  abortedKeys.add(k);
+  abortReasons.set(k, reason === 'preempt' ? 'preempt' : 'stop');
+}
+
+/**
+ * 读取中止原因。
+ * @param {string} [key] 隔离键
+ * @returns {'stop'|'preempt'|null} 未标记返回 null
+ */
+function getAbortReason(key) {
+  const k = key || GLOBAL_KEY;
+  if (abortReasons.has(k)) return abortReasons.get(k);
+  if (abortedKeys.has(GLOBAL_KEY)) return abortReasons.get(GLOBAL_KEY) || 'stop';
+  return null;
 }
 
 /**
@@ -143,8 +166,11 @@ function markAborted(key) {
 function clearAborted(key) {
   if (key === undefined) {
     abortedKeys.clear();
+    abortReasons.clear();
   } else {
-    abortedKeys.delete(key || GLOBAL_KEY);
+    const k = key || GLOBAL_KEY;
+    abortedKeys.delete(k);
+    abortReasons.delete(k);
   }
 }
 
@@ -161,6 +187,6 @@ function isAborted(key) {
 
 module.exports = {
   register, unregister, killAll, killForeground, count, getKind,
-  markAborted, clearAborted, isAborted,
+  markAborted, clearAborted, isAborted, getAbortReason,
   abortKey, GLOBAL_KEY, PREEMPT_ERROR,
 };

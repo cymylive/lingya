@@ -687,7 +687,7 @@ function registerIpcHandlers() {
       const key = activeProcesses.abortKey(profileId, sessionId);
       // 先置标志再杀：让正在跑的 JS 沙箱下一次工具调用立刻返回失败，
       // 与 kill 并行生效，避免杀完进程后脚本还在继续往下走。
-      activeProcesses.markAborted(key);
+      activeProcesses.markAborted(key, 'preempt');
       const killed = activeProcesses.killForeground(key);
       return { success: true, killed };
     } catch (err) {

@@ -384,7 +384,11 @@ class JsRunner {
     // A 会话的停止标记污染 B 会话（跨会话串扰）。
     const abortKey = activeProcesses.abortKey(profileId, sessionId);
     if (activeProcesses.isAborted(abortKey)) {
-      return { success: false, error: '任务已被用户停止' };
+      const reason = activeProcesses.getAbortReason(abortKey);
+      return {
+        success: false,
+        error: reason === 'preempt' ? activeProcesses.PREEMPT_ERROR : '任务已被用户停止',
+      };
     }
 
     const deniedTools = new Set((options && options.deniedTools) || []);
@@ -408,7 +412,11 @@ class JsRunner {
       // 用户点「停止」后，沙箱代码的下一次工具调用直接失败，从而中断整个脚本
       // 按「窗口 + 会话」复合键隔离：只中断本会话的任务，不影响其他窗口/会话
       if (activeProcesses.isAborted(abortKey)) {
-        return JSON.stringify({ success: false, error: '任务已被用户停止' });
+        // 区分「用户主动停止」与「被新一轮工具调用抢占」：
+        // 前者 AI 应停下等指令，后者说明本轮结果已淘汰、不必重试。
+        const reason = activeProcesses.getAbortReason(abortKey);
+        const msg = reason === 'preempt' ? activeProcesses.PREEMPT_ERROR : '任务已被用户停止';
+        return JSON.stringify({ success: false, error: msg });
       }
       if (Date.now() - startTime > deadlineMs) {
         return JSON.stringify({ success: false, error: 'JS 脚本执行超时（' + Math.round(deadlineMs / 1000) + ' 秒）' });
