@@ -36,13 +36,31 @@ function abortKey(profileId, sessionId) {
 
 // 子进程归属：child -> key（窗口+会话复合键），用于按会话隔离 kill
 const owner = new WeakMap();
+// 子进程类别：child -> 'foreground' | 'background'
+// 为什么需要：抢占新工具调用时只能杀前台阻塞进程；后台任务（构建/服务/爬虫）
+// 设计上就是长跑，由 AI 自己 bashKill 收尾，误杀会让用户丢工作成果。
+const kindMap = new WeakMap();
 
-/** 注册一个正在运行的子进程 */
-function register(child, key) {
+/** 被新一轮工具调用抢占时的统一错误文案（AI 能据此理解「上一步没成」） */
+const PREEMPT_ERROR = '被新的工具调用抢占，本次执行已中止';
+
+/**
+ * 注册一个正在运行的子进程
+ * @param {object} child 子进程
+ * @param {string} [key] 隔离键
+ * @param {'foreground'|'background'} [kind] 类别，默认 foreground
+ */
+function register(child, key, kind) {
   if (child && typeof child.kill === 'function') {
     active.add(child);
     if (key) owner.set(child, key);
+    kindMap.set(child, kind === 'background' ? 'background' : 'foreground');
   }
+}
+
+/** 读取子进程类别（未登记的按 foreground 处理，与历史行为一致） */
+function getKind(child) {
+  return kindMap.get(child) || 'foreground';
 }
 
 /** 注销一个已结束的子进程 */
@@ -55,13 +73,13 @@ function unregister(child) {
  * @param {string} [key] 只杀属于该 key 的进程。不传则杀全部（兼容旧调用）。
  * @returns {number} 被处理（尝试 kill）的进程数
  */
-function killAll(key) {
+/**
+ * 杀掉一批子进程（Windows 走 taskkill /T 杀整棵进程树）。
+ * @param {Set<object>} targets 待杀进程集合
+ * @returns {number} 被处理的进程数
+ */
+function killTargets(targets) {
   let n = 0;
-  const targets = [];
-  for (const child of active) {
-    if (key !== undefined && owner.get(child) !== key) continue;
-    targets.push(child);
-  }
   for (const child of targets) {
     try {
       if (process.platform === 'win32' && child.pid) {
@@ -77,6 +95,31 @@ function killAll(key) {
     active.delete(child);
   }
   return n;
+}
+
+function killAll(key) {
+  const targets = new Set();
+  for (const child of active) {
+    if (key !== undefined && owner.get(child) !== key) continue;
+    targets.add(child);
+  }
+  return killTargets(targets);
+}
+
+/**
+ * 只杀属于该 key 的「前台」子进程，后台任务保留。
+ * 用于新一轮工具调用抢占：前台阻塞调用该中止，后台长任务不该被牵连。
+ * @param {string} key 隔离键
+ * @returns {number} 被杀的前台进程数
+ */
+function killForeground(key) {
+  const targets = new Set();
+  for (const child of active) {
+    if (key !== undefined && owner.get(child) !== key) continue;
+    if (getKind(child) !== 'foreground') continue;
+    targets.add(child);
+  }
+  return killTargets(targets);
 }
 
 /** 当前活动进程数 */
@@ -117,7 +160,7 @@ function isAborted(key) {
 }
 
 module.exports = {
-  register, unregister, killAll, count,
+  register, unregister, killAll, killForeground, count, getKind,
   markAborted, clearAborted, isAborted,
-  abortKey, GLOBAL_KEY,
+  abortKey, GLOBAL_KEY, PREEMPT_ERROR,
 };

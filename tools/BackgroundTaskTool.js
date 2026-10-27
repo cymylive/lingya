@@ -65,7 +65,8 @@ function startBackground(command, options) {
   };
   task.donePromise = new Promise((resolve) => { task.resolveDone = resolve; });
   tasks.set(id, task);
-  activeProcesses.register(child, opts.abortKey || opts.profileId);
+  // 后台任务标记为 background：抢占新工具调用时不得误杀（否则构建/服务/爬虫被无故中断）
+  activeProcesses.register(child, opts.abortKey || opts.profileId, 'background');
 
   child.stdout.on('data', (d) => appendOutput(task, d.toString()));
   child.stderr.on('data', (d) => appendOutput(task, d.toString()));

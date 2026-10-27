@@ -185,3 +185,53 @@ test('多窗口隔离：A 停止不影响 B 的进程和状态', () => {
   assert.strictEqual(ap.isAborted('pB'), false, 'B 不应被牵连');
   assert.strictEqual(ap.count(), 1, 'B 的进程仍在运行');
 });
+
+// ===================== 前后台区分（抢占用）=====================
+
+test('register 默认 kind 为 foreground', () => {
+  const c = fakeChild(9001);
+  ap.register(c, 'k1');
+  assert.strictEqual(ap.getKind(c), 'foreground');
+  ap.unregister(c);
+});
+
+test('register 可标记 background', () => {
+  const c = fakeChild(9002);
+  ap.register(c, 'k2', 'background');
+  assert.strictEqual(ap.getKind(c), 'background');
+  ap.unregister(c);
+});
+
+test('killForeground 只杀前台，不碰后台', () => {
+  const fg = fakeChild(9003);
+  const bg = fakeChild(9004);
+  ap.register(fg, 'k3');
+  ap.register(bg, 'k3', 'background');
+
+  const n = ap.killForeground('k3');
+
+  assert.strictEqual(n, 1, '只应杀掉 1 个前台进程');
+  // 注意：Windows 分支走 taskkill（测试里被 mock），不会调用 child.kill()，
+  // 因此用「是否仍在跟踪列表」作为判定依据，而不是 killed 标志。
+  assert.strictEqual(ap.count(), 1, '只剩后台进程在跟踪列表中');
+  assert.strictEqual(ap.getKind(bg), 'background', '留下的必须是后台进程 —— 否则构建/服务会被误杀');
+  ap.unregister(bg);
+});
+
+test('killForeground 不影响其他 key 的进程', () => {
+  const a = fakeChild(9005);
+  ap.register(a, 'k4');
+  const n = ap.killForeground('k5');
+  assert.strictEqual(n, 0);
+  assert.strictEqual(ap.count(), 1, '其他 key 的进程仍在跟踪列表中');
+  ap.unregister(a);
+});
+
+test('killForeground 后前台从 active 移除，后台保留', () => {
+  ap.register(fakeChild(9006), 'k6');
+  ap.register(fakeChild(9007), 'k6', 'background');
+  ap.killForeground('k6');
+  assert.strictEqual(ap.count(), 1, '只剩后台那一个');
+  ap.killAll('k6');
+  assert.strictEqual(ap.count(), 0);
+});
