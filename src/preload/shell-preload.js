@@ -115,6 +115,7 @@ const api = {
   pluginOpenDir: () => ipcRenderer.invoke('plugin-open-dir'),
   pluginImport: () => ipcRenderer.invoke('plugin-import'),
   pluginExport: (id) => ipcRenderer.invoke('plugin-export', { id }),
+  pluginExportSkill: () => ipcRenderer.invoke('plugin-export-skill'),
   pluginDelete: (id) => ipcRenderer.invoke('plugin-delete', { id }),
   pluginViews: () => ipcRenderer.invoke('plugin-views'),
   pluginInvoke: (pluginId, channel, args) => ipcRenderer.invoke('plugin-invoke', { pluginId, channel, args }),

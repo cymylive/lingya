@@ -65,7 +65,7 @@ function startBackground(command, options) {
   };
   task.donePromise = new Promise((resolve) => { task.resolveDone = resolve; });
   tasks.set(id, task);
-  activeProcesses.register(child, opts.profileId);
+  activeProcesses.register(child, opts.abortKey || opts.profileId);
 
   child.stdout.on('data', (d) => appendOutput(task, d.toString()));
   child.stderr.on('data', (d) => appendOutput(task, d.toString()));
@@ -82,7 +82,7 @@ function startBackground(command, options) {
   return { taskId: id, pid: child.pid, cwd };
 }
 
-async function waitForDone(task, ms, profileId) {
+async function waitForDone(task, ms, abortKey) {
   if (task.done) return true;
   // 可中断轮询：每 500ms 检查一次，任务完成或用户点「停止」都立即返回，
   // 不必等满整个 ms（否则用户点停止后最长要等 10 分钟才响应）。
@@ -92,7 +92,7 @@ async function waitForDone(task, ms, profileId) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (task.done) return true;
-    if (activeProcesses.isAborted(profileId)) return task.done;
+    if (activeProcesses.isAborted(abortKey)) return task.done;
     await new Promise((r) => setTimeout(r, 500));
   }
   return task.done;
@@ -198,7 +198,11 @@ class BashBackgroundTool extends Tool {
       }
     }
     try {
-      const info = startBackground(trimmed, { workdir, projectDir, profileId: params && params.profileId });
+      const info = startBackground(trimmed, {
+        workdir, projectDir,
+        profileId: params && params.profileId,
+        abortKey: params && params.abortKey,
+      });
       console.log('[BashBackgroundTool] 已启动后台任务 ' + info.taskId + ': ' + trimmed);
       return ToolResult.success(
         '后台任务已启动\n任务 ID: ' + info.taskId + '\nPID: ' + info.pid + '\n工作目录: ' + info.cwd +
@@ -229,15 +233,15 @@ class BashOutputTool extends Tool {
   }
 
   async execute(params) {
-    // profileId 由 JsRunner / ipc 注入，标识发起窗口。
+    // abortKey（窗口+会话复合键）由 JsRunner / ipc 注入，标识发起会话。
     // 必须传给 waitForDone —— 否则 isAborted() 无参调用会把「任一窗口点停止」
-    // 当成全局中止，导致其它窗口的后台任务轮询被瞬间打断（多窗口串扰）。
-    const { task_id, wait, profileId } = params;
+    // 当成全局中止，导致其它会话的后台任务轮询被瞬间打断（跨会话串扰）。
+    const { task_id, wait, abortKey } = params;
     if (!task_id || typeof task_id !== 'string') return ToolResult.error('task_id 不能为空');
     const task = tasks.get(task_id);
     if (!task) return ToolResult.error('后台任务不存在: ' + task_id);
     const waitMs = typeof wait === 'number' && wait > 0 ? Math.min(wait, MAX_WAIT_MS) : 0;
-    if (waitMs > 0 && !task.done) await waitForDone(task, waitMs, profileId);
+    if (waitMs > 0 && !task.done) await waitForDone(task, waitMs, abortKey);
     let text = formatTask(task);
     // 等待结束但任务仍在运行：明确提示模型继续轮询，避免其误以为无法再等而停下
     if (!task.done) {

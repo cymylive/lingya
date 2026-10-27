@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.129",
+  "version": "0.6.136",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -27,7 +27,9 @@
     "build:mac:local": "electron-builder --mac --publish never",
     "build:mac:dmg:local": "electron-builder --mac --config.mac.target=dmg --publish never",
     "dist": "electron-builder",
-    "pack": "electron-builder --dir"
+    "pack": "electron-builder --dir",
+    "new:plugin": "node scripts/new-plugin.js",
+    "check:plugin": "node scripts/check-plugin.js"
   },
   "keywords": [
     "deepseek",
@@ -122,7 +124,7 @@
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.126"
+      "unpackDirName": "LingYa-runtime-0.6.135"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",
@@ -179,6 +181,7 @@
       "src/prompt/*.md",
       "src/prompt/superpowers/**/*",
       "src/prompt/purge/**/*",
+      "src/assets/plugin-dev-skill/**/*",
       "!dist/**",
       "!coverage/**",
       "!**/*.b2bak",

@@ -626,7 +626,18 @@
       rendered[name] = false;
     }
     
-    if (!rendered[name]) { rendered[name]=true; renderView(name); }
+    if (!rendered[name]) {
+      rendered[name] = true;
+      try {
+        renderView(name);
+      } catch (err) {
+        console.error('[LingYa Shell] 视图渲染异常 (' + name + '):', err);
+        if (curEl) {
+          curEl.innerHTML = '<div class="sh-panel-body" style="color:#f87171;padding:12px;font-size:12px;">视图渲染失败: ' + (err.message || err) + '</div>';
+        }
+        rendered[name] = false; // 允许下次点击重试
+      }
+    }
     try { localStorage.setItem('lingya-shell-view', name); } catch(_e){}
   }
   function panel(title, bodyHtml){
@@ -727,9 +738,33 @@
   var dshMarketCat = 'tool';
   var dshRenderMarket = null;   // 由 renderPluginsView 挂载（重绘函数）
 
+
+
   // ---- 插件管理面板 ----
   function renderPluginsView(el){
     el.innerHTML = panel('插件', '<div id="sh-plug-body" class="sh-empty">加载中…</div>');
+    
+    // 注入导出 Skill 按钮
+    var head = el.querySelector('.sh-panel-head');
+    if(head && !document.getElementById('sh-plug-skill-btn')){
+      var skillBtn = document.createElement('button');
+      skillBtn.id = 'sh-plug-skill-btn';
+      skillBtn.className = 'sh-btn';
+      skillBtn.style.cssText = 'float:right;font-size:11px;padding:2px 8px;margin-top:-2px;';
+      skillBtn.textContent = '📦 导出 AI 开发包';
+      skillBtn.addEventListener('click', function() {
+        if (!window.shellAPI.pluginExportSkill) { toast2('API 不可用'); return; }
+        skillBtn.disabled = true;
+        window.shellAPI.pluginExportSkill().then(function(r) {
+          skillBtn.disabled = false;
+          if (r && r.success) toast2('已导出到: ' + r.path);
+          else if (r && r.error !== '已取消') toast2('导出失败: ' + (r ? r.error : '未知'));
+        })['catch'](function() { skillBtn.disabled = false; toast2('导出异常'); });
+      });
+      head.style.position = 'relative';
+      head.appendChild(skillBtn);
+    }
+
     function draw(data){
       var box = document.getElementById('sh-plug-body');
       if(!box) return;

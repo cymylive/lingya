@@ -4,5 +4,6 @@
   "version": "1.0.0",
   "description": "检测 AI 的拒绝回复并自动重写提示词重发。支持本地规则改写、当前对话改写和外部 API 改写。",
   "icon": "🛡️",
-  "entry": "index.js"
+  "entry": "index.js",
+  "apiVersion": 1
 }

@@ -285,7 +285,7 @@ function resolveDir(dir, projectDir) {
  * 与 JSON 工具的 bash 不同：非零退出码不视为失败，而是通过 exitCode/error 字段返回，
  * 让 AI 代码可以像普通 shell 一样判断结果。
  */
-function runBash(args, projectDir, readonlyShell, profileId) {
+function runBash(args, projectDir, readonlyShell, ownerKey) {
   const command = normalizeCommand(String(args.command || '').trim());
   if (!command) return Promise.resolve({ success: false, error: 'invalid command: expected a non-empty string' });
   if (DANGEROUS_CMDS.some((pattern) => pattern.test(command))) {
@@ -338,7 +338,7 @@ function runBash(args, projectDir, readonlyShell, profileId) {
       // 非零退出也正常返回（success:true），模型看到标记自行判断
       resolve({ success: true, data: body });
     });
-    activeProcesses.register(child, profileId);
+    activeProcesses.register(child, ownerKey);
   });
 }
 
@@ -378,14 +378,17 @@ class JsRunner {
       return { success: false, error: '无效的 JS 代码' };
     }
     const profileId = (options && options.profileId) || null;
-    // 已停止状态：直接拒绝执行新脚本（按窗口 profileId 隔离，A 窗口停止不影响 B）
-    if (activeProcesses.isAborted(profileId)) {
+    const sessionId = (options && options.sessionId) || null;
+    // 已停止状态：直接拒绝执行新脚本。
+    // 隔离粒度必须是「窗口 + 会话」复合键——只用 profileId 会让同一窗口内
+    // A 会话的停止标记污染 B 会话（跨会话串扰）。
+    const abortKey = activeProcesses.abortKey(profileId, sessionId);
+    if (activeProcesses.isAborted(abortKey)) {
       return { success: false, error: '任务已被用户停止' };
     }
 
     const deniedTools = new Set((options && options.deniedTools) || []);
     const readonlyShell = !!(options && options.readonlyShell);
-    const sessionId = (options && options.sessionId) || null;
     // 收集本次脚本加载的图片，随结果一起回传（供多模态附件注入）
     const imageCollector = [];
     // 收集本次脚本实际调用过的工具名，随结果回传。
@@ -403,8 +406,8 @@ class JsRunner {
     // 避免沙箱内出现宿主 realm 的 Error / Function 逃逸通道。
     const hostBridge = async (op, argsJson) => {
       // 用户点「停止」后，沙箱代码的下一次工具调用直接失败，从而中断整个脚本
-      // 按 profileId 隔离：只中断本窗口的任务，不影响其他窗口
-      if (activeProcesses.isAborted(profileId)) {
+      // 按「窗口 + 会话」复合键隔离：只中断本会话的任务，不影响其他窗口/会话
+      if (activeProcesses.isAborted(abortKey)) {
         return JSON.stringify({ success: false, error: '任务已被用户停止' });
       }
       if (Date.now() - startTime > deadlineMs) {
@@ -441,14 +444,17 @@ class JsRunner {
           // 否则本次 register 的 running 条目永远留在生命周期表里（sweep 不清理 running）。
           result = { success: false, error: gate.error };
         } else if (op === '__bash') {
-          result = await runBash(args, projectDir, readonlyShell, profileId);
+          result = await runBash(args, projectDir, readonlyShell, abortKey);
         } else {
           const tool = this.registry.get(op);
           if (!tool) {
             result = { success: false, error: '未知工具: ' + op };
           } else {
             try {
-              result = await tool.execute(Object.assign({}, args, { projectDir, readonlyShell, imageCollector, profileId, sessionId }));
+              result = await tool.execute(Object.assign({}, args, {
+                projectDir, readonlyShell, imageCollector,
+                profileId, sessionId, abortKey,
+              }));
             } catch (err) {
               result = { success: false, error: '工具 ' + op + ' 执行异常: ' + (err.message || String(err)) };
             }

@@ -51,6 +51,8 @@ pluginEvents.setMaxListeners(0);
 // 插件注册的提示词段落：placeholder -> getter
 const pluginPromptSections = new Map();
 
+
+
 /**
  * 初始化：确定插件目录 + 播种随应用附带的示例插件
  * @param {string} storeDir  userData 目录
@@ -352,6 +354,10 @@ function createContext(plugin) {
       // 落盘（重启保留）；失败不影响运行
       try { pluginStore.savePluginConfig(plugin.id, ctx.config); } catch (_) {}
     },
+    // 保存整个配置对象，供插件在修改多处配置时统一落盘
+    save() {
+      try { pluginStore.savePluginConfig(plugin.id, ctx.config || {}); } catch (_) {}
+    }
   };
   ctx.sessions = {
     current() { try { const dsh = require('./dsh'); return dsh.getCurrentSession ? dsh.getCurrentSession() : { id: null, projectDir: null }; } catch (_) { return { id: null, projectDir: null }; } },
@@ -568,6 +574,11 @@ function startWatching() {
           setTimeout(startWatching, 100);
         }, 300);
       });
+      // 必须捕获 error 事件：目录被删除或锁定时，fs.watch 会触发该事件
+      // 如果不处理，会冒泡为 uncaughtException 直接杀死主进程
+      w.on('error', (err) => {
+        console.warn('[PluginHost] 插件监听异常 (' + id + '):', err.message);
+      });
       _watchers.push(w);
     } catch (err) {
       // 某些平台不支持 recursive，退化为非递归
@@ -754,12 +765,16 @@ function deletePlugin(pluginId) {
   if (!resolved.startsWith(path.resolve(PLUGINS_DIR) + path.sep)) {
     return { success: false, error: '非法插件 id' };
   }
+  // 必须先停止监听，否则 Windows 下文件被锁无法删除
+  stopWatching();
   try {
     if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
     pluginStore.removeRecord(pluginId);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
+  } finally {
+    startWatching();
   }
 }
 

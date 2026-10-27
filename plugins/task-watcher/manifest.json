@@ -4,5 +4,6 @@
   "version": "1.0.0",
   "description": "任务中途停止（计划有未完成项且 AI 不再输出）超过设定时长后，自动催促 AI 继续推进。可配置阈值、催促上限与提示文案。",
   "icon": "👁️",
-  "entry": "index.js"
+  "entry": "index.js",
+  "apiVersion": 1
 }

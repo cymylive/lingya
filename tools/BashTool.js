@@ -132,7 +132,7 @@ class BashTool extends Tool {
             resolve(ToolResult.success(body));
           }
         );
-        activeProcesses.register(child, params && params.profileId);
+        activeProcesses.register(child, (params && params.abortKey) || (params && params.profileId));
       });
     } catch (err) {
       return ToolResult.error('命令执行异常: ' + err.message);

@@ -35,6 +35,13 @@ export function apply(ctx) {
     if (patch && patch.aiKey !== undefined) next.aiKey = String(patch.aiKey || '')
     next.mockResponse = String(next.mockResponse || DEFAULTS.mockResponse)
     ctx.config = next
+    if (ctx.settings) {
+      if (typeof ctx.settings.save === 'function') {
+        ctx.settings.save()
+      } else if (typeof ctx.settings.set === 'function') {
+        for (const k of Object.keys(next)) ctx.settings.set(k, next[k])
+      }
+    }
     return { success: true }
   })
 

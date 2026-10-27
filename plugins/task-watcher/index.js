@@ -47,6 +47,13 @@ export function apply(ctx) {
     // 计数不属于用户可配置项：强制沿用旧值，避免被表单 patch 覆盖或归一化破坏
     next.nudgeCounts = prev.nudgeCounts && typeof prev.nudgeCounts === 'object' ? prev.nudgeCounts : {}
     ctx.config = next
+    if (ctx.settings) {
+      if (typeof ctx.settings.save === 'function') {
+        ctx.settings.save()
+      } else if (typeof ctx.settings.set === 'function') {
+        for (const k of Object.keys(next)) ctx.settings.set(k, next[k])
+      }
+    }
     return next
   })
 

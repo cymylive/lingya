@@ -302,6 +302,8 @@ let electronAPI = {
   scheduleListWindows: () => ipcRenderer.invoke('schedule-list-windows'),
   scheduleValidate: (cron) => ipcRenderer.invoke('schedule-validate', { cron }),
   scheduleReport: (payload) => ipcRenderer.invoke('schedule-report', payload),
+  scheduleFetchPending: () => ipcRenderer.invoke('schedule-fetch-pending'),
+  scheduleReportDone: (payload) => ipcRenderer.invoke('schedule-report-done', payload),
   onScheduleRun: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('schedule-run', handler);

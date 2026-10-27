@@ -12,12 +12,29 @@
 const { execFileSync } = require('child_process');
 
 const active = new Set();
-// 中止标志按窗口/会话隔离：A 窗口点停止不应影响 B 窗口。
+// 中止标志按「窗口 + 会话」隔离：A 窗口点停止不应影响 B 窗口，
+// 同一窗口内的 A 会话停止也不应影响 B 会话（多标签页/多会话共存）。
 // 不传 key 的旧调用点退化为 '__global'，行为与原来一致。
 const abortedKeys = new Set();
 const GLOBAL_KEY = '__global';
 
-// 子进程归属：child -> key（窗口 profileId），用于按窗口隔离 kill
+/**
+ * 构造隔离键：窗口 profileId + 会话 sessionId 的复合键。
+ *
+ * 【为什么必须带 sessionId】只用 profileId 时，同一窗口内切换会话（A → B）
+ * 后，A 会话的停止标记会被 B 会话的 isAborted(profileId) 命中，
+ * 表现为「B 会话一调用工具就报任务已被用户停止」——跨会话串扰。
+ * 复合键让停止/清除/检查三方的粒度一致，都落到具体会话上。
+ *
+ * @param {string} [profileId] 窗口 profile 标识
+ * @param {string} [sessionId] 会话标识
+ * @returns {string} 形如 'p::s' 的复合键
+ */
+function abortKey(profileId, sessionId) {
+  return (profileId || 'p') + '::' + (sessionId || 's');
+}
+
+// 子进程归属：child -> key（窗口+会话复合键），用于按会话隔离 kill
 const owner = new WeakMap();
 
 /** 注册一个正在运行的子进程 */
@@ -69,7 +86,8 @@ function count() {
 
 /**
  * 标记为已中止（停止任务时调用）。
- * @param {string} [key] 隔离键（窗口 profileId）。不传则记为全局，影响所有窗口。
+ * @param {string} [key] 隔离键（建议用 abortKey(profileId, sessionId)）。
+ *   不传则记为全局，影响所有窗口/会话。
  */
 function markAborted(key) {
   abortedKeys.add(key || GLOBAL_KEY);
@@ -89,7 +107,7 @@ function clearAborted(key) {
 
 /**
  * 是否已中止。
- * @param {string} [key] 隔离键（窗口 profileId）。
+ * @param {string} [key] 隔离键（建议用 abortKey(profileId, sessionId)）。
  *   传了：只查该 key 或全局标记。
  *   不传：任一 key 被标记就算中止（兼容旧调用点）。
  */
@@ -98,4 +116,8 @@ function isAborted(key) {
   return abortedKeys.has(key) || abortedKeys.has(GLOBAL_KEY);
 }
 
-module.exports = { register, unregister, killAll, count, markAborted, clearAborted, isAborted };
+module.exports = {
+  register, unregister, killAll, count,
+  markAborted, clearAborted, isAborted,
+  abortKey, GLOBAL_KEY,
+};

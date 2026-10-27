@@ -661,9 +661,14 @@ function registerIpcHandlers() {
   ipcMain.handle('abort-execution', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const profileId = ctx ? ctx.profileId : null;
-    // 只杀本窗口的子进程：A 窗口停止不应中断 B 窗口正在跑的命令
-    const killed = activeProcesses.killAll(profileId);
-    activeProcesses.markAborted(profileId);
+    // 会话级隔离键：同一窗口内的 A 会话停止不应污染 B 会话。
+    // 侧边栏（壳窗口）调用时 sender 是 shell.html，resolveSessionId 会回退到
+    // sessionStore 维护的当前会话，保证与工具执行侧的键一致。
+    const sessionId = resolveSessionId(ctx, event.sender);
+    const key = activeProcesses.abortKey(profileId, sessionId);
+    // 只杀本会话的子进程：A 会话停止不应中断 B 会话正在跑的命令
+    const killed = activeProcesses.killAll(key);
+    activeProcesses.markAborted(key);
     return { success: true, killed };
   });
 
@@ -702,7 +707,9 @@ function registerIpcHandlers() {
   ipcMain.handle('clear-abort', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const profileId = ctx ? ctx.profileId : null;
-    activeProcesses.clearAborted(profileId);
+    // 与 abort-execution 用同一粒度的键，否则清除会漏（标记残留 → 换会话仍被拦）
+    const sessionId = resolveSessionId(ctx, event.sender);
+    activeProcesses.clearAborted(activeProcesses.abortKey(profileId, sessionId));
     return { success: true };
   });
 
@@ -1247,6 +1254,61 @@ function registerIpcHandlers() {
       return await pluginHost.invokePluginIpc(pluginId, channel, args, event);
     } catch (err) {
       return { success: false, error: err.message };
+    }
+  });
+
+  // 导出自带插件开发 Skill 包
+  ipcMain.handle('plugin-export-skill', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    let tmpDir = '';
+    try {
+      const win = windowState.getMainWindow();
+      let srcDir = path.join(__dirname, '..', 'assets', 'plugin-dev-skill');
+      if (!fs.existsSync(srcDir)) throw new Error('内置 Skill 资源不存在，请检查打包配置');
+      
+      const saveRes = await dialog.showSaveDialog(win || undefined, {
+        title: '导出插件开发 Skill',
+        defaultPath: 'LingYa-Plugin-Dev-Skill.zip',
+        filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+      });
+      if (saveRes.canceled || !saveRes.filePath) return { success: false, error: '已取消' };
+
+      // 1. 建临时目录
+      tmpDir = path.join(os.tmpdir(), 'lingya-skill-' + Date.now());
+      fs.mkdirSync(tmpDir, { recursive: true });
+      
+      // 2. 复制内置 Skill 目录
+      function copyDir(src, dst) {
+        fs.mkdirSync(dst, { recursive: true });
+        for (const f of fs.readdirSync(src)) {
+          const s = path.join(src, f);
+          const d = path.join(dst, f);
+          if (fs.statSync(s).isDirectory()) copyDir(s, d);
+          else fs.copyFileSync(s, d);
+        }
+      }
+      copyDir(srcDir, tmpDir);
+
+      // 3. 复制核心源码作为参考
+      const srcCodeDir = path.join(tmpDir, 'source');
+      fs.mkdirSync(srcCodeDir, { recursive: true });
+      fs.copyFileSync(path.join(__dirname, 'plugin-host.js'), path.join(srcCodeDir, 'plugin-host.js'));
+      fs.copyFileSync(path.join(__dirname, '..', 'preload', 'plugin-api.js'), path.join(srcCodeDir, 'plugin-api.js'));
+
+      // 4. 打包
+      const buf = require('./plugin-zip').zipDir(tmpDir, 'LingYa-Plugin-Dev-Skill');
+      fs.writeFileSync(saveRes.filePath, buf);
+      
+      return { success: true, path: saveRes.filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    } finally {
+      // 5. 清理临时目录
+      if (tmpDir && fs.existsSync(tmpDir)) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+      }
     }
   });
 

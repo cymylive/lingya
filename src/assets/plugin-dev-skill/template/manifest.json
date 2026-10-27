@@ -1,0 +1,9 @@
+{
+  "id": "my-plugin",
+  "name": "我的插件",
+  "version": "1.0.0",
+  "description": "插件描述",
+  "icon": "🔌",
+  "entry": "index.js",
+  "apiVersion": 1
+}

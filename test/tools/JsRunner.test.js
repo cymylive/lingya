@@ -165,4 +165,46 @@ test('JsRunner 失败结果也带 toolCalls', async () => {
   assert.deepStrictEqual(r.toolCalls, ['todo_write'], '失败时也要回传已调用的工具');
 });
 
+// ===== 同窗口跨会话隔离（回归：A 会话停止不应影响 B 会话）=====
+test('同窗口跨会话隔离：A 会话被停止后，B 会话仍能执行工具', async () => {
+  const ap = require('../../tools/active-processes');
+  ap.clearAborted();
+  // A 会话被用户点「停止」——按会话级复合键标记
+  ap.markAborted(ap.abortKey('winP', 'sessA'));
+  try {
+    const runner = new JsRunner(registry);
+    const r = await runner.run('const x = 1;', process.cwd(), { profileId: 'winP', sessionId: 'sessB' });
+    assert.strictEqual(r.success, true, 'B 会话不应被同窗口 A 会话的停止牵连: ' + r.error);
+  } finally {
+    ap.clearAborted();
+  }
+});
+
+test('同窗口跨会话隔离：本会话被停止后，其自身执行被拒绝', async () => {
+  const ap = require('../../tools/active-processes');
+  ap.clearAborted();
+  ap.markAborted(ap.abortKey('winP', 'sessA'));
+  try {
+    const runner = new JsRunner(registry);
+    const r = await runner.run('const x = 1;', process.cwd(), { profileId: 'winP', sessionId: 'sessA' });
+    assert.strictEqual(r.success, false);
+    assert.match(String(r.error), /停止/);
+  } finally {
+    ap.clearAborted();
+  }
+});
+
+test('同窗口跨会话隔离：不同窗口同会话名互不影响', async () => {
+  const ap = require('../../tools/active-processes');
+  ap.clearAborted();
+  ap.markAborted(ap.abortKey('winP1', 'sessX'));
+  try {
+    const runner = new JsRunner(registry);
+    const r = await runner.run('const x = 1;', process.cwd(), { profileId: 'winP2', sessionId: 'sessX' });
+    assert.strictEqual(r.success, true, '另一窗口不应受影响: ' + r.error);
+  } finally {
+    ap.clearAborted();
+  }
+});
+
 

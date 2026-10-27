@@ -90,6 +90,9 @@ async function openNewChat(ctx) {
   return { ok: true };
 }
 
+// 待推送的定时任务队列（按 profileId 隔离，确保只推给对应的窗口）
+let pendingScheduleTask = null;
+
 /** 执行一个任务：在目标窗口新开对话并发指令给 AI */
 async function runTask(task) {
   console.log('[Schedule] 执行任务:', task.name);
@@ -120,27 +123,59 @@ async function runTask(task) {
   try {
     const { initProject } = require('./project-context');
     await initProject(false, ctx, projectDir);
-    // 等 renderer 把 systemPrompt 填入输入框并发送（renderer 有 2-4 秒随机延迟）
-    await new Promise((r) => setTimeout(r, 4000));
+    // 等 renderer 把 systemPrompt 填入输入框并发送。
+    // 注意：用户的系统提示词可能分多段发送，且间隔配置可能达 6000ms。
+    // 这里把等待时间延长到 8 秒，确保基础分片有机会进入发送队列。
+    // 后续的分片处理交由 renderer 的 schedule-bridge 精确判断。
+    await new Promise((r) => setTimeout(r, 8000));
   } catch (err) {
     console.error('[Schedule] initProject 失败:', err.message);
   }
 
-  // 3) 发指令给 AI。bridge 会暂存任务，等 AI 回复完成（初始化就绪）后再真正发送，
-  //    避免覆盖还没发出去的 systemPrompt。
-  try {
-    const wc = ctx.win.webContents;
-    wc.send('schedule-run', { taskId: task.id, name: task.name, prompt: task.prompt });
-    store.markRun(task.id, { success: true, at: new Date().toISOString() });
-  } catch (err) {
-    store.markRun(task.id, { success: false, error: err.message });
-    await pushFeishu('❌ 定时任务失败：' + task.name + '（' + err.message + '）', task);
-  }
+  // 3) 暂存任务，等前端主动来拉取。
+  //    为什么不再用 wc.send：新打开的标签页 preload 尚未执行完毕，直接 send 必定丢失。
+  //    改为前端就绪后主动调用 schedule-fetch-pending 领取任务。
+  pendingScheduleTask = {
+    taskId: task.id,
+    name: task.name,
+    prompt: task.prompt,
+    profileId: ctx.profileId,
+    task: task // 保留完整 task 供飞书推送用
+  };
+  console.log('[Schedule] 任务已暂存，等待前端拉取:', task.name);
 }
 
 function registerScheduleIpc() {
   scheduler.setRunner(runTask);
   scheduler.start();
+
+  // ===== 新增：前端主动拉取待执行任务 =====
+  ipcMain.handle('schedule-fetch-pending', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '未找到窗口上下文' };
+    if (pendingScheduleTask && pendingScheduleTask.profileId === ctx.profileId) {
+      const t = pendingScheduleTask;
+      pendingScheduleTask = null; // 取走即清空，防止重复执行
+      return { success: true, task: t };
+    }
+    return { success: true, task: null };
+  });
+
+  // ===== 新增：前端发送成功后的回执 =====
+  ipcMain.handle('schedule-report-done', async (_e, { taskId, taskName, success, error } = {}) => {
+    try {
+      if (success) {
+        store.markRun(taskId, { success: true, at: new Date().toISOString() });
+        console.log('[Schedule] 前端回执：任务发送成功', taskName);
+      } else {
+        store.markRun(taskId, { success: false, error: error || '发送失败' });
+        await pushFeishu('❌ 定时任务失败：' + taskName + '（' + (error || '发送失败') + '）', null);
+      }
+    } catch (err) {
+      console.error('[Schedule] 回执处理失败:', err.message);
+    }
+    return { success: true };
+  });
 
   // 列出任务
   ipcMain.handle('schedule-list', async () => {
