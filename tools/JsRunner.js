@@ -390,6 +390,11 @@ class JsRunner {
         error: reason === 'preempt' ? activeProcesses.PREEMPT_ERROR : '任务已被用户停止',
       };
     }
+    // 登记本次执行的代际号。被新一轮工具调用抢占时，代际号会失效，
+    // hostBridge 据此中止后续工具调用。
+    // 【为什么不用 markAborted 做抢占】抢占与新执行共用同一个 abortKey，
+    // 用中止标记会让新脚本一启动就被自己刚设的标记拦住。
+    const execGen = activeProcesses.beginExecution(abortKey);
 
     const deniedTools = new Set((options && options.deniedTools) || []);
     const readonlyShell = !!(options && options.readonlyShell);
@@ -411,6 +416,10 @@ class JsRunner {
     const hostBridge = async (op, argsJson) => {
       // 用户点「停止」后，沙箱代码的下一次工具调用直接失败，从而中断整个脚本
       // 按「窗口 + 会话」复合键隔离：只中断本会话的任务，不影响其他窗口/会话
+      // 被新一轮工具调用抢占：本次执行已不是该会话的当前执行 → 中止
+      if (!activeProcesses.isCurrentExecution(abortKey, execGen)) {
+        return JSON.stringify({ success: false, error: activeProcesses.PREEMPT_ERROR });
+      }
       if (activeProcesses.isAborted(abortKey)) {
         // 区分「用户主动停止」与「被新一轮工具调用抢占」：
         // 前者 AI 应停下等指令，后者说明本轮结果已淘汰、不必重试。
@@ -562,6 +571,8 @@ class JsRunner {
       return { success: false, error: err && err.message ? err.message : String(err), toolCalls: toolCallLog };
     } finally {
       if (settleTimer) clearTimeout(settleTimer);
+      // 只清理匹配的代际：旧执行收尾不能把新执行的状态清掉
+      activeProcesses.endExecution(abortKey, execGen);
       // 整个脚本执行结束：释放沙箱与累积结果后触发一次 GC
       memoryJanitor.collect(true);
     }

@@ -147,6 +147,61 @@ function markAborted(key, reason) {
   abortReasons.set(k, reason === 'preempt' ? 'preempt' : 'stop');
 }
 
+// ========== 执行代际（抢占的正确实现） ==========
+//
+// 【为什么不能用 markAborted 做抢占】
+// 抢占与新执行共用同一个 abortKey。若抢占用 markAborted(key) 标记，
+// 新脚本 JsRunner.run() 开头就检测 isAborted(key) → 被自己刚设的标记拦住，
+// 表现为「抢占之后什么都跑不起来」。代际把失效粒度精确到某一次执行：
+// 抢占让旧代际失效，新执行拿新代际号，互不影响。
+const execGen = new Map();   // key -> 当前代际号
+let genSeq = 0;
+
+/**
+ * 开始一次执行，返回本次的代际号。
+ * @param {string} key 隔离键
+ * @returns {number} 代际号
+ */
+function beginExecution(key) {
+  genSeq += 1;
+  execGen.set(key || GLOBAL_KEY, genSeq);
+  return genSeq;
+}
+
+/**
+ * 本次执行是否仍是该 key 的当前执行。
+ * 被抢占后旧执行的代际号不再等于当前值 → 返回 false，据此中止。
+ * @param {string} key 隔离键
+ * @param {number} gen 代际号
+ */
+function isCurrentExecution(key, gen) {
+  return execGen.get(key || GLOBAL_KEY) === gen;
+}
+
+/**
+ * 让该 key 的当前执行失效（抢占用），并杀掉其前台子进程。
+ * 不产生 abort 标记，因此不会拦住随后的新执行。
+ * @param {string} key 隔离键
+ * @returns {number} 被杀的前台进程数
+ */
+function killRunning(key) {
+  const k = key || GLOBAL_KEY;
+  // 递增代际 = 旧执行失效（不用删，删了旧执行会误判为「当前」）
+  genSeq += 1;
+  execGen.set(k, genSeq);
+  return killForeground(k);
+}
+
+/**
+ * 执行收尾。只清理匹配的代际，避免旧执行收尾把新执行的状态清掉。
+ * @param {string} key 隔离键
+ * @param {number} gen 代际号
+ */
+function endExecution(key, gen) {
+  const k = key || GLOBAL_KEY;
+  if (execGen.get(k) === gen) execGen.delete(k);
+}
+
 /**
  * 读取中止原因。
  * @param {string} [key] 隔离键
@@ -188,5 +243,6 @@ function isAborted(key) {
 module.exports = {
   register, unregister, killAll, killForeground, count, getKind,
   markAborted, clearAborted, isAborted, getAbortReason,
+  beginExecution, isCurrentExecution, killRunning, endExecution,
   abortKey, GLOBAL_KEY, PREEMPT_ERROR,
 };

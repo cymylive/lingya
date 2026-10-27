@@ -676,7 +676,8 @@ function registerIpcHandlers() {
   //
   // 与 abort-execution 的区别：
   //  - abort-execution 是用户点「停止」：killAll（前台+后台）+ 置中止标志
-  //  - preempt-execution 是新工具调用抢占：killForeground（只杀前台）+ 置中止标志
+  //  - preempt-execution 是新工具调用抢占：killRunning（失效旧代际 + 只杀前台），
+  //    刻意不置中止标志 —— 否则新脚本一启动就被自己拦住
   // 后台任务（bashBackground 起的构建/服务/爬虫）设计上就长跑，由 AI 自己
   // bashKill 收尾，抢占时误杀会让用户丢工作成果，因此必须区分。
   ipcMain.handle('preempt-execution', async (event, payload) => {
@@ -687,8 +688,9 @@ function registerIpcHandlers() {
       const key = activeProcesses.abortKey(profileId, sessionId);
       // 先置标志再杀：让正在跑的 JS 沙箱下一次工具调用立刻返回失败，
       // 与 kill 并行生效，避免杀完进程后脚本还在继续往下走。
-      activeProcesses.markAborted(key, 'preempt');
-      const killed = activeProcesses.killForeground(key);
+      // 【不能用 markAborted】抢占与新执行共用 abortKey，置中止标记会让
+      // 紧随其后的新脚本一启动就被拦住 —— 功能完全不生效。改用代际失效。
+      const killed = activeProcesses.killRunning(key);
       return { success: true, killed };
     } catch (err) {
       return { success: false, killed: 0, error: err.message };
