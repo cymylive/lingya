@@ -12,6 +12,7 @@ const { hasTool, toolNamesList } = require('../tool-names');
 const state = require('./state');
 const taskState = require('./task-state');
 const { detectXmlFormat } = require('./xml-detect');
+const { shouldPreempt, preemptPreviousRun } = require('./intercept-preempt');
 
 const MAX_JS_RETRY = 3;
 // 连续 XML 提示次数（防止无限循环）
@@ -598,6 +599,31 @@ function startInterceptObserver() {
         // 队列若正忙，本次回复要排队 → 标记 queued，UI 显示「排队等待」而非「正在解析」
         taskState.setQueued(queueBusy || queueDepth > 0);
       } catch (_) { /* ignore */ }
+
+      // ===== 抢占：本条回复含工具调用 → 中止上一轮前台执行，不必排队 =====
+      //
+      // 【为什么放在 enqueueProcessing 之前】抢占必须发生在入队前。
+      // 若先入队再抢占，旧任务仍占着 Promise 链，新回复依旧要等它退出，
+      // 面板仍显示「排队等待」—— 这正是要修的症状。
+      //
+      // 【为什么只对含工具调用的回复】纯聊天不打断正在跑的任务：
+      // 用户随口问一句不该把构建/爬虫杀掉。
+      try {
+        if (shouldPreempt(detail.text)) {
+          const sessionId = (taskState.snapshot() || {}).sessionId || null;
+          // 不等它完成：抢占是「发令」，入队要立刻继续，
+          // 否则又变成串行等待，只是把等待从队列挪到了这里。
+          preemptPreviousRun(null, sessionId).then((r) => {
+            if (r && r.killed > 0) {
+              console.log('[LingYa][抢占] 已中止上一轮前台执行，杀掉进程 ' + r.killed + ' 个');
+            }
+            // 抢占了就不该再显示「排队等待」：本条回复马上要执行工具
+            try { taskState.setQueued(false); } catch (_) {}
+          }).catch(() => {
+            try { taskState.setQueued(false); } catch (_) {}
+          });
+        }
+      } catch (_) { /* 抢占失败不阻断正常流程 */ }
       // 缓存最近一次完整回复文本，供手动解析复用（不依赖 DOM）
       lastInterceptedText = detail.text || '';
 
