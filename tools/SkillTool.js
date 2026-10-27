@@ -56,20 +56,48 @@ class SkillListTool extends Tool {
         });
         if (!s) return ToolResult.error('技能 "' + opts.name + '" 不存在或已禁用');
 
+        // P1 埋点：查过就算用过
+        try { skillStore.touchSkill(s.name); } catch (_) {}
+
         if (opts.includeInstructions) {
           return ToolResult.success("### " + s.name + nl() + String(s.instructions || ""));
         }
 
         const path = s.source === "local" && s.localPath ? " | 路径: " + s.localPath : " | 内联技能";
-        return ToolResult.success("- " + s.name + ": " + flat(s.description, 120) + path);
+        return ToolResult.success("- " + s.name + ": " + flat(s.description, 200) + path);
       }
 
       let list = all;
-      const q = opts.query ? String(opts.query).toLowerCase().trim() : "";
+      const q = opts.query ? String(opts.query).trim() : "";
       if (q) {
-        list = list.filter(function (s) {
-          const hay = String(s.name + " " + s.description + " " + s.instructions).toLowerCase();
-          return hay.indexOf(q) >= 0;
+        // P4：分词模糊匹配 + 多字段加权排序（名字 > 描述 > 正文）
+        const words = String(q).toLowerCase().split(/[\s,，、]+/).filter(function (w) { return w.length > 0; });
+        const scored = [];
+        for (const s of list) {
+          const name = String(s.name || "").toLowerCase();
+          const desc = String(s.description || "").toLowerCase();
+          const body = String(s.instructions || "").toLowerCase();
+          let score = 0;
+          let hitAll = true;
+          for (const w of words) {
+            let hit = 0;
+            if (name.indexOf(w) >= 0) hit += 100;
+            if (desc.indexOf(w) >= 0) hit += 30;
+            if (body.indexOf(w) >= 0) hit += 5;
+            if (hit === 0) { hitAll = false; break; }
+            score += hit;
+          }
+          if (hitAll && score > 0) scored.push({ skill: s, score });
+        }
+        scored.sort(function (a, b) { return b.score - a.score; });
+        list = scored.map(function (x) { return x.skill; });
+      } else {
+        // 无 query：按使用频率 + 最近使用排序（P2 的一致性）
+        list = list.slice().sort(function (a, b) {
+          const ua = Math.log((a.useCount || 0) + 1);
+          const ub = Math.log((b.useCount || 0) + 1);
+          if (Math.abs(ua - ub) > 0.01) return ub - ua;
+          return String(a.name).localeCompare(String(b.name));
         });
       }
 
@@ -79,7 +107,7 @@ class SkillListTool extends Tool {
 
       const lines = list.map(function (s) {
         const path = s.source === "local" && s.localPath ? " | 路径: " + s.localPath : " | 内联技能";
-        return "- " + s.name + ": " + flat(s.description, 100) + path;
+        return "- " + s.name + ": " + flat(s.description, 120) + path;
       });
 
       return ToolResult.success(lines.join(nl()));

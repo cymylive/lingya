@@ -1163,6 +1163,16 @@ function registerIpcHandlers() {
     }
   });
 
+  // 置顶/取消置顶插件（仅影响侧边栏排序）
+  ipcMain.handle('plugin-set-pinned', async (_event, { id, pinned } = {}) => {
+    try {
+      const res = await pluginHost.setPluginPinned(id, !!pinned);
+      return Object.assign({ plugins: pluginHost.listPlugins() }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 重载插件（改代码后无需重启 LingYa）
   ipcMain.handle('plugin-reload', async (_event, { id } = {}) => {
     try {

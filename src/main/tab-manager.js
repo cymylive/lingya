@@ -8,6 +8,7 @@
  * 只有一个 tab 是 active（可见），其余 setVisible(false) 隐藏。
  * ctx.view 始终指向 active tab 的 view，保证 85 处旧代码（ctx.win.webContents）继续工作。
  */
+const petLoader = require('./pet-loader');
 const path = require('path');
 const { WebContentsView } = require('electron');
 
@@ -37,7 +38,12 @@ function createTab(ctx, opts) {
       sandbox: false,
       partition: profileData.partition,
       backgroundThrottling: false,
-      additionalArguments: ['--lingya-user-data=' + (o.userDataDir || '')],
+      additionalArguments: [
+              '--lingya-user-data=' + (o.userDataDir || ''),
+              // 外部宠物：主进程扫描 <userData>/pets/*.json 后用 base64 注入，
+              // preload 在模块加载时同步解析，不依赖 IPC 时序。
+              petLoader.ARG_NAME + petLoader.buildArgValue(o.externalPets || []),
+            ],
     },
   });
   view.webContents.setUserAgent(USER_AGENT);

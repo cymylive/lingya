@@ -5,9 +5,36 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { isSensitive } = require('./memory-redaction');
 
 const MEMORY_TYPES = ['user', 'feedback', 'topic', 'reference'];
 const MEMORY_TOKEN_BUDGET = 1500;
+
+// ===== 记忆系统 v2 数据模型 =====
+// scope: 记忆归属范围。'global' 或 'project:<项目名>'
+// kind:  identity=身份偏好（常驻注入）；experience=项目经验（按需检索）
+// confidence: verified=实测确认；hypothesis=推测
+const MEMORY_SCOPES_GLOBAL = 'global';
+const MEMORY_KINDS = ['identity', 'experience'];
+const MEMORY_CONFIDENCE = ['verified', 'hypothesis'];
+
+/** 把任意 scope 输入规范化为 'global' 或 'project:xxx' */
+function normalizeScope(input) {
+  const s = String(input || '').trim();
+  if (!s || s === 'global') return MEMORY_SCOPES_GLOBAL;
+  if (s.startsWith('project:')) {
+    const name = s.slice('project:'.length).trim();
+    return name ? 'project:' + name : MEMORY_SCOPES_GLOBAL;
+  }
+  // 裸项目名 → 补前缀
+  return 'project:' + s;
+}
+
+/** 从 scope 里取项目名（global 返回 null） */
+function getScopeProject(scope) {
+  const s = String(scope || '');
+  return s.startsWith('project:') ? s.slice('project:'.length) : null;
+}
 
 // 中文停用词（移植自 deepseek-pp constants）
 const STOP_WORDS = new Set([
@@ -89,6 +116,135 @@ function formatMemoriesBlock(memories) {
 }
 
 /**
+ * 名称相似度（0~1），用于冲突检测。
+ * 用字符二元组 Jaccard 相似度，对中文友好，无需分词。
+ */
+function nameSimilarity(a, b) {
+  const s1 = String(a || '').replace(/\s+/g, '');
+  const s2 = String(b || '').replace(/\s+/g, '');
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+  const grams = (s) => {
+    const set = new Set();
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+    return set;
+  };
+  const g1 = grams(s1), g2 = grams(s2);
+  if (g1.size === 0 || g2.size === 0) return 0;
+  let inter = 0;
+  for (const g of g1) if (g2.has(g)) inter++;
+  return inter / (g1.size + g2.size - inter);
+}
+
+/**
+ * 检测新记忆与已有记忆的冲突（同名/高相似）。
+ * 不自动合并——只返回候选，由调用方提示人工裁决。
+ * @returns {Array<{memory, similarity, sameContent}>}
+ */
+function findConflicts(candidate, opts) {
+  const o = opts || {};
+  const threshold = typeof o.threshold === 'number' ? o.threshold : 0.8;
+  const scope = normalizeScope(candidate.scope);
+  const pool = getAllMemories().filter((m) => m.id !== candidate.id && m.scope === scope && !m.supersededBy);
+  const out = [];
+  for (const m of pool) {
+    const sim = nameSimilarity(candidate.name, m.name);
+    if (sim >= threshold) {
+      out.push({
+        memory: m,
+        similarity: sim,
+        sameContent: String(m.content || '').trim() === String(candidate.content || '').trim(),
+      });
+    }
+  }
+  out.sort((a, b) => b.similarity - a.similarity);
+  return out;
+}
+
+/**
+ * 扫描所有记忆的 content，检查里面提到的绝对路径是否存在。
+ * 不存在的标记 stale=true（检索时降权），不删除。
+ * @returns {{checked:number, stale:number, restored:number}}
+ */
+function refreshStaleFlags() {
+  const data = readRaw();
+  let checked = 0, stale = 0, restored = 0;
+  const re = /[A-Za-z]:\\[^\s"'<>|*?\n，。；：、）】]+/g;
+  for (const m of data.memories) {
+    const hits = String(m.content || '').match(re);
+    if (!hits || hits.length === 0) continue;
+    checked++;
+    let anyMissing = false;
+    for (const p of hits.slice(0, 5)) {
+      try { if (!fs.existsSync(p.replace(/[\\/]+$/, ''))) { anyMissing = true; break; } } catch (_) {}
+    }
+    if (anyMissing && !m.stale) { m.stale = true; stale++; }
+    else if (!anyMissing && m.stale) { m.stale = false; restored++; }
+  }
+  writeRaw(data);
+  return { checked, stale, restored };
+}
+
+/**
+ * 四路融合检索（记忆系统 v2）
+ *
+ * score = 0.35*关键词 + 0.25*scope匹配 + 0.20*新鲜度 + 0.10*使用频率 + 0.10*可信度
+ *
+ * @param {string} query 查询词
+ * @param {object} [opts]
+ *   - scope: 当前项目 scope（'global' 或 'project:xxx'）；不传则只查 global
+ *   - kind:  'identity' | 'experience' | undefined
+ *   - limit: 返回条数上限，默认 10
+ *   - includeCold: 是否包含冷记忆（默认 false）
+ *   - includeSuperseded: 是否包含已被取代的（默认 false）
+ * @returns {Array<{memory, score, parts}>}
+ */
+function searchMemories(query, opts) {
+  const o = opts || {};
+  const limit = Math.max(1, Math.min(50, Number(o.limit) || 10));
+  const curScope = o.scope ? normalizeScope(o.scope) : MEMORY_SCOPES_GLOBAL;
+  const promptWords = segmentText(query || '');
+  const now = Date.now();
+
+  let pool = getAllMemories().filter((m) => !isSensitive(m));
+
+  if (!o.includeSuperseded) pool = pool.filter((m) => !m.supersededBy);
+  if (o.kind) pool = pool.filter((m) => m.kind === o.kind);
+
+  // scope 硬过滤：global + 当前项目
+  pool = pool.filter((m) => m.scope === MEMORY_SCOPES_GLOBAL || m.scope === curScope);
+
+  if (!o.includeCold) {
+    pool = pool.filter((m) => {
+      const cold = (m.accessCount || 0) < 3 && (now - (m.lastAccessedAt || 0)) > 180 * 86400000;
+      return !cold;
+    });
+  }
+
+  const scored = pool.map((m) => {
+    const kw = keywordScore(promptWords, m);
+    const kwNorm = Math.min(1, kw / 60);
+
+    const scopeMatch = (m.scope && m.scope === curScope) ? 1 : 0;
+
+    const days = (now - (m.lastAccessedAt || m.updatedAt || m.createdAt || 0)) / 86400000;
+    const freshness = Math.max(0, 1 - days / 90);   // 90 天半衰期
+
+    const usage = Math.min(1, Math.log((m.accessCount || 0) + 1) / Math.log(21));
+
+    const conf = m.confidence === 'verified' ? 1 : 0;
+    // 路径失效的记忆降权 50%
+    const stalePenalty = m.stale ? 0.5 : 1;
+
+    const score = (0.35 * kwNorm + 0.25 * scopeMatch + 0.20 * freshness + 0.10 * usage + 0.10 * conf) * stalePenalty;
+    return { memory: m, score, parts: { kw: kwNorm, scope: scopeMatch, fresh: freshness, usage, conf, stale: !!m.stale } };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+/**
  * 选择要注入的记忆：pinned 优先 + 时间衰减 + （可选）关键词匹配，按 token 预算截断
  * @param {Array} allMemories
  * @param {object} [options] { prompt?: string, budget?: number }
@@ -135,8 +291,10 @@ function readRaw() {
   try {
     if (STORE_FILE && fs.existsSync(STORE_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(STORE_FILE, 'utf-8'));
+      const raw = Array.isArray(parsed.memories) ? parsed.memories : [];
+      // 惰性迁移：老记录缺 v2 字段时就地补齐（只在内存，下次写入时落盘）
       cache = {
-        memories: Array.isArray(parsed.memories) ? parsed.memories : [],
+        memories: raw.map(migrateMemoryFields),
         nextId: typeof parsed.nextId === 'number' ? parsed.nextId : 1,
       };
       return cache;
@@ -146,6 +304,24 @@ function readRaw() {
   }
   cache = { memories: [], nextId: 1 };
   return cache;
+}
+
+/**
+ * 给存量记忆补 v2 字段（惰性迁移）。
+ * 幂等：已有正确字段的记录原样返回。
+ */
+function migrateMemoryFields(m) {
+  if (!m || typeof m !== 'object') return m;
+  const out = { ...m };
+  if (!out.scope) out.scope = MEMORY_SCOPES_GLOBAL;
+  if (out.scope !== MEMORY_SCOPES_GLOBAL) {
+    out.kind = 'experience';
+  } else if (!MEMORY_KINDS.includes(out.kind)) {
+    out.kind = (out.type === 'user' || out.type === 'feedback') ? 'identity' : 'experience';
+  }
+  if (!MEMORY_CONFIDENCE.includes(out.confidence)) out.confidence = 'verified';
+  if (out.supersededBy === undefined) out.supersededBy = null;
+  return out;
 }
 
 function writeRaw(data) {
@@ -174,8 +350,17 @@ function normalizeNewMemory(input) {
   const content = String(input.content || '').trim();
   if (!name) throw new Error('记忆 name 不能为空');
   if (!content) throw new Error('记忆 content 不能为空');
+  const scope = normalizeScope(input.scope);
+  // 项目 scope 的记忆一律是 experience（项目规则不是身份）
+  const kind = scope === MEMORY_SCOPES_GLOBAL
+    ? (MEMORY_KINDS.includes(input.kind) ? input.kind : (type === 'user' || type === 'feedback' ? 'identity' : 'experience'))
+    : 'experience';
+  const confidence = MEMORY_CONFIDENCE.includes(input.confidence) ? input.confidence : 'verified';
   return {
     type,
+    kind,
+    scope,
+    confidence,
     name: name.slice(0, 200),
     content: content.slice(0, 8000),
     description: String(input.description || '').slice(0, 1000),
@@ -183,6 +368,7 @@ function normalizeNewMemory(input) {
       ? [...new Set(input.tags.filter((t) => typeof t === 'string').map((t) => t.trim()).filter(Boolean))]
       : [],
     pinned: input.pinned === true,
+    supersededBy: null,
   };
 }
 
@@ -203,6 +389,21 @@ function saveMemory(input) {
   writeRaw(data);
   console.log('[MemoryStore] 已保存记忆 #' + record.id + ': ' + record.name);
   return record.id;
+}
+
+/**
+ * 保存记忆并返回冲突候选（供工具层提示人工裁决）。
+ * @returns {{id:number, conflicts:Array}}
+ */
+function saveMemoryWithConflictCheck(input) {
+  const id = saveMemory(input);
+  try {
+    const saved = getMemoryById(id);
+    const conflicts = findConflicts(saved, { threshold: 0.8 });
+    return { id, conflicts };
+  } catch (_) {
+    return { id, conflicts: [] };
+  }
 }
 
 function updateMemory(input) {
@@ -258,9 +459,73 @@ function touchMemories(ids) {
 // 缩成单字母，零信息损失（type 只有 4 种，且索引仅用于"知道有这条记忆"）。
 const MEMORY_TYPE_ABBR = { reference: 'r', user: 'u', topic: 't', feedback: 'f' };
 
+/** 过滤掉敏感记忆，返回可外发列表 */
+function getVisibleMemories() {
+  return getAllMemories().filter(function (m) { return !isSensitive(m); });
+}
+
+
+/**
+ * 记忆系统 v2：生成结构化摘要（替代全量索引注入）
+ *
+ * 结构：
+ *   【你】identity 记忆（限 15 条 / 500 字符）
+ *   【当前项目】experience 记忆标题（限 5 条 / 200 字符）
+ *   检索指令
+ *
+ * @param {object} [options] { projectDir?: string }
+ * @returns {string}
+ */
+function buildMemoryDigest(options) {
+  const o = options || {};
+  const visible = getVisibleMemories();
+  if (visible.length === 0) return '';
+
+  const curScope = o.projectDir
+    ? normalizeScope(path.basename(o.projectDir))
+    : MEMORY_SCOPES_GLOBAL;
+  const projectName = getScopeProject(curScope);
+
+  const lines = [];
+
+  // ---- 身份层：全量，按 pinned + 使用频率排序 ----
+  const identities = visible
+    .filter((m) => m.kind === 'identity')
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.accessCount || 0) - (a.accessCount || 0))
+    .slice(0, 15);
+
+  if (identities.length > 0) {
+    let budget = 500;
+    const parts = [];
+    for (const m of identities) {
+      const seg = m.name;
+      if (budget - seg.length < 0) break;
+      parts.push(seg);
+      budget -= seg.length + 2;
+    }
+    if (parts.length > 0) lines.push('【你】' + parts.join(' · '));
+  }
+
+  // ---- 经验层：只给当前项目标题 ----
+  const projectMemories = visible.filter((m) => m.kind === 'experience' && m.scope === curScope);
+  if (projectName && projectMemories.length > 0) {
+    const top = projectMemories
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.accessCount || 0) - (a.accessCount || 0))
+      .slice(0, 5);
+    lines.push('');
+    lines.push('【当前项目：' + projectName + '】' + projectMemories.length + ' 条经验');
+    lines.push(top.map((m) => m.name).join(' · '));
+  }
+
+  // ---- 检索指令 ----
+  lines.push('');
+  lines.push('> 记忆库共 ' + visible.length + ' 条，不会自动出现在上下文。遇到具体项目/路径/配置/报错/发布操作，先调 memoryRecall("关键词") 再回答，别凭印象。');
+
+  return lines.join('\n');
+}
 
 function buildMemorySectionMinimal(options = {}) {
-  const memories = getAllMemories();
+  const memories = getVisibleMemories();
   if (memories.length === 0) return formatMemoriesBlock([]);
   const NL = String.fromCharCode(10);
   const topN = Math.max(1, Math.min(5, Number(options.topN || 3)));
@@ -276,7 +541,7 @@ function buildMemorySectionMinimal(options = {}) {
   return ["【长期记忆】共 " + memories.length + " 条；仅注入最相关 " + selected.length + " 条摘要。", lines.join(NL), "> 凡任务可能涉及凭证/token/密钥/路径/配置/端口/账号、用户偏好、历史决策、之前项目，或不确定是否已有相关记忆，先调用 memoryList() 取全文，不要凭猜测、不要等用户提醒。"].join(NL + NL);
 }
 function buildMemorySection(options) {
-  const memories = getAllMemories();
+  const memories = getVisibleMemories();
   if (memories.length === 0) return formatMemoriesBlock([]);
   const selected = selectMemories(memories, options);
   if (selected.length > 0) touchMemories(selected.map((m) => m.id));
@@ -400,6 +665,19 @@ module.exports = {
   touchMemories,
   buildMemorySection,
   buildMemorySectionMinimal,
+  getVisibleMemories,
+  searchMemories,
+  buildMemoryDigest,
+  findConflicts,
+  refreshStaleFlags,
+  saveMemoryWithConflictCheck,
+  nameSimilarity,
+  normalizeScope,
+  getScopeProject,
+  migrateMemoryFields,
+  MEMORY_SCOPES_GLOBAL,
+  MEMORY_KINDS,
+  MEMORY_CONFIDENCE,
   importMemories,
   exportMemories,
 };

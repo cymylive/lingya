@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>墨鸦宠物动效预览</title>
+<style>
+  :root { --accent: #2dd4bf; }
+  body { margin:0; min-height:100vh; background:#0f1419; color:#e6edf3;
+         font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; padding:40px; }
+  h1 { font-size:16px; font-weight:600; color:#8b949e; margin:0; }
+  .row { display:flex; gap:22px; flex-wrap:wrap; justify-content:center; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .cell-label { font-size:11px; color:#8b949e; }
+  /* ===== 与项目内完全一致的徽章容器 ===== */
+  #lingya-status-badge {
+    position: relative; width:50px; height:50px; border-radius:15px;
+    background: linear-gradient(145deg, rgba(45,212,191,0.28), rgba(20,184,166,0.12));
+    border: 1.5px solid rgba(45,212,191,0.5);
+    box-shadow: 0 0 0 4px rgba(45,212,191,0.08), 0 8px 24px rgba(0,0,0,0.4);
+    display:flex; align-items:center; justify-content:center;
+    transition: background .2s, border-color .2s;
+  }
+  /* ===== 以下 CSS 从 template.js 原样复制 ===== */
+  .lingya-pet { width:38px; height:38px; overflow:visible; display:block; pointer-events:none;
+    filter: drop-shadow(0 0 6px rgba(45,212,191,0.4)); transition: filter .3s ease; }
+  .lingya-pet-body, .lingya-pet-head, .lingya-pet-tail, .lingya-pet-wing {
+    fill:#16202b; stroke:rgba(45,212,191,0.6); stroke-width:1.2; stroke-linejoin:round;
+    transform-box:fill-box; transform-origin:center; }
+  .lingya-pet-beak { fill:#2dd4bf; transform-box:fill-box; transform-origin:center; }
+  .lingya-pet-eye { fill:#2dd4bf; transform-box:fill-box; transform-origin:center;
+    animation: lingya-pet-blink 6s ease-in-out infinite; }
+  @keyframes lingya-pet-blink { 0%,92%,100%{transform:scaleY(1);} 95%{transform:scaleY(0.12);} }
+  @keyframes lingya-pet-breathe { 0%,100%{transform:scale(1);} 50%{transform:scale(1.055);} }
+  @keyframes lingya-pet-wingbeat { 0%,100%{transform:rotate(0deg);} 50%{transform:rotate(-9deg);} }
+  @keyframes lingya-pet-shake { 0%,100%{transform:translateX(0) rotate(0deg);} 25%{transform:translateX(-1.6px) rotate(-2.5deg);} 75%{transform:translateX(1.6px) rotate(2.5deg);} }
+  @keyframes lingya-pet-hop { 0%,100%{transform:translateY(0);} 35%{transform:translateY(-7px);} 65%{transform:translateY(0);} }
+  @keyframes lingya-pet-droop { 0%,100%{transform:translateY(0);} 50%{transform:translateY(1.8px);} }
+  .lingya-state-idle .lingya-pet-body, .lingya-state-idle .lingya-pet-head { animation: lingya-pet-breathe 4.2s ease-in-out infinite; }
+  .lingya-state-generating .lingya-pet-body, .lingya-state-generating .lingya-pet-head { animation: lingya-pet-breathe 1.5s ease-in-out infinite; }
+  .lingya-state-generating .lingya-pet-wing { animation: lingya-pet-wingbeat .95s ease-in-out infinite; }
+  .lingya-state-generating .lingya-pet { filter: drop-shadow(0 0 10px rgba(45,212,191,.75)); }
+  .lingya-state-executing .lingya-pet-body, .lingya-state-executing .lingya-pet-head, .lingya-state-executing .lingya-pet-tail { animation: lingya-pet-shake .3s ease-in-out infinite; }
+  .lingya-state-executing .lingya-pet-wing { animation: lingya-pet-wingbeat .34s ease-in-out infinite; }
+  .lingya-state-executing .lingya-pet { filter: drop-shadow(0 0 10px rgba(251,191,36,.8)); }
+  .lingya-state-done .lingya-pet { animation: lingya-pet-hop .85s ease-out 2; filter: drop-shadow(0 0 10px rgba(74,222,128,.8)); }
+  .lingya-state-stopped .lingya-pet { animation: lingya-pet-droop 2.4s ease-in-out infinite; opacity:.7; }
+  .lingya-state-stopped .lingya-pet-body, .lingya-state-stopped .lingya-pet-head { stroke: rgba(248,113,113,.55); }
+  .lingya-state-generating#lingya-status-badge { background: rgba(45,212,191,.4); border-color: rgba(45,212,191,.8); }
+  .lingya-state-executing#lingya-status-badge { background: rgba(251,191,36,.4); border-color: rgba(251,191,36,.8); }
+  .lingya-state-done#lingya-status-badge { background: rgba(74,222,128,.4); border-color: rgba(74,222,128,.85); }
+  .lingya-state-stopped#lingya-status-badge { background: rgba(248,113,113,.4); border-color: rgba(248,113,113,.8); }
+  /* 放大版，便于观察细节 */
+  .big #lingya-status-badge { width:120px; height:120px; border-radius:32px; }
+  .big .lingya-pet { width:92px; height:92px; }
+</style></head>
+<body>
+<h1>墨鸦宠物 · 五种状态预览（与项目内 CSS 完全一致）</h1>
+<div class="row big">
+  <div class="cell"><div id="lingya-status-badge" class="lingya-state-idle"><svg class="lingya-pet" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="lingya-pet-tail" d="M50 36 Q59 43 61 51 Q54 48 50 45 Q56 52 54 57 Q47 50 45 41 Z"/>
+    <path class="lingya-pet-wing" d="M36 28 Q47 34 44 47 Q34 42 31 30 Z"/>
+    <ellipse class="lingya-pet-body" cx="33" cy="37" rx="17" ry="15"/>
+    <circle class="lingya-pet-head" cx="24" cy="23" r="12.5"/>
+    <path class="lingya-pet-beak" d="M11.5 22.5 L2.5 25.5 L11.5 28.5 Z"/>
+    <circle class="lingya-pet-eye" cx="19.5" cy="20.5" r="2.7"/>
+  </svg></div><div class="cell-label">待机 idle</div></div>
+  <div class="cell"><div id="lingya-status-badge" class="lingya-state-generating"><svg class="lingya-pet" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="lingya-pet-tail" d="M50 36 Q59 43 61 51 Q54 48 50 45 Q56 52 54 57 Q47 50 45 41 Z"/>
+    <path class="lingya-pet-wing" d="M36 28 Q47 34 44 47 Q34 42 31 30 Z"/>
+    <ellipse class="lingya-pet-body" cx="33" cy="37" rx="17" ry="15"/>
+    <circle class="lingya-pet-head" cx="24" cy="23" r="12.5"/>
+    <path class="lingya-pet-beak" d="M11.5 22.5 L2.5 25.5 L11.5 28.5 Z"/>
+    <circle class="lingya-pet-eye" cx="19.5" cy="20.5" r="2.7"/>
+  </svg></div><div class="cell-label">AI 生成中</div></div>
+  <div class="cell"><div id="lingya-status-badge" class="lingya-state-executing"><svg class="lingya-pet" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="lingya-pet-tail" d="M50 36 Q59 43 61 51 Q54 48 50 45 Q56 52 54 57 Q47 50 45 41 Z"/>
+    <path class="lingya-pet-wing" d="M36 28 Q47 34 44 47 Q34 42 31 30 Z"/>
+    <ellipse class="lingya-pet-body" cx="33" cy="37" rx="17" ry="15"/>
+    <circle class="lingya-pet-head" cx="24" cy="23" r="12.5"/>
+    <path class="lingya-pet-beak" d="M11.5 22.5 L2.5 25.5 L11.5 28.5 Z"/>
+    <circle class="lingya-pet-eye" cx="19.5" cy="20.5" r="2.7"/>
+  </svg></div><div class="cell-label">执行工具中</div></div>
+  <div class="cell"><div id="lingya-status-badge" class="lingya-state-done"><svg class="lingya-pet" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="lingya-pet-tail" d="M50 36 Q59 43 61 51 Q54 48 50 45 Q56 52 54 57 Q47 50 45 41 Z"/>
+    <path class="lingya-pet-wing" d="M36 28 Q47 34 44 47 Q34 42 31 30 Z"/>
+    <ellipse class="lingya-pet-body" cx="33" cy="37" rx="17" ry="15"/>
+    <circle class="lingya-pet-head" cx="24" cy="23" r="12.5"/>
+    <path class="lingya-pet-beak" d="M11.5 22.5 L2.5 25.5 L11.5 28.5 Z"/>
+    <circle class="lingya-pet-eye" cx="19.5" cy="20.5" r="2.7"/>
+  </svg></div><div class="cell-label">完成</div></div>
+  <div class="cell"><div id="lingya-status-badge" class="lingya-state-stopped"><svg class="lingya-pet" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path class="lingya-pet-tail" d="M50 36 Q59 43 61 51 Q54 48 50 45 Q56 52 54 57 Q47 50 45 41 Z"/>
+    <path class="lingya-pet-wing" d="M36 28 Q47 34 44 47 Q34 42 31 30 Z"/>
+    <ellipse class="lingya-pet-body" cx="33" cy="37" rx="17" ry="15"/>
+    <circle class="lingya-pet-head" cx="24" cy="23" r="12.5"/>
+    <path class="lingya-pet-beak" d="M11.5 22.5 L2.5 25.5 L11.5 28.5 Z"/>
+    <circle class="lingya-pet-eye" cx="19.5" cy="20.5" r="2.7"/>
+  </svg></div><div class="cell-label">已停止</div></div>
+</div>
+<h1>实际尺寸（50×50，就是它在悬浮球里的真实大小）</h1>
+<div class="row" id="realSize"></div>
+<script>
+  const states = [['idle','待机'],['generating','生成中'],['executing','执行中'],['done','完成'],['stopped','已停止']];
+  const svgStr = document.querySelector('.lingya-pet').outerHTML;
+  const box = document.getElementById('realSize');
+  states.forEach(([s,label]) => {
+    const cell = document.createElement('div'); cell.className = 'cell';
+    cell.innerHTML = '<div id="lingya-status-badge" class="lingya-state-' + s + '">' + svgStr + '</div><div class="cell-label">' + label + '</div>';
+    box.appendChild(cell);
+  });
+</script>
+</body></html>

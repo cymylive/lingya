@@ -69,3 +69,4 @@ test/coverage.lcov
  
 # �Դ� Node ����ʱ������ʱ�� scripts/fetch-runtime.mjs ���أ� 
 resources/runtime/ 
+.tmp-*

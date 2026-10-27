@@ -769,46 +769,12 @@
       var box = document.getElementById('sh-plug-body');
       if(!box) return;
       if(!data || !data.success){ box.className='sh-empty'; box.textContent='加载失败：'+((data&&data.error)||'未知'); return; }
-      var ps = data.plugins || [];
+      // 按置顶状态排序：置顶的排前面，其余保持原顺序
+      var ps = (data.plugins || []).slice().sort(function(a,b){ return (b.pinned?1:0) - (a.pinned?1:0); });
       box.className='';
       var html='';
-      // 本地插件为空时显示提示，但**不 return** —— 否则下面的 DSH 区块/市场看不到
-      if(!ps.length){
-        html+='<div style="padding:8px;text-align:center;color:var(--ck-text-dim);font-size:11px;">暂无本地插件（放入目录：<span style="word-break:break-all;color:var(--ck-primary);">'+esc(data.dir||'')+'</span>）</div>';
-      }
-      for(var i=0;i<ps.length;i++){
-        var p=ps[i];
-        // 该插件是否有可打开的面板视图
-        var viewKey = null;
-        if(typeof pluginViews !== 'undefined' && pluginViews){
-          for(var vk in pluginViews){ if(vk.indexOf(p.id+':')===0){ viewKey=vk; break; } }
-        }
-        html+='<div class="sh-card" style="margin-bottom:8px;" data-pid="'+esc(p.id)+'">'+
-          '<div style="display:flex;align-items:center;gap:8px;">'+
-            '<span style="font-size:18px;">'+esc(p.icon||'🔌')+'</span>'+
-            '<div style="flex:1;min-width:0;">'+
-              '<div style="font-size:12.5px;font-weight:600;color:var(--ck-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name)+' <span style="font-weight:400;color:var(--ck-text-dim);font-size:10.5px;">v'+esc(p.version)+'</span></div>'+
-              '<div style="font-size:11px;color:var(--ck-text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+attr(p.id)+'">'+esc(p.id)+(p.loaded?' · 已加载':'')+'</div>'+
-            '</div>'+
-            '<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;flex-shrink:0;"><input type="checkbox" class="sh-plug-toggle" data-pid="'+esc(p.id)+'" '+(p.enabled?'checked':'')+' /> 启用</label>'+
-          '</div>'+
-          (p.description?('<div style="font-size:11px;color:var(--ck-text-dim);margin-top:6px;line-height:1.4;">'+esc(p.description)+'</div>'):'')+
-          (viewKey?('<div style="margin-top:8px;"><button class="sh-btn primary sh-plug-open" data-view="'+esc(viewKey)+'" style="font-size:11.5px;width:100%;">打开面板</button></div>'):'')+
-          '<div style="display:flex;gap:6px;margin-top:8px;">'+
-            '<button class="sh-btn sh-plug-reload" data-pid="'+esc(p.id)+'" style="font-size:11px;">重载</button>'+
-            '<button class="sh-btn sh-plug-export" data-pid="'+esc(p.id)+'" style="font-size:11px;">导出</button>'+
-            '<button class="sh-btn sh-plug-delete" data-pid="'+esc(p.id)+'" style="font-size:11px;color:#f87171;">删除</button>'+
-          '</div>'+
-        '</div>';
-      }
-      html+='<div style="display:flex;gap:6px;margin-top:8px;">'+
-        '<button class="sh-btn primary" id="sh-plug-import" style="flex:1;font-size:11.5px;">导入插件包</button>'+
-        '<button class="sh-btn" id="sh-plug-opendir" style="flex:1;font-size:11.5px;">打开插件目录</button>'+
-      '</div>'+
-      '<div style="display:flex;gap:6px;margin-top:6px;">'+
-        '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
-      '</div>'+
-      '<div class="sh-card" style="margin-top:12px;">'+
+      // DSH 区块移到最顶部
+      html+='<div class="sh-card" style="margin-bottom:12px;">'+
         '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">DSH 外部插件（npm）</div>'+
         '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;line-height:1.4;">安装 DeepSeek Harness 生态的 npm 插件，如 <code style="color:var(--ck-primary);">@deepseek-ai/dsh-tool-todo</code></div>'+
         '<input id="sh-dsh-spec" placeholder="npm 包名（可带版本）" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:6px;color:var(--ck-text);font-size:12px;margin-bottom:6px;" />'+
@@ -828,8 +794,57 @@
           '<div id="sh-dsh-market" style="font-size:11px;color:var(--ck-text-dim);">点「刷新」从 npm 拉取 DSH 插件列表</div>'+
         '</div>'+
       '</div>';
+      // 本地插件为空时显示提示，但**不 return**
+      if(!ps.length){
+        html+='<div style="padding:8px;text-align:center;color:var(--ck-text-dim);font-size:11px;">暂无本地插件（放入目录：<span style="word-break:break-all;color:var(--ck-primary);">'+esc(data.dir||'')+'</span>）</div>';
+      }
+      for(var i=0;i<ps.length;i++){
+        var p=ps[i];
+        // 该插件是否有可打开的面板视图
+        var viewKey = null;
+        if(typeof pluginViews !== 'undefined' && pluginViews){
+          for(var vk in pluginViews){ if(vk.indexOf(p.id+':')===0){ viewKey=vk; break; } }
+        }
+        html+='<div class="sh-card" style="margin-bottom:8px;" data-pid="'+esc(p.id)+'">'+
+          '<div style="display:flex;align-items:center;gap:8px;">'+
+            '<span style="font-size:18px;">'+esc(p.icon||'🔌')+'</span>'+
+            '<div style="flex:1;min-width:0;">'+
+              '<div style="font-size:12.5px;font-weight:600;color:var(--ck-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name)+' <span style="font-weight:400;color:var(--ck-text-dim);font-size:10.5px;">v'+esc(p.version)+'</span></div>'+
+              '<div style="font-size:11px;color:var(--ck-text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+attr(p.id)+'">'+esc(p.id)+(p.loaded?' · 已加载':'')+'</div>'+
+            '</div>'+
+            '<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;flex-shrink:0;" title="置顶插件"><input type="checkbox" class="sh-plug-pin" data-pid="'+esc(p.id)+'" '+(p.pinned?'checked':'')+' /> 📌</label>'+
+            '<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;flex-shrink:0;"><input type="checkbox" class="sh-plug-toggle" data-pid="'+esc(p.id)+'" '+(p.enabled?'checked':'')+' /> 启用</label>'+
+          '</div>'+
+          (p.description?('<div style="font-size:11px;color:var(--ck-text-dim);margin-top:6px;line-height:1.4;">'+esc(p.description)+'</div>'):'')+
+          (viewKey?('<div style="margin-top:8px;"><button class="sh-btn primary sh-plug-open" data-view="'+esc(viewKey)+'" style="font-size:11.5px;width:100%;">打开面板</button></div>'):'')+
+          '<div style="display:flex;gap:6px;margin-top:8px;">'+
+            '<button class="sh-btn sh-plug-reload" data-pid="'+esc(p.id)+'" style="font-size:11px;">重载</button>'+
+            '<button class="sh-btn sh-plug-export" data-pid="'+esc(p.id)+'" style="font-size:11px;">导出</button>'+
+            '<button class="sh-btn sh-plug-delete" data-pid="'+esc(p.id)+'" style="font-size:11px;color:#f87171;">删除</button>'+
+          '</div>'+
+        '</div>';
+      }
+      html+='<div style="display:flex;gap:6px;margin-top:8px;">'+
+        '<button class="sh-btn primary" id="sh-plug-import" style="flex:1;font-size:11.5px;">导入插件包</button>'+
+        '<button class="sh-btn" id="sh-plug-opendir" style="flex:1;font-size:11.5px;">打开插件目录</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-top:6px;">'+
+        '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
+      '</div>';
       box.innerHTML=html;
 
+      var pins=box.querySelectorAll('.sh-plug-pin');
+      for(var p=0;p<pins.length;p++){ (function(cb){
+        cb.addEventListener('change',function(){
+          if(!window.shellAPI||!window.shellAPI.pluginSetPinned) return;
+          cb.disabled=true;
+          window.shellAPI.pluginSetPinned(cb.getAttribute('data-pid'), cb.checked).then(function(r){
+            cb.disabled=false;
+            if(r&&r.success){ toast2(cb.checked?'已置顶':'已取消置顶'); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+            else toast2('操作失败：'+((r&&r.error)||'未知'));
+          })['catch'](function(){ cb.disabled=false; toast2('操作失败'); });
+        });
+      })(pins[p]); }
       var toggles=box.querySelectorAll('.sh-plug-toggle');
       for(var t=0;t<toggles.length;t++){ (function(cb){
         cb.addEventListener('change',function(){

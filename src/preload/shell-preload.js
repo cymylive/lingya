@@ -111,6 +111,7 @@ const api = {
   // ===== 插件系统 =====
   pluginList: () => ipcRenderer.invoke('plugin-list'),
   pluginSetEnabled: (id, enabled) => ipcRenderer.invoke('plugin-set-enabled', { id, enabled }),
+  pluginSetPinned: (id, pinned) => ipcRenderer.invoke('plugin-set-pinned', { id, pinned }),
   pluginReload: (id) => ipcRenderer.invoke('plugin-reload', { id }),
   pluginOpenDir: () => ipcRenderer.invoke('plugin-open-dir'),
   pluginImport: () => ipcRenderer.invoke('plugin-import'),

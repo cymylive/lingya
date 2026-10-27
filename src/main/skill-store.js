@@ -224,10 +224,75 @@ function buildSkillSectionMinimal(options = {}) {
   parts.push("> 需要查找其他技能时调用 skillList({ query })；任务相关时，本地技能先 read 对应 SKILL.md，内联技能用 skillList({ name, includeInstructions: true }) 取全文后再执行。");
   return parts.join(NL);
 }
-function buildSkillSection(options = {}) {
-  const skills = readRaw().skills.filter((s) => s.enabled !== false);
-  if (skills.length === 0) return '';
+/**
+ * 计算技能与当前项目的相关度（P2）。
+ * 三段加权：项目名命中描述 > 历史使用频率 > 最近使用时间。
+ * @param {object} skill
+ * @param {string[]} projectWords 当前项目名拆出的关键词（小写）
+ */
+function relevanceScore(skill, projectWords) {
+  let score = 0;
+  if (projectWords && projectWords.length > 0) {
+    const hay = (String(skill.name || '') + ' ' + String(skill.description || '')).toLowerCase();
+    for (const w of projectWords) {
+      // 中文双字词（如"音乐""发布"）信息量足够，不能按英文的 >2 标准过滤
+      const minLen = /[\u4e00-\u9fa5]/.test(w) ? 2 : 3;
+      if (w.length >= minLen && hay.includes(w)) score += 100;
+    }
+  }
+  // 使用频率：log 抑制长尾，用过的浮上来
+  score += Math.log((skill.useCount || 0) + 1) * 10;
+  // 最近使用：7 天内用过加权
+  if (skill.lastUsedAt) {
+    const days = (Date.now() - skill.lastUsedAt) / 86400000;
+    if (days < 7) score += 20 * (1 - days / 7);
+  }
+  // 置顶/内置技能轻微加权（本地技能优先于内联）
+  if (skill.source === 'local') score += 5;
+  return score;
+}
 
+/**
+ * 从项目路径里提取关键词（用于相关性打分）
+ * 例：C:\...\AI音乐自动发布机 → ['ai音乐自动发布机', '音乐', '发布']
+ */
+function projectKeywords(projectDir) {
+  if (!projectDir) return [];
+  const base = String(projectDir).split(/[\\/]+/).filter(Boolean).pop() || '';
+  const lower = base.toLowerCase();
+  const out = [lower];
+  // 中文按 2-4 字滑窗补一些短词（避免只命中全名）
+  const cjk = base.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+  for (const seg of cjk) {
+    if (seg.length <= 4) out.push(seg);
+    else { out.push(seg.slice(0, 2)); out.push(seg.slice(0, 3)); }
+  }
+  // 英文按非字母数字切
+  const en = lower.split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  return [...new Set([...out, ...en])];
+}
+
+function buildSkillSection(options = {}) {
+  const allSkills = readRaw().skills.filter((s) => s.enabled !== false);
+  if (allSkills.length === 0) return '';
+
+  const opts = options || {};
+  const keywords = projectKeywords(opts.projectDir);
+
+  // 先按相关度排序（稳定：同分按名字）
+  const ranked = allSkills
+    .map((s) => ({ skill: s, score: relevanceScore(s, keywords) }))
+    .sort((a, b) => b.score - a.score || String(a.skill.name).localeCompare(String(b.skill.name)))
+    .map((x) => x.skill);
+
+  // 分层：有相关信号的进「推荐」区，其余进「全部」区
+  const recommended = keywords.length > 0
+    ? ranked.filter((s) => relevanceScore(s, keywords) >= 100).slice(0, 6)
+    : [];
+  const recommendedNames = new Set(recommended.map((s) => s.name));
+  const rest = ranked.filter((s) => !recommendedNames.has(s.name));
+
+  const skills = rest;
   const localSkills = skills.filter((s) => s.source === 'local' && s.localPath);
   const inlineSkills = skills.filter((s) => !(s.source === 'local' && s.localPath));
   // 仅当存在多个本地技能时才抽前缀：只有 1 个时前缀等于其完整父目录，
@@ -240,7 +305,8 @@ function buildSkillSection(options = {}) {
     : '';
 
   const indexLines = localSkills.map((s) => {
-    const desc = firstSentence(s.description, 40);
+    // P3：按句末标点切首句，上限 45 挡住极长单句（推荐区用完整描述，不受此限）
+    const desc = firstSentence(s.description, 45);
     let rel = String(s.localPath);
     if (prefix && pathStartsWith(rel, prefix)) rel = rel.slice(prefix.length).replace(/^[\\/]+/, '');
     rel = rel.replace(/[\\/]SKILL\.md$/i, '');
@@ -251,12 +317,27 @@ function buildSkillSection(options = {}) {
     '### ' + s.name + (s.description ? '（' + s.description + '）' : '') + '\n' + s.instructions);
 
   const parts = [];
+
+  // 推荐区：与当前项目相关的技能，给完整描述不截断
+  if (recommended.length > 0) {
+    const recLines = recommended.map((s) => {
+      const desc = String(s.description || '').replace(/\s+/g, ' ').trim();
+      const rel = s.localPath
+        ? (prefix && pathStartsWith(s.localPath, prefix)
+          ? s.localPath.slice(prefix.length).replace(/^[\\/]+/, '').replace(/[\\/]SKILL\.md$/i, '')
+          : String(s.localPath).replace(/[\\/]SKILL\.md$/i, ''))
+        : '';
+      return '- ' + s.name + (desc ? ': ' + desc : '') + (rel ? ' | ' + rel : '');
+    });
+    parts.push('### 当前项目推荐技能（' + recommended.length + ' 个）\n' + recLines.join('\n'));
+  }
+
   if (indexLines.length) {
     const body = indexLines.join('\n');
     const t = estimateTokens(body);
     const rootNote = prefix ? '默认路径根：' + prefix + '\\<目录>\\SKILL.md\n' : '';
     parts.push(
-      '### 技能索引（共 ' + indexLines.length + ' 个，约 ' + t + ' tokens）\n' +
+      '### 其余技能（共 ' + indexLines.length + ' 个，约 ' + t + ' tokens）\n' +
       rootNote +
       '行内格式「名称: 简介 | 相对目录；少数异根条目为完整目录」。任务相关时先用 read 读取其 SKILL.md 全文再执行：\n\n' +
       body
@@ -281,6 +362,9 @@ function normalizeSkill(input) {
     memoryEnabled: input.memoryEnabled !== false,
     enabled: input.enabled !== false,
     localPath: input.localPath || null,
+    // 使用统计（P1）：用于索引排序，判断哪些技能真的在用
+    useCount: Number(input.useCount) || 0,
+    lastUsedAt: Number(input.lastUsedAt) || null,
     updatedAt: Date.now(),
   };
 }
@@ -312,6 +396,27 @@ function deleteSkill(name) {
   return true;
 }
 
+/**
+ * 记录技能被使用（P1）。
+ * 调用点：skillList({ name }) 查到技能时、read SKILL.md 后由上层调用。
+ * @param {string|string[]} names 技能名或名字数组
+ */
+function touchSkill(names) {
+  const arr = Array.isArray(names) ? names : [names];
+  if (arr.length === 0) return;
+  const data = readRaw();
+  const now = Date.now();
+  let changed = false;
+  for (const s of data.skills) {
+    if (arr.includes(s.name)) {
+      s.useCount = (s.useCount || 0) + 1;
+      s.lastUsedAt = now;
+      changed = true;
+    }
+  }
+  if (changed) writeRaw(data);
+}
+
 function setSkillEnabled(name, enabled) {
   const data = readRaw();
   const skill = data.skills.find((s) => s.name === name);
@@ -328,6 +433,67 @@ function setSkillEnabled(name, enabled) {
  * 解析 SKILL.md：可选 YAML frontmatter（--- 包裹）+ 正文
  * @returns {{ name, description, instructions }}
  */
+/**
+ * 解析 YAML frontmatter 头部（只处理 SKILL.md 会用到的最小子集）。
+ *
+ * 支持三种值形态：
+ *   1. 单行：  name: apk-reverse
+ *   2. 折叠块：description: >       （> 折成空格，>- 去掉末尾换行，| 保留换行）
+ *             多行文本
+ *             继续多行
+ *   3. 引号：  description: "xxx"
+ *
+ * 【为什么必须支持折叠块】173 个本地技能里有 9 个用 `description: >` 写多行描述。
+ * 旧实现只取冒号后那一行，结果 description 变成字面量 ">" / ">-" / "|"，
+ * 这 9 个技能在索引里等于隐身（AI 看到「apk-reverse: >」完全不知道是干什么的）。
+ *
+ * @param {string} header frontmatter 内部文本（不含 --- 分隔线）
+ * @returns {Record<string, string>}
+ */
+function parseFrontmatter(header) {
+  const out = {};
+  const lines = String(header || '').split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const m = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line);
+    if (!m) { i++; continue; }
+
+    const key = m[1].toLowerCase();
+    let rest = m[2].trim();
+
+    // 折叠块标记：> | >- |- | >+ | |+
+    const blockMatch = /^([>|])([+-]?)\s*$/.exec(rest);
+    if (blockMatch) {
+      const style = blockMatch[1];       // '>' 折成空格，'|' 保留换行
+      const chomp = blockMatch[2];       // '-' 去尾换行，'+' 保留全部
+      const collected = [];
+      i++;
+      // 后续行：以空白开头，或空行（空行属于块内）
+      while (i < lines.length) {
+        const l = lines[i];
+        if (l.trim() === '') { collected.push(''); i++; continue; }
+        if (!/^\s/.test(l)) break;      // 回到顶格 → 块结束
+        collected.push(l.replace(/^\s+/, ''));
+        i++;
+      }
+      // 去掉尾部空行（chomp '-' 或默认行为）
+      while (collected.length > 0 && collected[collected.length - 1] === '') collected.pop();
+      rest = style === '|'
+        ? collected.join('\n')
+        : collected.join(' ').replace(/\s+/g, ' ').trim();
+      out[key] = rest;
+      continue;
+    }
+
+    // 单行值：去引号
+    rest = rest.replace(/^["']|["']$/g, '');
+    out[key] = rest;
+    i++;
+  }
+  return out;
+}
+
 function parseSkillDoc(content, fallbackName) {
   let text = String(content || '');
   let name = fallbackName || '';
@@ -338,14 +504,9 @@ function parseSkillDoc(content, fallbackName) {
   if (fm) {
     const header = fm[1];
     body = fm[2];
-    for (const line of header.split(/\r?\n/)) {
-      const m = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line.trim());
-      if (!m) continue;
-      const key = m[1].toLowerCase();
-      let value = m[2].trim().replace(/^["']|["']$/g, '');
-      if (key === 'name') name = value;
-      else if (key === 'description') description = value;
-    }
+    const fields = parseFrontmatter(header);
+    if (fields.name) name = fields.name;
+    if (fields.description) description = fields.description;
   }
 
   const instructions = body.trim();
@@ -407,6 +568,7 @@ module.exports = {
   getSkillByName,
   saveSkill,
   deleteSkill,
+  touchSkill,
   setSkillEnabled,
   importFromFolder,
   parseSkillDoc,

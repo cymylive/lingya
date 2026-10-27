@@ -154,6 +154,7 @@ function scanPlugins() {
       dir,
       manifest,
       enabled: pluginStore.isEnabled(manifest.id, true),
+      pinned: pluginStore.isPinned(manifest.id),
     });
   }
   return out;
@@ -520,6 +521,15 @@ function listPlugins() {
 }
 
 /**
+ * 设置插件置顶状态（仅影响侧边栏列表的排序，不改变插件加载行为）
+ */
+async function setPluginPinned(pluginId, pinned) {
+  if (!pluginId) throw new Error('pluginId 不能为空');
+  pluginStore.setPinned(pluginId, pinned);
+  return { success: true, pinned: !!pinned };
+}
+
+/**
  * 启用/禁用插件（运行时生效）
  * @param {string} pluginId
  * @param {boolean} enabled
@@ -808,6 +818,7 @@ module.exports = {
   loadAllEnabled,
   listPlugins,
   setPluginEnabled,
+  setPluginPinned,
   reloadPlugin,
   loadedIds,
   startWatching,

@@ -291,18 +291,24 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // （实测：AI 音乐项目初始化时注入了「好分数题库采集 CPU 跑满」）。
   const relevancePrompt = [selectedDir, path.basename(selectedDir) || ''].join(' ').trim();
 
-  // 长期记忆注入块
+  // 长期记忆注入块（记忆系统 v2：结构化摘要）
   //
-  // 【为什么用全量版而非 Minimal】Minimal 只给 3 条摘要，模型看不到其余 453 条
-  // 的存在，就不会主动 memoryList() 检索 —— 它不知道自己不知道什么。
-  // 全量版 = 少量正文 + **全部条目索引**（仅 id/type/名称），让"有什么"完全可见，
-  // 体积实测约 19K 字符（456 条），远低于当年 26.8 万字符的爆量事故。
+  // 【为什么不再注入全量索引】
+  // 1) 体积：456 条索引约 21K 字符，每次启动都以"用户消息"形态发到网页端，
+  //    是封号风险的主要来源之一（见 docs/2026-10-28-memory-redaction-design.md）。
+  // 2) 有效性：模型被动接收 456 条标题，绝大多数与当前任务无关，注意力被稀释。
+  //
+  // 【现在的做法】只注入 500 字符左右的结构化摘要：
+  //   - identity 记忆（身份/偏好）全量给标题，限 15 条
+  //   - experience 记忆只给【当前项目】的标题，限 5 条
+  //   - 一条检索指令，要求模型主动 memoryRecall 再回答
+  // 完整记忆仍可通过 memoryRecall / memoryGet 按需取用。
   let memorySection = '';
   try {
-    memorySection = memoryStore.buildMemorySection({ prompt: relevancePrompt });
-    console.log('[LingYa] 记忆注入块长度(full):', memorySection.length);
+    memorySection = memoryStore.buildMemoryDigest({ projectDir: selectedDir });
+    console.log('[LingYa] 记忆摘要长度(digest):', memorySection.length);
   } catch (err) {
-    console.error('[LingYa] 构建记忆注入块失败:', err.message);
+    console.error('[LingYa] 构建记忆摘要失败:', err.message);
   }
 
   // 技能注入块
@@ -311,7 +317,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // 正文仍靠 read SKILL.md 按需取。实测约 15K 字符。
   let skillSection = '';
   try {
-    skillSection = skillStore.buildSkillSection({});
+    skillSection = skillStore.buildSkillSection({ projectDir: selectedDir });
     console.log('[LingYa] 技能注入块长度(full):', skillSection.length);
   } catch (err) {
     console.error('[LingYa] 构建技能注入块失败:', err.message);

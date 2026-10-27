@@ -40,6 +40,7 @@ function injectOverlay() {
   container.innerHTML = OVERLAY_HTML;
   document.body.appendChild(container);
   applyFloatSettings(); // 注入后应用显隐设置
+  applyFabSize(); // 注入后应用用户配置的悬浮球尺寸
 }
 
 // ========== 覆盖层逻辑 ==========
@@ -658,6 +659,64 @@ function startOverlayWatcher() {
   // 方向 C：不再定期强制弹出面板，避免遮挡主界面。
 }
 
+
+/** 悬浮球尺寸的 localStorage 键 */
+const FAB_SIZE_KEY = 'lingya-fab-size';
+/** 可选尺寸档位 */
+const FAB_SIZE_PRESETS = [44, 56, 64, 80];
+/** 默认尺寸 */
+const FAB_SIZE_DEFAULT = 64;
+
+/**
+ * 读取用户配置的悬浮球尺寸。
+ * 非法值（非预设档位、非数字、localStorage 不可用）一律回退到默认，
+ * 避免用户手改坏了之后悬浮球变成一个看不见的点。
+ */
+function getFabSize() {
+  try {
+    const raw = localStorage.getItem(FAB_SIZE_KEY);
+    const n = parseInt(raw, 10);
+    if (FAB_SIZE_PRESETS.indexOf(n) >= 0) return n;
+  } catch (_) { /* localStorage 不可用 */ }
+  return FAB_SIZE_DEFAULT;
+}
+
+/**
+ * 应用悬浮球尺寸：写入 CSS 变量，容器/宠物/标签/状态点全部联动。
+ * 不传参数时按 localStorage 的配置应用。
+ * @param {number} [size] 目标像素值，会先校验是否为合法档位
+ * @returns {number} 实际生效的尺寸
+ */
+function applyFabSize(size) {
+  let target = typeof size === 'number' ? size : getFabSize();
+  if (FAB_SIZE_PRESETS.indexOf(target) < 0) target = FAB_SIZE_DEFAULT;
+  try {
+    document.documentElement.style.setProperty('--lingya-fab-size', target + 'px');
+  } catch (_) { /* document 不可用（测试环境） */ }
+  // 同步按钮高亮状态
+  try {
+    const btns = document.querySelectorAll('#lingya-fab-size-switch .lingya-size-btn');
+    for (let i = 0; i < btns.length; i++) {
+      const v = parseInt(btns[i].getAttribute('data-size'), 10);
+      if (v === target) btns[i].classList.add('lingya-size-btn-active');
+      else btns[i].classList.remove('lingya-size-btn-active');
+    }
+  } catch (_) {}
+  return target;
+}
+
+/**
+ * 设置并持久化悬浮球尺寸。
+ * @param {number} size 目标像素值
+ * @returns {number} 实际生效的尺寸（非法输入时回退默认）
+ */
+function setFabSize(size) {
+  let target = parseInt(size, 10);
+  if (FAB_SIZE_PRESETS.indexOf(target) < 0) target = FAB_SIZE_DEFAULT;
+  try { localStorage.setItem(FAB_SIZE_KEY, String(target)); } catch (_) {}
+  return applyFabSize(target);
+}
+
 module.exports = {
   injectCSS,
   injectOverlay,
@@ -697,4 +756,9 @@ module.exports = {
   hideFirstTimeDialog,
   forceShowOverlay,
   startOverlayWatcher,
+  getFabSize,
+  setFabSize,
+  applyFabSize,
+  FAB_SIZE_PRESETS,
+  FAB_SIZE_DEFAULT,
 };

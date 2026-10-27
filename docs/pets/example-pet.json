@@ -1,0 +1,14 @@
+{
+  "id": "my-robot",
+  "name": "我的机器人",
+  "svgLines": [
+    "  <svg class=\"lingya-pet\" viewBox=\"0 0 64 64\" xmlns=\"http://www.w3.org/2000/svg\">",
+    "    <rect class=\"lingya-pet-body\" x=\"20\" y=\"34\" width=\"24\" height=\"22\" rx=\"6\"/>",
+    "    <circle class=\"lingya-pet-head\" cx=\"32\" cy=\"22\" r=\"13\"/>",
+    "    <circle class=\"lingya-pet-eye\" cx=\"27\" cy=\"21\" r=\"3\"/>",
+    "    <circle class=\"lingya-pet-eye\" cx=\"37\" cy=\"21\" r=\"3\"/>",
+    "    <line class=\"lingya-pet-wing\" x1=\"32\" y1=\"9\" x2=\"32\" y2=\"4\" stroke=\"#2dd4bf\" stroke-width=\"2\" stroke-linecap=\"round\"/>",
+    "    <circle cx=\"32\" cy=\"3\" r=\"2.2\" fill=\"#2dd4bf\"/>",
+    "  </svg>"
+  ]
+}

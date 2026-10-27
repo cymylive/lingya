@@ -70,9 +70,36 @@ function isEnabled(pluginId, defaultEnabled) {
 function setEnabled(pluginId, enabled) {
   if (!pluginId) throw new Error('pluginId 不能为空');
   const data = { ...readRaw() };
-  data[pluginId] = { enabled: !!enabled };
+  const rec = (data[pluginId] && typeof data[pluginId] === 'object') ? { ...data[pluginId] } : {};
+  rec.enabled = !!enabled;
+  data[pluginId] = rec;
   writeRaw(data);
   return !!enabled;
+}
+
+/**
+ * 获取插件置顶状态
+ * @param {string} pluginId
+ */
+function isPinned(pluginId) {
+  const data = readRaw();
+  const rec = data[pluginId];
+  return !!(rec && rec.pinned === true);
+}
+
+/**
+ * 设置插件置顶状态
+ * @param {string} pluginId
+ * @param {boolean} pinned
+ */
+function setPinned(pluginId, pinned) {
+  if (!pluginId) throw new Error('pluginId 不能为空');
+  const data = { ...readRaw() };
+  const rec = (data[pluginId] && typeof data[pluginId] === 'object') ? { ...data[pluginId] } : {};
+  rec.pinned = !!pinned;
+  data[pluginId] = rec;
+  writeRaw(data);
+  return !!pinned;
 }
 
 /** 删除插件记录（插件目录被移除时调用） */
@@ -104,4 +131,4 @@ function getPluginConfig(pluginId) {
   return (rec && typeof rec === 'object' && rec.config) ? rec.config : {};
 }
 
-module.exports = { init, getStoreFile, isEnabled, setEnabled, removeRecord, savePluginConfig, getPluginConfig };
+module.exports = { init, getStoreFile, isEnabled, setEnabled, isPinned, setPinned, removeRecord, savePluginConfig, getPluginConfig };

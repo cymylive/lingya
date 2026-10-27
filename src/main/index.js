@@ -31,6 +31,7 @@ const { createSessionStore } = require('./session-store');
 const { getProvider } = require('../providers');
 const updater = require('./updater');
 const tray = require('./tray');
+const petLoader = require('./pet-loader');
 
 // ========== 数据目录解析（便携优先）==========
 // 见 data-dir.js：便携版数据与程序同目录，换电脑/搬目录配置不丢。
@@ -392,10 +393,22 @@ function createWindow(profile) {
     } catch (_) {}
   };
 
+  // 扫描用户自建宠物（<userData>/pets/*.json），失败不影响启动
+  let externalPets = [];
+  try {
+    const loaded = petLoader.loadExternalPets(USER_DATA_DIR);
+    externalPets = loaded.pets;
+    if (loaded.warnings.length) {
+      console.warn('[LingYa] 外部宠物加载警告:', loaded.warnings.join('; '));
+    }
+  } catch (e) {
+    console.warn('[LingYa] 外部宠物扫描失败:', e && e.message);
+  }
   const mainTab = tabManager.createTab(ctxRef, {
     url: providerChosen ? provider.homeUrl : null,
     profileData,
     userDataDir: app.getPath('userData'),
+    externalPets,
     activate: true,
   });
   mainTab.isMain = true;

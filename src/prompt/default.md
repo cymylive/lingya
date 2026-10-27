@@ -20,12 +20,15 @@
 
 {{MEMORY_SECTION}}
 
-> **记忆检索（重要）**：上方只注入最相关记忆摘要；全部记忆不会一次性列出。凡任务可能涉及以下任一情况，**先调用 memoryList() 取全文再动手，不要凭猜测、不要等用户提醒**：
+> **记忆检索（重要）**：上方只注入极简摘要；完整记忆**不会**自动出现在上下文。遇到以下情况，**先调 memoryRecall("关键词") 再回答，不要凭印象**：
 > - 需要凭证 / token / 密钥 / 路径 / 配置 / 端口 / 账号等具体信息
 > - 涉及用户偏好、工作方式、历史决策、之前的项目
-> - 不确定是否已有相关记忆
+> - 遇到报错，怀疑是以前踩过的坑
+> - 要执行发布 / 上传 / 部署 / 改配置等有历史教训的操作
 >
-> **记忆管理**：保存新记忆用 memorySave({ type, name, content, tags, pinned })，更新用 memoryUpdate，删除用 memoryDelete。
+> **两层取用**：memoryRecall("关键词") 只返回索引（标题+字数+可信度），选中的条目再用 memoryGet([id]) 取正文；正文超 500 字才用 memoryGetFull(id)。
+>
+> **记忆管理**：保存用 memorySave({ type, name, content, scope, kind, confidence, tags, pinned })，更新用 memoryUpdate，删除用 memoryDelete。scope 填 'global' 或项目名；kind 填 identity（身份偏好）或 experience（项目经验）；confidence 填 verified（实测）或 hypothesis（推测）。
 
 ## 技能
 

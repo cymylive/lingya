@@ -3,7 +3,7 @@
  * 由原 preload.js 拆分而来，逻辑保持不变。
  */
 const state = require('../dom/state');
-const { hideOverlay, showOverlay, renderHistory, commandHistory, showToast, showConfirmDialog, hideFirstTimeDialog, setStopped, clearBackgroundTasks } = require('./ui');
+const { hideOverlay, showOverlay, renderHistory, commandHistory, showToast, showConfirmDialog, hideFirstTimeDialog, setStopped, clearBackgroundTasks, setFabSize } = require('./ui');
 const { handleInitProject, renderSessions } = require('../dom/session-list');
 const { sendToChat } = require('../dom/chat-input');
 const { runCompaction, checkPendingInit } = require('../dom/compaction');
@@ -517,6 +517,16 @@ function bindEvents() {
   // 延迟配置的恢复已在 chat-input.js 的 restoreThinkDelayConfig 完成，
   // UI 输入框已移除，这里无需再同步。
 
+  // 悬浮球尺寸切换
+  const fabSizeSwitch = document.getElementById('lingya-fab-size-switch');
+  if (fabSizeSwitch) {
+    fabSizeSwitch.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('.lingya-size-btn') : null;
+      if (!btn) return;
+      const size = parseInt(btn.getAttribute('data-size'), 10);
+      if (!isNaN(size)) setFabSize(size);
+    });
+  }
   const minimizeBtn = document.getElementById('lingya-btn-minimize');
   const initBtn = document.getElementById('lingya-btn-init');
   const clearBtn = document.getElementById('lingya-btn-clear');
