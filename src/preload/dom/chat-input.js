@@ -7,6 +7,7 @@ const state = require('./state');
 const { BT } = require('./js-detector');
 const { getProviderByUrl } = require('../../../src/providers');
 const taskState = require('./task-state');
+const { decideInitialPromptAccept, markBatchHandled } = require('./initial-prompt-guard');
 
 /**
  * 根据当前 URL 获取 provider
@@ -992,6 +993,28 @@ ipcRenderer.on('lingya-insert-to-chat', async (_event, payload) => {
 });
 
 ipcRenderer.on('initial-prompt', (_event, content) => {
+  // ===== 接收端守卫（三层防护的第 2、3 层）=====
+  //
+  // 【真实事故 2026-10-27】同一批 systemPrompt 被完整发送两遍，中间夹着用户真实提问。
+  // 根因是本监听器每收到事件就无条件重置 initialPromptChunks / ChunkIndex /
+  // initialPromptSentChunks，而 SentChunks 正是「同一段绝不重复发送」的幂等载体。
+  // 第二次事件一到，防护被清空，从第 1 段重头再发一遍。
+  //
+  // 现在先问守卫：这批要不要接受？不接受就原样返回，绝不触碰现有状态。
+  const chunkList = content && Array.isArray(content.chunks) ? content.chunks : null;
+  if (chunkList) {
+    const decision = decideInitialPromptAccept({
+      batchId: content.batchId || null,
+      chunkCount: chunkList.length,
+      state: state,
+    });
+    if (!decision.accept) {
+      console.warn('[LingYa][守卫] 拒绝本次 initial-prompt：' + decision.reason);
+      return;
+    }
+    if (content.batchId) markBatchHandled(content.batchId);
+  }
+
   // 分批模式：主进程传 { chunks: [...] }，逐段发送（每段之间等上一条回复结束）
   if (content && Array.isArray(content.chunks) && content.chunks.length > 0) {
     console.log('[' + new Date().toISOString() + '] [LingYa] 收到 initial-prompt 分批事件, 共 ' +

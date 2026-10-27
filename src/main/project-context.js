@@ -28,6 +28,25 @@ const PROMPT_CHUNK_MAX = 40;
 // 提示词模板目录
 const PROMPT_DIR = path.join(__dirname, '..', 'prompt');
 
+// ===== initial-prompt 发送节流 =====
+//
+// 【真实事故 2026-10-27】同一批 systemPrompt 的 4 个分段被完整发送两遍，
+// 中间夹着用户真实提问。AI 上下文被打乱，把重复注入当成用户在喂配置。
+//
+// 有 4 条路径能触发带提示词的初始化：手动初始化、新会话自动注入（2 秒轮询）、
+// 定时任务、飞书同步。它们各自独立，谁都能在任何时刻再发一轮。
+// 这里在发送端加最小间隔，配合接收端的批次去重/进行中守卫形成三重防护。
+const INIT_PROMPT_MIN_INTERVAL_MS = 15000;
+// key = 窗口标识（profileId 或 webContents id），value = 上次发送时刻
+const lastInitPromptSentAt = new Map();
+let initBatchSeq = 0;
+
+/** 生成本批次唯一 ID（接收端据此去重） */
+function makeInitialPromptBatchId() {
+  initBatchSeq += 1;
+  return 'ip_' + Date.now().toString(36) + '_' + initBatchSeq.toString(36);
+}
+
 /**
  * 同时输出到终端和对应平台的日志文件（与渲染进程日志同目录）
  */
@@ -521,11 +540,33 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     }
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (chunks.length > 1) {
-      mainWindow.webContents.send('initial-prompt', { chunks });
-    } else {
-      mainWindow.webContents.send('initial-prompt', combined);
+    // 节流：同一窗口在最小间隔内重复触发时，只告警不重发。
+    // 触发源有 4 条（手动/自动注入/定时任务/飞书），没有这层就会重复灌同一批提示词。
+    const throttleKey = (ctx && ctx.profileId) || String(mainWindow.webContents.id);
+    const now = Date.now();
+    const last = lastInitPromptSentAt.get(throttleKey) || 0;
+    if (now - last < INIT_PROMPT_MIN_INTERVAL_MS) {
+      const waited = Math.round((now - last) / 1000);
+      const left = Math.round((INIT_PROMPT_MIN_INTERVAL_MS - (now - last)) / 1000);
+      console.warn('[LingYa][节流] 本窗口 ' + waited + 's 前刚发过初始提示，' +
+        '距最小间隔还差 ' + left + 's，本次不重发（避免重复灌入 systemPrompt）');
+      stepLog('initial-prompt 被节流拦截');
+      return {
+        success: true,
+        throttled: true,
+        message: '初始化请求过于频繁，已跳过本次重复发送（距上次 ' + waited + 's）',
+      };
     }
+    lastInitPromptSentAt.set(throttleKey, now);
+
+    const batchId = makeInitialPromptBatchId();
+    if (chunks.length > 1) {
+      mainWindow.webContents.send('initial-prompt', { chunks, batchId });
+    } else {
+      mainWindow.webContents.send('initial-prompt', { chunks: [combined], batchId, single: true });
+    }
+    console.log('[LingYa] initial-prompt 已发送，batchId=' + batchId +
+      '，段数=' + chunks.length + '，总长度=' + combined.length);
   }
   stepLog('initial-prompt 已发送');
 
@@ -651,4 +692,9 @@ function splitPromptIntoChunks(text, targetSize, maxChunks) {
   return chunks.length > 0 ? chunks : [src.slice(0, target)];
 }
 
-module.exports = { PROMPT_DIR, initProject, splitPromptIntoChunks };
+module.exports = {
+  PROMPT_DIR, initProject, splitPromptIntoChunks,
+  // 测试用：清空节流记录
+  _resetInitPromptThrottle: function () { lastInitPromptSentAt.clear(); initBatchSeq = 0; },
+  INIT_PROMPT_MIN_INTERVAL_MS,
+};
