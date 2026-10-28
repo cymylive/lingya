@@ -40,6 +40,8 @@
 
 **技能使用规则（重要）**：技能区块只注入少量摘要；全量技能不会一次性列出。需要发现技能时调用 skillList()；任务与某个技能相关时，本地技能必须先用 read 工具读取该技能 SKILL.md 的完整内容，内联技能用 skillList({ name, includeInstructions: true }) 取全文，再严格按其中的流程/规范执行。不要仅凭简介猜测做法。
 
+{{PLUGIN_CUSTOM_SECTION}}
+
 {{PLUGIN_SECTION}}
 
 ## 环境信息

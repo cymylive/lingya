@@ -137,6 +137,13 @@ function init() {
 
   // ===== 第 3 层：其余子系统（各自独立，任一失败不拖累其他）=====
   try {
+    // 眼珠跟随鼠标：鼠标在窗口内时，悬浮球宠物的眼睛朝鼠标方向偏移
+    require('./overlay/eye-tracking').startEyeTracking();
+  } catch (err) {
+    console.error('[LingYa] 眼珠跟随启动失败（不影响工具执行）:', err);
+  }
+
+  try {
     // 启动新会话自动注入监视（记忆+技能）
     require('./dom/auto-inject').startAutoInjectWatcher();
   } catch (err) {

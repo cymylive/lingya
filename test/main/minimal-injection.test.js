@@ -26,7 +26,7 @@ test('minimal 记忆注入：不附全部索引，且体积受控', () => {
   const block = memoryStore.buildMemorySectionMinimal({});
   assert.ok(block.length < 2000, 'minimal 记忆块应小于 2000 字符，实际=' + block.length);
   assert.ok(!block.includes('全部记忆索引'), 'minimal 不应附全部记忆索引');
-  assert.match(block, /memoryList/);
+  assert.match(block, /memoryRecall/);
   assert.match(block, /共 100 条/);
 });
 

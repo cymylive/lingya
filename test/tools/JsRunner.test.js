@@ -11,6 +11,35 @@ test('JsRunner 执行简单 JS 代码', async () => {
   assert.ok(r.output.includes('3'));
 });
 
+test('JsRunner 必须挂载全部记忆工具（memoryRecall/Get/GetFull/List）', async () => {
+  const runner = new JsRunner(registry);
+  const r = await runner.run(
+    'log([typeof memorySave, typeof memoryUpdate, typeof memoryDelete, typeof memoryList, typeof memoryRecall, typeof memoryGet, typeof memoryGetFull].join(","));',
+    process.cwd()
+  );
+  assert.strictEqual(r.success, true);
+  const all = r.output.trim();
+  assert.strictEqual(all, 'function,function,function,function,function,function,function',
+    '七个记忆工具必须全部挂到 globalThis，实际: ' + all);
+});
+
+test('JsRunner 的 memoryRecall 能真正调到 memory_recall 工具', async () => {
+  const runner = new JsRunner(registry);
+  // 空 query 会被工具层拒绝，返回错误而非 is not defined —— 证明确实路由到了工具
+  const r = await runner.run('try { await memoryRecall(""); } catch (e) { log("CAUGHT:" + e.message); }', null);
+  assert.ok(!/memoryRecall is not defined/.test(r.output + (r.error || '')),
+    'memoryRecall 不应报未定义，实际: ' + (r.output || r.error));
+});
+
+test('lingya-tools.d.ts 必须声明全部记忆工具', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const dts = fs.readFileSync(path.join(__dirname, '..', '..', 'tools', 'lingya-tools.d.ts'), 'utf-8');
+  for (const fn of ['memorySave', 'memoryUpdate', 'memoryDelete', 'memoryList', 'memoryRecall', 'memoryGet', 'memoryGetFull']) {
+    assert.ok(dts.includes('declare function ' + fn), 'd.ts 缺少声明: ' + fn);
+  }
+});
+
 test('JsRunner 空代码报错', async () => {
   const runner = new JsRunner(registry);
   const r = await runner.run('', null);

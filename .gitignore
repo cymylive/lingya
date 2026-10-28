@@ -70,3 +70,14 @@ test/coverage.lcov
 # ï¿½Ô´ï¿½ Node ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ scripts/fetch-runtime.mjs ï¿½ï¿½ï¿½Ø£ï¿½ 
 resources/runtime/ 
 .tmp-*
+ 
+# graphify knowledge graph output (local build artifact) 
+graphify-out/
+ 
+# PyInstaller ÖÐ¼ä²úÎïÓë²úÎï£¨exe ÒÑ¸´ÖÆµ½ resources/graphify£© 
+build/graphify-dist/ 
+build/graphify-work/
+ 
+# graphify binaries - 67MB, built locally, not tracked 
+resources/graphify/ 
+build/graphify-work-cli/

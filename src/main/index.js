@@ -124,9 +124,28 @@ try {
 
 // 初始化技能存储（全局共享）
 try {
-  require('./skill-store').init(app.getPath('userData'));
+  const skillStore = require('./skill-store');
+  skillStore.init(app.getPath('userData'));
+  // 同步应用内置技能（src/assets/<dir>/SKILL.md）
+  // 每次启动覆盖同步：SKILL.md 在 asar 里用户改不了，真相源是应用自带版本。
+  // 保留用户对同名技能的 enabled 选择与使用统计。
+  try {
+    skillStore.registerBuiltinSkills(path.join(__dirname, '..', 'assets'));
+  } catch (err) {
+    console.warn('[LingYa] 同步内置技能失败:', err.message);
+  }
 } catch (err) {
   console.error('[LingYa] 初始化技能存储失败:', err.message);
+}
+
+// 注册内置 graphify MCP server（随应用分发，首次启动自动配置）
+// 已存在同名 server 时不覆盖，尊重用户自定义
+try {
+  const mcpConfig = require('./mcp-config');
+  const r = mcpConfig.registerBuiltinGraphify();
+  if (!r.registered) console.log('[LingYa] graphify 内置 server 未注册:', r.reason);
+} catch (err) {
+  console.warn('[LingYa] 注册内置 graphify server 失败:', err.message);
 }
 
 // 初始化飞书配置存储（全局共享）
@@ -1409,6 +1428,10 @@ app.on('before-quit', (event) => {
   if (quitFlushed) return;
   event.preventDefault();
   quitFlushed = true;
+  // 终止后台建图子进程，避免退出后留下孤儿进程
+  try {
+    require('./graphify-builder').cancel();
+  } catch (_) {}
   // 先把各窗口的 sessionStore 内存缓存强制落盘（防抖计时器可能还没到点）
   try {
     for (const ctx of windowState.getAllContexts()) {

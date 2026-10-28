@@ -58,6 +58,7 @@ registry.register(new McpGetToolsTool());
 registry.register(new MemorySaveTool());
 registry.register(new MemoryUpdateTool());
 registry.register(new MemoryDeleteTool());
+registry.register(new MemoryListTool());
 registry.register(new MemoryRecallTool());
 registry.register(new MemoryGetTool());
 registry.register(new MemoryGetFullTool());

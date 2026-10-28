@@ -414,6 +414,50 @@ declare function mcpListServers(): Promise<string>;
  */
 declare function mcpGetTools(serverName: string): Promise<string>;
 
+// ================= 长期记忆 =================
+
+/**
+ * 保存一条新的长期记忆。当用户提到身份/职业/偏好/习惯、纠正行为、或明确要求记住时调用。
+ * @param memory { type, name, content, scope, kind, confidence, tags, pinned }
+ */
+declare function memorySave(memory: Record<string, unknown>): Promise<string>;
+
+/**
+ * 更新一条已有记忆（需提供 id）。
+ */
+declare function memoryUpdate(memory: Record<string, unknown>): Promise<string>;
+
+/**
+ * 删除一条记忆。
+ * @param id 记忆 id
+ */
+declare function memoryDelete(id: number): Promise<string>;
+
+/**
+ * 列出全部记忆索引（id/标题/类型/字数/可信度），不含正文。
+ */
+declare function memoryList(options?: { query?: string }): Promise<string>;
+
+/**
+ * 检索长期记忆，只返回索引（id/标题/类型/字数/可信度），不含正文。
+ * 先用它定位，再用 memoryGet 取正文。
+ * @param query 检索关键词，用项目名/技术名/操作名，越具体越准
+ * @param options { kind?: 'identity'|'experience', limit?: number }
+ */
+declare function memoryRecall(query: string, options?: { kind?: 'identity' | 'experience'; limit?: number }): Promise<string>;
+
+/**
+ * 按 id 取记忆正文（从 memoryRecall 的结果里选）。单条正文限 500 字，总输出限 3000 字。
+ * @param ids 记忆 id 数组
+ */
+declare function memoryGet(ids: number[]): Promise<string>;
+
+/**
+ * 按 id 取单条记忆完整原文。最后手段，只在 memoryGet 的 500 字不够用时调用。
+ * @param id 记忆 id
+ */
+declare function memoryGetFull(id: number): Promise<string>;
+
 /**
  * 切换破甲规则集（Purge）。
  *

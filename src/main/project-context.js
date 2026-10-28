@@ -140,6 +140,23 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     mainWindow.webContents.send('project-dir-updated', selectedDir);
   }
 
+  // 后台为当前项目建图（graphify）。不 await、不阻塞初始化：
+  // 建图可能跑几十秒，阻塞会让窗口白屏。
+  // 图统一落在 <userData>/graphify/graph.json，切项目时覆盖重建，
+  // MCP server 始终指向同一路径，不需要重启。
+  try {
+    const graphifyBuilder = require('./graphify-builder');
+    graphifyBuilder.buildGraph(selectedDir).then((res) => {
+      if (res && res.ok) {
+        console.log('[LingYa] graphify 图谱就绪:', selectedDir, res.nodes != null ? 'nodes=' + res.nodes : '');
+      } else if (res) {
+        console.warn('[LingYa] graphify 建图未完成:', res.reason);
+      }
+    }).catch(() => {});
+  } catch (err) {
+    console.warn('[LingYa] 启动 graphify 建图失败:', err.message);
+  }
+
   // 如果只是修改目录，跳过发送初始提示
   if (skipPrompt) {
     return { success: true, message: '项目目录已更新' };
@@ -444,6 +461,29 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   const coreRuleAmbiguous = pluginSections.CORE_RULE_AMBIGUOUS || '';
   const coreRuleIrreversible = pluginSections.CORE_RULE_IRREVERSIBLE || '';
   const coreRulesEnabled = !!(coreRuleReport || coreRuleAmbiguous || coreRuleIrreversible);
+
+  // 通用插件自定义 section：除三个核心规则 key 外，其余注册的 section 全部拼进
+  // {{PLUGIN_CUSTOM_SECTION}}。模板里把它放在 {{PLUGIN_SECTION}} 旁边（约第 43 行），
+  // 保证落在 systemPrompt 的第一段——否则插件想让 AI「主动做某事」的指令会被
+  // 15000 字符的分段切到第 2~3 段，AI 第一轮回复时根本看不到。
+  //
+  // 为什么需要：registerPromptSection 本身已存在，但 project-context 只按名字取
+  // 三个固定 key，插件注册别的 placeholder 拿得到却没人用。这里补上通用通道。
+  const RESERVED_SECTION_KEYS = new Set(['CORE_RULE_REPORT', 'CORE_RULE_AMBIGUOUS', 'CORE_RULE_IRREVERSIBLE']);
+  let pluginCustomSection = '';
+  try {
+    const parts = [];
+    for (const [key, text] of Object.entries(pluginSections || {})) {
+      if (RESERVED_SECTION_KEYS.has(key)) continue;
+      if (typeof text === 'string' && text.trim()) parts.push(text.trim());
+    }
+    pluginCustomSection = parts.join('\n\n');
+    if (pluginCustomSection) {
+      console.log('[LingYa] 插件自定义 section 已注入，长度:', pluginCustomSection.length);
+    }
+  } catch (err) {
+    console.error('[LingYa] 收集插件自定义 section 失败:', err.message);
+  }
   if (coreRulesEnabled) {
     console.log('[LingYa] 核心规则已由插件加载: REPORT=' + coreRuleReport.length +
       ' AMBIGUOUS=' + coreRuleAmbiguous.length +
@@ -501,6 +541,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{CTF_SECTION}}': (purgeSection ? purgeSection + '\n\n' : '') + ctfSection,
     '{{AGENT_SECTION}}': agent.section || '',
     '{{PLUGIN_SECTION}}': pluginSection,
+    '{{PLUGIN_CUSTOM_SECTION}}': pluginCustomSection,
   };
   let combined = templateContent;
   for (const [key, value] of Object.entries(placeholders)) {

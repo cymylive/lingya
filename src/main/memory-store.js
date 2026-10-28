@@ -519,7 +519,7 @@ function buildMemoryDigest(options) {
 
   // ---- 检索指令 ----
   lines.push('');
-  lines.push('> 记忆库共 ' + visible.length + ' 条，不会自动出现在上下文。遇到具体项目/路径/配置/报错/发布操作，先调 memoryRecall("关键词") 再回答，别凭印象。');
+  lines.push('> 记忆库共 ' + visible.length + ' 条，不会自动出现在上下文。遇到具体项目/路径/配置/报错/发布操作，先调 memoryRecall("关键词") 拿索引，再用 memoryGet([id]) 取正文，别凭印象。');
 
   return lines.join('\n');
 }
@@ -538,7 +538,7 @@ function buildMemorySectionMinimal(options = {}) {
     const preview = content.slice(0, 100);
     return "-#" + m.id + abbr + " " + name + (preview ? "：" + preview + (content.length > 100 ? "…" : "") : "");
   });
-  return ["【长期记忆】共 " + memories.length + " 条；仅注入最相关 " + selected.length + " 条摘要。", lines.join(NL), "> 凡任务可能涉及凭证/token/密钥/路径/配置/端口/账号、用户偏好、历史决策、之前项目，或不确定是否已有相关记忆，先调用 memoryList() 取全文，不要凭猜测、不要等用户提醒。"].join(NL + NL);
+  return ["【长期记忆】共 " + memories.length + " 条；仅注入最相关 " + selected.length + " 条摘要。", lines.join(NL), "> 凡任务可能涉及凭证/token/密钥/路径/配置/端口/账号、用户偏好、历史决策、之前项目，或不确定是否已有相关记忆，先用 memoryRecall('关键词') 检索索引，再用 memoryGet([id]) 取正文，不要凭猜测、不要等用户提醒。"].join(NL + NL);
 }
 function buildMemorySection(options) {
   const memories = getVisibleMemories();
@@ -550,10 +550,10 @@ function buildMemorySection(options) {
   const selectedIds = new Set(selected.map((m) => m.id));
   const omitted = memories.filter((m) => !selectedIds.has(m.id));
   if (omitted.length > 0) {
-    block += '\n\n【全部记忆索引】（仅标题；正文未覆盖下列条目，需要时用 memoryList() 取全文）：\n' +
+    block += '\n\n【全部记忆索引】（仅标题；正文未覆盖下列条目，需要时用 memoryRecall("关键词") 检索、memoryGet([id]) 取正文）：\n' +
       omitted.map((m) => '-#' + m.id + (MEMORY_TYPE_ABBR[m.type] || String(m.type || 'r')[0]) + ' ' + m.name).join('\n');
   }
-  block += '\n\n> 判断标准：只要任务可能与上述任一条目相关（如用到凭证/token/路径/配置/历史决策/用户偏好），就应**先调用 memoryList() 取全文**，不要凭猜测行事、也不要等用户提醒。';
+  block += '\n\n> 判断标准：只要任务可能与上述任一条目相关（如用到凭证/token/路径/配置/历史决策/用户偏好），就应**先用 memoryRecall("关键词") 检索索引、再用 memoryGet([id]) 取正文**，不要凭猜测行事、也不要等用户提醒。';
   return block;
 }
 

@@ -23,7 +23,8 @@ test('记忆不超预算 → 无索引段，但仍有判断标准', () => {
   const block = memoryStore.buildMemorySection({});
   assert.match(block, /偏好/);
   assert.ok(!block.includes('全部记忆索引'));
-  assert.match(block, /先调用 memoryList/);
+  assert.match(block, /memoryRecall/);
+  assert.match(block, /memoryGet/);
 });
 
 test('记忆超预算 → 附全部记忆索引（含未选中条目名）', () => {
@@ -35,7 +36,8 @@ test('记忆超预算 → 附全部记忆索引（含未选中条目名）', () 
   const block = memoryStore.buildMemorySection({});
   assert.match(block, /全部记忆索引/);
   assert.match(block, /GitHub Token/);
-  assert.match(block, /先调用 memoryList/);
+  assert.match(block, /memoryRecall/);
+  assert.match(block, /memoryGet/);
 });
 
 test('已选中的记忆不在索引段重复出现', () => {

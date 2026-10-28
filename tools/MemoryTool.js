@@ -295,11 +295,19 @@ class MemoryGetFullTool extends Tool {
 }
 
 // 兼容：保留旧类名指向新实现，避免外部引用断裂
+// 注意：必须覆写 getPromptSection 返回 null。
+// 父类 MemoryRecallTool 的 section 已声明"用 memoryRecall 检索"，
+// 若此处继承会向 systemPrompt 注入第二份同名 section（name 都是 tool:memory_recall），
+// ToolRegistry.getPromptSections 只 push 不去重 → 提示词重复，且指令互相矛盾。
 class MemoryListTool extends MemoryRecallTool {
   constructor() {
     super();
     this.name = 'memory_list';
     this.signature = 'memoryList({ query })';
+  }
+
+  getPromptSection() {
+    return null;
   }
 }
 

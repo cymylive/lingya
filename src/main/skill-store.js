@@ -561,6 +561,63 @@ function importFromFolder(rootPath) {
   return { imported: importedSkills.length, skills: importedSkills, warnings };
 }
 
+/**
+ * 注册随应用内置的技能（src/assets/<dir>/SKILL.md）。
+ *
+ * 与「本地文件夹导入」的区别：内置技能每次启动都同步——
+ * 因为 SKILL.md 在 asar 里，用户改不了，唯一的真相源就是应用自带的版本。
+ * 升级应用后内置技能自动跟着更新，不需要用户重新导入。
+ *
+ * 幂等：同名技能会被覆盖，但保留用户的 enabled 设置与使用统计。
+ *
+ * @param {string} assetsRoot 内置资源根目录（src/assets）
+ * @returns {{registered: string[], warnings: string[]}}
+ */
+function registerBuiltinSkills(assetsRoot) {
+  const warnings = [];
+  const registered = [];
+  if (!assetsRoot || !fs.existsSync(assetsRoot)) return { registered, warnings };
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(assetsRoot, { withFileTypes: true });
+  } catch (err) {
+    warnings.push('读取内置资源目录失败: ' + err.message);
+    return { registered, warnings };
+  }
+
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const skillFile = path.join(assetsRoot, ent.name, 'SKILL.md');
+    if (!fs.existsSync(skillFile)) continue;
+    try {
+      const raw = fs.readFileSync(skillFile, 'utf-8');
+      const parsed = parseSkillDoc(raw, ent.name);
+      // 保留用户对同名技能做的启用/禁用选择
+      const existing = readRaw().skills.find((s) => s.name === parsed.name);
+      saveSkill({
+        name: parsed.name,
+        description: parsed.description,
+        instructions: parsed.instructions,
+        source: 'local',
+        localPath: skillFile,
+        enabled: existing ? existing.enabled !== false : true,
+        useCount: existing ? existing.useCount : 0,
+        lastUsedAt: existing ? existing.lastUsedAt : null,
+      });
+      registered.push(parsed.name);
+    } catch (err) {
+      warnings.push(ent.name + ': ' + err.message);
+    }
+  }
+
+  if (registered.length > 0) {
+    console.log('[SkillStore] 已同步内置技能: ' + registered.join(', '));
+  }
+  for (const w of warnings) console.warn('[SkillStore] 内置技能同步警告: ' + w);
+  return { registered, warnings };
+}
+
 module.exports = {
   init,
   getStoreFile,
@@ -574,4 +631,5 @@ module.exports = {
   parseSkillDoc,
   buildSkillSection,
   buildSkillSectionMinimal,
+  registerBuiltinSkills,
 };
