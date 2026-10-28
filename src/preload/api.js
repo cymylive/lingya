@@ -277,6 +277,55 @@ let electronAPI = {
   feishuReport: (payload) => {
     return ipcRenderer.invoke('feishu-report', payload);
   },
+  // ========== 微信 iLink 通道 API ==========
+  getWeixinEnabled: () => {
+    return ipcRenderer.invoke('weixin-is-enabled');
+  },
+  getWeixinConfig: () => {
+    return ipcRenderer.invoke('weixin-get-config');
+  },
+  saveWeixinConfig: (data) => {
+    return ipcRenderer.invoke('weixin-save-config', { data });
+  },
+  getWeixinQrcode: () => {
+    return ipcRenderer.invoke('weixin-get-qrcode');
+  },
+  checkWeixinQrcode: (qrcode) => {
+    return ipcRenderer.invoke('weixin-check-qrcode', { qrcode });
+  },
+  reconnectWeixin: () => {
+    return ipcRenderer.invoke('weixin-reconnect');
+  },
+  disconnectWeixin: () => {
+    return ipcRenderer.invoke('weixin-disconnect');
+  },
+  logoutWeixin: () => {
+    return ipcRenderer.invoke('weixin-logout');
+  },
+  weixinReport: (payload) => {
+    return ipcRenderer.invoke('weixin-report', payload);
+  },
+  // ========== QQ 通道 API ==========
+  getQqConfig: () => {
+    return ipcRenderer.invoke('qq-get-config');
+  },
+  saveQqConfig: (data) => {
+    return ipcRenderer.invoke('qq-save-config', { data });
+  },
+  reconnectQq: () => {
+    return ipcRenderer.invoke('qq-reconnect');
+  },
+  disconnectQq: () => {
+    return ipcRenderer.invoke('qq-disconnect');
+  },
+  qqReport: (payload) => {
+    return ipcRenderer.invoke('qq-report', payload);
+  },
+  // ========== 媒体收件箱 API ==========
+  getMediaConfig: () => ipcRenderer.invoke('media-get-config'),
+  saveMediaConfig: (data) => ipcRenderer.invoke('media-save-config', { data }),
+  pickMediaDir: () => ipcRenderer.invoke('media-pick-dir'),
+  openMediaDir: () => ipcRenderer.invoke('media-open-dir'),
   // 任务状态上报（AI 视图 → 主进程 → 壳窗口侧边栏）
   // 侧边栏和 AI 视图是两个独立 webContents，状态真相源在 AI 视图侧，
   // 必须显式上报才能让侧边栏也看到「进行中」。
@@ -291,6 +340,16 @@ let electronAPI = {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('feishu-user-message', handler);
     return () => ipcRenderer.removeListener('feishu-user-message', handler);
+  },
+  onWeixinMode: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('weixin-mode', handler);
+    return () => ipcRenderer.removeListener('weixin-mode', handler);
+  },
+  onWeixinUserMessage: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('weixin-user-message', handler);
+    return () => ipcRenderer.removeListener('weixin-user-message', handler);
   },
   onFeishuStop: (cb) => {
     const handler = () => cb();

@@ -611,7 +611,17 @@
 
   // ===== 多视图框架（v0.6.36，v0.6.37 恢复）=====
   var rendered = {};
+  // 视图级清理钩子：切走时调用，用于停定时器等
+  var __viewCleanup = {};
+  var currentViewName = null;
+
   function switchView(name){
+    // 切走前，清理上一个视图的副作用
+    if (typeof currentViewName === 'string' && currentViewName && __viewCleanup[currentViewName]) {
+      try { __viewCleanup[currentViewName](); } catch (_) {}
+    }
+    currentViewName = name;
+
     // 插件视图不单独占活动栏图标：高亮统一落在「插件」入口上
     var isPluginView = !!(typeof pluginViews !== 'undefined' && pluginViews && pluginViews[name]);
     var hlName = isPluginView ? 'plugins' : name;
@@ -619,13 +629,18 @@
     for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view')===hlName);
     var vs = document.querySelectorAll('.sh-view');
     for (var j=0;j<vs.length;j++) vs[j].classList.toggle('sh-view-active', vs[j].getAttribute('data-view')===name);
-    
+
+    // 这三个视图的内容依赖运行时状态（连接状态/配置），每次切入都重渲染
+    if (name === 'comm' || name === 'weixin' || name === 'qq') {
+      rendered[name] = false;
+    }
+
     // 兜底：如果容器存在但已被清空（热重载/重建），强制重绘
     var curEl = document.querySelector('.sh-view[data-view="'+name+'"]');
     if (curEl && curEl.innerHTML === '' && rendered[name]) {
       rendered[name] = false;
     }
-    
+
     if (!rendered[name]) {
       rendered[name] = true;
       try {
@@ -655,7 +670,10 @@
     if(name==='skill') return renderSkillView(el);
     if(name==='security') return renderSecurityView(el);
     if(name==='schedule') return renderScheduleView(el);
+    if(name==='comm') return renderCommView(el);
     if(name==='feishu') return renderFeishuView(el);
+    if(name==='weixin') return renderWeixinView(el);
+    if(name==='qq') return renderQqView(el);
     if(name==='sessions') return renderSessionsView(el);
     if(name==='log') return renderLogView(el);
     if(name==='mcp') return renderMcpView(el);
@@ -1665,6 +1683,334 @@
     loadWindows(); load();
   }
 
+
+// ---- 通信中枢：飞书 / 微信 / QQ 入口 ----
+  function renderCommView(el){
+    el.innerHTML = panel('通信通道',
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:8px;">选择一个通道进入配置。手机可通过已连接的通道与桌面 AI 对话。</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;cursor:pointer;" id="sh-comm-feishu">'+
+        '<div style="display:flex;align-items:center;gap:10px;">'+
+          '<span style="font-size:20px;">📱</span>'+
+          '<div style="flex:1;"><div style="font-size:13px;font-weight:600;color:var(--ck-title);">飞书</div><div style="font-size:11px;color:var(--ck-text-dim);">长连接 · 群/单聊</div></div>'+
+          '<span id="sh-comm-feishu-st" style="font-size:11px;color:var(--ck-text-dim);">—</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;cursor:pointer;" id="sh-comm-weixin">'+
+        '<div style="display:flex;align-items:center;gap:10px;">'+
+          '<span style="font-size:20px;">💬</span>'+
+          '<div style="flex:1;"><div style="font-size:13px;font-weight:600;color:var(--ck-title);">微信</div><div style="font-size:11px;color:var(--ck-text-dim);">扫码登录 · 单聊 · iLink</div></div>'+
+          '<span id="sh-comm-weixin-st" style="font-size:11px;color:var(--ck-text-dim);">—</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;cursor:pointer;" id="sh-comm-qq">'+
+        '<div style="display:flex;align-items:center;gap:10px;">'+
+          '<span style="font-size:20px;">🐧</span>'+
+          '<div style="flex:1;"><div style="font-size:13px;font-weight:600;color:var(--ck-title);">QQ</div><div style="font-size:11px;color:var(--ck-text-dim);">官方 Bot API · 单聊/群@</div></div>'+
+          '<span id="sh-comm-qq-st" style="font-size:11px;color:var(--ck-text-dim);">—</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="sh-card">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">接收文件目录</div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">手机发来的图片/文件保存位置，按通道/日期分目录。</div>'+
+        '<input id="sh-comm-media-dir" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" placeholder="留空使用默认目录" />'+
+        '<div id="sh-comm-media-eff" style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;"></div>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn" id="sh-comm-pick">选择目录</button><button class="sh-btn" id="sh-comm-open">打开目录</button><button class="sh-btn primary" id="sh-comm-save">保存</button></div>'+
+      '</div>');
+
+    var ev=function(id){ return document.getElementById(id); };
+
+    // 三通道状态
+    function badge(id,text,color){ var b=ev(id); if(!b) return; b.textContent=text; if(color){ b.style.color=color; } }
+
+    if(window.shellAPI&&window.shellAPI.getFeishuConfig){
+      window.shellAPI.getFeishuConfig().then(function(r){
+        if(!r||!r.success) return;
+        var M={connected:['已连接','#4ade80'],connecting:['连接中','#fbbf24'],error:['错误','#f87171'],disconnected:['未连接','#7c8798']};
+        var it=M[r.status]||M.disconnected;
+        badge('sh-comm-feishu-st',it[0],it[1]);
+      })['catch'](function(){});
+    }
+    if(window.shellAPI&&window.shellAPI.getWeixinConfig){
+      window.shellAPI.getWeixinConfig().then(function(r){
+        if(!r||!r.success) return;
+        var c=r.config||{}; var st=r.status||'disconnected';
+        if(!c.hasToken) badge('sh-comm-weixin-st','未登录','#7c8798');
+        else if(st==='connected') badge('sh-comm-weixin-st','已连接','#4ade80');
+        else if(st==='connecting') badge('sh-comm-weixin-st','连接中','#fbbf24');
+        else if(st==='error') badge('sh-comm-weixin-st','错误','#f87171');
+        else badge('sh-comm-weixin-st','已登录','#94a3b8');
+      })['catch'](function(){});
+    }
+    if(window.shellAPI&&window.shellAPI.getQqConfig){
+      window.shellAPI.getQqConfig().then(function(r){
+        if(!r||!r.success) return;
+        var c=r.config||{}; var st=r.status||'disconnected';
+        if(!c.appId||!c.hasSecret) badge('sh-comm-qq-st','未配置','#7c8798');
+        else if(st==='connected') badge('sh-comm-qq-st','已连接','#4ade80');
+        else if(st==='connecting') badge('sh-comm-qq-st','连接中','#fbbf24');
+        else if(st==='error') badge('sh-comm-qq-st','错误','#f87171');
+        else badge('sh-comm-qq-st','未连接','#7c8798');
+      })['catch'](function(){});
+    }
+
+    // 媒体目录
+    function loadMedia(){
+      if(!window.shellAPI||!window.shellAPI.getMediaConfig) return;
+      window.shellAPI.getMediaConfig().then(function(r){
+        if(!r||!r.success) return;
+        if(ev('sh-comm-media-dir')) ev('sh-comm-media-dir').value=r.inboxDir||'';
+        if(ev('sh-comm-media-eff')) ev('sh-comm-media-eff').textContent='当前生效：'+(r.effectiveDir||'(未初始化)');
+      })['catch'](function(){});
+    }
+    loadMedia();
+
+    var pk=ev('sh-comm-pick'); if(pk) pk.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.pickMediaDir) return;
+      window.shellAPI.pickMediaDir().then(function(r){
+        if(r&&r.success&&r.dir&&ev('sh-comm-media-dir')) ev('sh-comm-media-dir').value=r.dir;
+      })['catch'](function(){});
+    });
+    var op=ev('sh-comm-open'); if(op) op.addEventListener('click',function(){
+      if(window.shellAPI&&window.shellAPI.openMediaDir) window.shellAPI.openMediaDir()['catch'](function(){});
+    });
+    var sv=ev('sh-comm-save'); if(sv) sv.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.saveMediaConfig) return;
+      var dir=((ev('sh-comm-media-dir')||{}).value||'').trim();
+      window.shellAPI.saveMediaConfig({inboxDir:dir}).then(function(r){
+        if(r&&r.success){ toast2(dir?'已保存':'已恢复默认'); loadMedia(); }
+        else toast2('保存失败：'+((r&&r.error)||''));
+      })['catch'](function(){ toast2('保存失败'); });
+    });
+
+    // 卡片跳转
+    var f=ev('sh-comm-feishu'); if(f) f.addEventListener('click',function(){ switchView('feishu'); });
+    var w=ev('sh-comm-weixin'); if(w) w.addEventListener('click',function(){ switchView('weixin'); });
+    var q=ev('sh-comm-qq'); if(q) q.addEventListener('click',function(){ switchView('qq'); });
+  }
+
+// ---- 微信通道 ----
+  function renderWeixinView(el){
+    el.innerHTML = panel('微信通道',
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">连接状态：<span id="sh-wx-status">—</span></div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">登录账号：<span id="sh-wx-login">—</span></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="sh-wx-enabled" /> 启用微信通道</label>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">扫码登录</div>'+
+        '<div id="sh-wx-qrcode" style="min-height:40px;margin-bottom:6px;text-align:center;"></div>'+
+        '<div id="sh-wx-tip" style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">点击「获取二维码」，用微信扫码登录</div>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn primary" id="sh-wx-login-btn">获取二维码</button><button class="sh-btn" id="sh-wx-logout">退出登录</button></div>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">推送选项</div>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-wx-push-user" /> 用户消息</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-wx-push-ai" /> AI 回复</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-wx-push-tool" /> 工具状态</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-wx-push-toolname" /> 带上工具名</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-wx-push-done" /> 完成标志</label>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;">卡住超时(秒)</div>'+
+        '<input id="sh-wx-stall" type="number" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:8px;"><button class="sh-btn primary" id="sh-wx-save">保存配置</button><button class="sh-btn" id="sh-wx-reconnect">重连</button><button class="sh-btn" id="sh-wx-disconnect">断开</button></div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);line-height:1.5;">协议：腾讯官方 iLink Bot API（微信 ClawBot）。登录后在手机微信里给该账号发消息，即进入当前窗口。主动推送需对方先发过消息。</div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);line-height:1.5;margin-top:4px;">📲 手机指令：/stop 停止 · /help 帮助</div>');
+
+    var ev=function(id){ return document.getElementById(id); };
+    var qrTimer = null;
+    function stopQr(){ if(qrTimer){ clearInterval(qrTimer); qrTimer=null; } }
+    // 切走视图时停掉二维码轮询，避免后台持续调 IPC
+    __viewCleanup['weixin'] = stopQr;
+
+    function setWxSt(status,detail){
+      var b=ev('sh-wx-status'); if(!b) return;
+      var M={connected:['已连接','#4ade80'],connecting:['连接中…','#fbbf24'],error:['错误','#f87171'],disconnected:['未登录','#7c8798']};
+      var it=M[status]||M.disconnected;
+      b.textContent=it[0]+(detail?('（'+detail+'）'):'');
+      b.style.color=it[1];
+    }
+
+    function loadWx(){
+      if(!window.shellAPI||!window.shellAPI.getWeixinConfig) return;
+      window.shellAPI.getWeixinConfig().then(function(r){
+        if(!r||!r.success) return;
+        var c=r.config||{};
+        if(ev('sh-wx-enabled')) ev('sh-wx-enabled').checked=!!c.enabled;
+        if(ev('sh-wx-login')){ ev('sh-wx-login').textContent=c.hasToken?('已登录'+(c.botId?('（'+c.botId.slice(0,12)+'…）'):'')):'未登录'; ev('sh-wx-login').style.color=c.hasToken?'#4ade80':'#7c8798'; }
+        function sc(id,v,d){ var e=ev(id); if(e) e.checked=(v===undefined?d:!!v); }
+        sc('sh-wx-push-user',c.pushUserMessage,true); sc('sh-wx-push-ai',c.pushAiReply,true); sc('sh-wx-push-tool',c.pushToolStatus,true); sc('sh-wx-push-toolname',c.pushToolName,false); sc('sh-wx-push-done',c.pushTaskDone,true);
+        if(ev('sh-wx-stall')) ev('sh-wx-stall').value=(typeof c.stallTimeoutSec==='number'?c.stallTimeoutSec:660);
+        setWxSt(r.status,r.statusDetail);
+      })['catch'](function(){});
+    }
+    loadWx();
+
+    function showQr(url){
+      var box=ev('sh-wx-qrcode'); if(!box) return;
+      if(!url){ box.innerHTML='<span style="color:#f87171;font-size:11px;">二维码获取失败</span>'; return; }
+      // 本地生成的是 DataURL，直接渲染
+      var src;
+      if (url.indexOf('data:image/') === 0) {
+        src = url;
+      } else if (/^https?:\/\//i.test(url)) {
+        src = url;
+      } else {
+        src = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(url);
+      }
+      box.innerHTML='<img src="'+src+'" style="width:160px;height:160px;border-radius:6px;background:#fff;padding:4px;" />';
+    }
+
+    var lb=ev('sh-wx-login-btn');
+    if(lb) lb.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.getWeixinQrcode) return;
+      stopQr();
+      var tip=ev('sh-wx-tip'); if(tip){ tip.textContent='正在获取二维码…'; tip.style.color='#fbbf24'; }
+      window.shellAPI.getWeixinQrcode().then(function(r){
+        if(!r||!r.success){
+          if(tip){ tip.textContent='获取失败：'+((r&&r.error)||''); tip.style.color='#f87171'; }
+          return;
+        }
+        showQr(r.qrcodeUrl);
+        if(tip){ tip.textContent='请用微信扫码确认'; tip.style.color='#fbbf24'; }
+        var qr=r.qrcode;
+        qrTimer=setInterval(function(){
+          window.shellAPI.checkWeixinQrcode(qr).then(function(st){
+            if(!st) return;
+            if(st.status==='scaned'){ if(tip){ tip.textContent='已扫码，请在手机确认'; } }
+            else if(st.status==='confirmed'){
+              stopQr();
+              if(tip){ tip.textContent='登录成功！'; tip.style.color='#4ade80'; }
+              var box=ev('sh-wx-qrcode'); if(box) box.innerHTML='<span style="color:#4ade80;font-size:12px;">✓ 已登录</span>';
+              toast2('微信登录成功');
+              loadWx();
+            } else if(st.status==='expired'){
+              stopQr(); if(tip){ tip.textContent='二维码已过期，请重新获取'; tip.style.color='#f87171'; }
+            } else if(st.status==='error'){
+              stopQr(); if(tip){ tip.textContent='查询失败：'+(st.error||''); tip.style.color='#f87171'; }
+            }
+          })['catch'](function(){});
+        },1500);
+      })['catch'](function(){ if(tip){ tip.textContent='获取失败'; tip.style.color='#f87171'; } });
+    });
+
+    var lo=ev('sh-wx-logout');
+    if(lo) lo.addEventListener('click',function(){
+      stopQr();
+      if(window.shellAPI&&window.shellAPI.weixinLogout) window.shellAPI.weixinLogout().then(function(){ toast2('已退出登录'); if(ev('sh-wx-qrcode')) ev('sh-wx-qrcode').innerHTML=''; loadWx(); })['catch'](function(){});
+    });
+
+    var sv=ev('sh-wx-save');
+    if(sv) sv.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.saveWeixinConfig) return;
+      var data={
+        enabled:!!((ev('sh-wx-enabled')||{}).checked),
+        pushUserMessage:!!((ev('sh-wx-push-user')||{}).checked),
+        pushAiReply:!!((ev('sh-wx-push-ai')||{}).checked),
+        pushToolStatus:!!((ev('sh-wx-push-tool')||{}).checked),
+        pushToolName:!!((ev('sh-wx-push-toolname')||{}).checked),
+        pushTaskDone:!!((ev('sh-wx-push-done')||{}).checked),
+        stallTimeoutSec:Number((ev('sh-wx-stall')||{}).value)||660,
+      };
+      window.shellAPI.saveWeixinConfig(data).then(function(r){ toast2(r&&r.success?'已保存':'保存失败：'+((r&&r.error)||'')); loadWx(); })['catch'](function(){ toast2('保存失败'); });
+    });
+
+    var rc=ev('sh-wx-reconnect');
+    if(rc) rc.addEventListener('click',function(){
+      if(window.shellAPI&&window.shellAPI.weixinReconnect) window.shellAPI.weixinReconnect().then(function(){ toast2('重连中'); setTimeout(loadWx,1200); })['catch'](function(){});
+    });
+    var dc=ev('sh-wx-disconnect');
+    if(dc) dc.addEventListener('click',function(){
+      if(window.shellAPI&&window.shellAPI.weixinDisconnect) window.shellAPI.weixinDisconnect().then(function(){ toast2('已断开'); loadWx(); })['catch'](function(){});
+    });
+  }
+
+// ---- QQ 通道 ----
+  function renderQqView(el){
+    el.innerHTML = panel('QQ 通道',
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">连接状态：<span id="sh-qq-status">—</span></div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="sh-qq-enabled" /> 启用 QQ 通道</label>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);">App ID</div>'+
+        '<input id="sh-qq-appid" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" placeholder="q.qq.com 创建机器人后获得" />'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);">App Secret</div>'+
+        '<input id="sh-qq-secret" type="password" placeholder="留空不修改" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" />'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">推送选项</div>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-qq-push-user" /> 用户消息</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-qq-push-ai" /> AI 回复</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-qq-push-tool" /> 工具状态</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-qq-push-toolname" /> 带上工具名</label>'+
+        '<label style="display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 0;"><input type="checkbox" id="sh-qq-push-done" /> 完成标志</label>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;">卡住超时(秒)</div>'+
+        '<input id="sh-qq-stall" type="number" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;" />'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:8px;"><button class="sh-btn primary" id="sh-qq-save">保存配置</button><button class="sh-btn" id="sh-qq-reconnect">重连</button><button class="sh-btn" id="sh-qq-disconnect">断开</button></div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);line-height:1.5;">需在 q.qq.com 创建机器人应用，开启「私聊」与「群聊」权限，并把你的 QQ 加入机器人可用范围。</div>'+
+      '<div style="font-size:11px;color:#fbbf24;line-height:1.5;margin-top:4px;">⚠️ QQ 主动推送每用户每月限 4 条；被动回复（收到消息后 60 秒内）不限量。</div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);line-height:1.5;margin-top:4px;">📲 手机指令：/stop 停止 · /help 帮助</div>');
+
+    var ev=function(id){ return document.getElementById(id); };
+
+    function setQqSt(status,detail){
+      var b=ev('sh-qq-status'); if(!b) return;
+      var M={connected:['已连接','#4ade80'],connecting:['连接中…','#fbbf24'],error:['错误','#f87171'],disconnected:['未连接','#7c8798']};
+      var it=M[status]||M.disconnected;
+      b.textContent=it[0]+(detail?('（'+detail+'）'):'');
+      b.style.color=it[1];
+    }
+
+    function loadQq(){
+      if(!window.shellAPI||!window.shellAPI.getQqConfig) return;
+      window.shellAPI.getQqConfig().then(function(r){
+        if(!r||!r.success) return;
+        var c=r.config||{};
+        if(ev('sh-qq-appid')) ev('sh-qq-appid').value=c.appId||'';
+        if(ev('sh-qq-secret')){ ev('sh-qq-secret').value=''; ev('sh-qq-secret').placeholder=c.hasSecret?'已配置（留空不修改）':'App Secret'; }
+        if(ev('sh-qq-enabled')) ev('sh-qq-enabled').checked=!!c.enabled;
+        function sc(id,v,d){ var e=ev(id); if(e) e.checked=(v===undefined?d:!!v); }
+        sc('sh-qq-push-user',c.pushUserMessage,true); sc('sh-qq-push-ai',c.pushAiReply,true); sc('sh-qq-push-tool',c.pushToolStatus,true); sc('sh-qq-push-toolname',c.pushToolName,false); sc('sh-qq-push-done',c.pushTaskDone,true);
+        if(ev('sh-qq-stall')) ev('sh-qq-stall').value=(typeof c.stallTimeoutSec==='number'?c.stallTimeoutSec:660);
+        setQqSt(r.status,r.statusDetail);
+      })['catch'](function(){});
+    }
+    loadQq();
+
+    var sv=ev('sh-qq-save');
+    if(sv) sv.addEventListener('click',function(){
+      if(!window.shellAPI||!window.shellAPI.saveQqConfig) return;
+      var data={
+        appId:((ev('sh-qq-appid')||{}).value||'').trim(),
+        enabled:!!((ev('sh-qq-enabled')||{}).checked),
+        pushUserMessage:!!((ev('sh-qq-push-user')||{}).checked),
+        pushAiReply:!!((ev('sh-qq-push-ai')||{}).checked),
+        pushToolStatus:!!((ev('sh-qq-push-tool')||{}).checked),
+        pushToolName:!!((ev('sh-qq-push-toolname')||{}).checked),
+        pushTaskDone:!!((ev('sh-qq-push-done')||{}).checked),
+        stallTimeoutSec:Number((ev('sh-qq-stall')||{}).value)||660,
+      };
+      var sec=((ev('sh-qq-secret')||{}).value||'');
+      if(sec && sec!=='••••••') data.appSecret=sec;
+      window.shellAPI.saveQqConfig(data).then(function(r){
+        toast2(r&&r.success?'已保存':'保存失败：'+((r&&r.error)||''));
+        loadQq();
+      })['catch'](function(){ toast2('保存失败'); });
+    });
+
+    var rc=ev('sh-qq-reconnect');
+    if(rc) rc.addEventListener('click',function(){
+      if(window.shellAPI&&window.shellAPI.reconnectQq) window.shellAPI.reconnectQq().then(function(r){
+        if(r&&r.success){ toast2('重连中'); setTimeout(loadQq,1500); }
+        else toast2('重连失败：'+((r&&r.error)||''));
+      })['catch'](function(){});
+    });
+    var dc=ev('sh-qq-disconnect');
+    if(dc) dc.addEventListener('click',function(){
+      if(window.shellAPI&&window.shellAPI.disconnectQq) window.shellAPI.disconnectQq().then(function(){ toast2('已断开'); loadQq(); })['catch'](function(){});
+    });
+  }
 
   function renderFeishuView(el){
     el.innerHTML = panel('飞书同步',

@@ -11,6 +11,9 @@ const { bindMemoryPanelEvents, closeMemoryManager } = require('./memory-panel');
 const { bindSkillPanelEvents, closeSkillManager } = require('./skill-panel');
 const { bindSecurityPanelEvents, closeSecurityManager } = require('./security-panel');
 const { bindFeishuPanelEvents, closeFeishuManager } = require('./feishu-panel');
+const { bindWeixinPanelEvents, closeWeixinManager } = require('./weixin-panel');
+const { bindCommPanelEvents, closeCommManager } = require('./comm-panel');
+const { bindQqPanelEvents, closeQqManager } = require('./qq-panel');
 const { bindSchedulePanelEvents, closeScheduleManager } = require('./schedule-panel');
 const { bindAgentPanelEvents } = require('./agent-panel');
 const { bindPlanPanelEvents } = require('./plan-panel');
@@ -822,8 +825,14 @@ function bindEvents() {
   bindSkillPanelEvents();
   // 安全增强面板事件
   bindSecurityPanelEvents();
+  // 通信中枢面板事件（飞书/微信/QQ 入口）
+  bindCommPanelEvents();
   // 飞书同步面板事件
   bindFeishuPanelEvents();
+  // 微信 iLink 面板事件
+  bindWeixinPanelEvents();
+  // QQ 面板事件
+  bindQqPanelEvents();
   // 定时任务面板事件
   bindSchedulePanelEvents();
   // Agent 模式（Plan / Build）切换
@@ -872,6 +881,9 @@ function bindEvents() {
       closeSkillManager();
       closeSecurityManager();
       closeFeishuManager();
+      closeWeixinManager();
+      closeQqManager();
+      closeCommManager();
       hideFirstTimeDialog();
     }
   });

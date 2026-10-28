@@ -18,6 +18,9 @@ const { getAgent, listAgents } = require('./agents');
 const { decodeOutput, normalizeCommand } = require('../../tools/decodeOutput');
 const activeProcesses = require('../../tools/active-processes');
 const { registerFeishuIpc } = require('./feishu-ipc');
+const { registerWeixinIpc } = require('./weixin-ipc');
+const { registerMediaIpc } = require('./media-ipc');
+const { registerQqIpc } = require('./qq-ipc');
 const { todoEvents, getTodos, clearTodos } = require('../../tools/TodoWriteTool');
 const userTodoStore = require('../../tools/UserTodoStore');
 const { checkGate } = require('../../tools/plan-gate');
@@ -49,6 +52,15 @@ function resolveSessionId(ctx, sender) {
 function registerIpcHandlers() {
   // 飞书同步 IPC
   registerFeishuIpc();
+
+  // 微信 iLink 通道 IPC
+  registerWeixinIpc();
+
+  // 媒体收件箱配置 IPC
+  registerMediaIpc();
+
+  // QQ 通道 IPC
+  registerQqIpc();
 
   // 待办列表变更：广播给所有窗口（带 sessionId，前端按当前会话过滤，避免跨会话串扰）
   todoEvents.on('change', ({ sessionId, todos, archived }) => {

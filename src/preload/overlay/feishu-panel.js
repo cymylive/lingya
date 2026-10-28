@@ -173,8 +173,7 @@ async function disconnectFeishu() {
 
 /** 绑定面板事件 */
 function bindFeishuPanelEvents() {
-  const openBtn = el('lingya-btn-feishu');
-  openBtn && openBtn.addEventListener('click', openFeishuManager);
+  // 飞书入口已移到「通信」中枢（comm-panel.js），此处不再绑网格按钮
 
   const closeBtn = el('lingya-feishu-close');
   closeBtn && closeBtn.addEventListener('click', closeFeishuManager);

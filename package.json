@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.142",
+  "version": "0.6.144",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -216,7 +216,9 @@
     "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",
     "mysql2": "^3.24.2",
-    "turndown": "^7.2.4"
+    "qrcode": "^1.5.4",
+    "turndown": "^7.2.4",
+    "ws": "^8.22.0"
   },
   "allowScripts": {
     "electron@33.4.11": true

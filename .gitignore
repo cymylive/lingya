@@ -84,3 +84,4 @@ resources/graphify/*
 !resources/graphify/LICENSE-MIT
 !resources/graphify/NOTICE
 build/graphify-work-cli/
+*.esm-bak 

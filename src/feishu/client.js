@@ -11,6 +11,8 @@
  * 移植自 cuckoo-code src/feishu/client.ts（TS → CJS）。
  */
 const { readConfig, writeConfig } = require('./config');
+const fs2 = require('fs');
+const path2 = require('path');
 
 // SDK 是 CJS，惰性加载：未安装时不影响模块加载，仅在 connect 时报错
 let lark = null;
@@ -91,6 +93,67 @@ function extractText(event) {
   }
 }
 
+/** 从事件里取 message_id（下载资源要用） */
+function extractMessageId(event) {
+  try {
+    const msg = event && event.message;
+    return msg && typeof msg.message_id === 'string' ? msg.message_id : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * 从事件里提取媒体信息。
+ * @returns {{kind:'image'|'file', fileKey:string, fileName:string, messageId:string}|null}
+ */
+function extractMediaInfo(event) {
+  try {
+    const msg = event && event.message;
+    if (!msg) return null;
+    const mt = msg.message_type;
+    if (mt !== 'image' && mt !== 'file') return null;
+    const content = JSON.parse(msg.content || '{}');
+    const messageId = extractMessageId(event);
+    if (mt === 'image') {
+      const key = content.image_key || '';
+      if (!key) return null;
+      return { kind: 'image', fileKey: key, fileName: key + '.jpg', messageId };
+    }
+    const key = content.file_key || '';
+    if (!key) return null;
+    return { kind: 'file', fileKey: key, fileName: content.file_name || (key + '.bin'), messageId };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 下载飞书消息里的资源，返回 Buffer。
+ * SDK 的 messageResource.get 返回 { writeFile, getReadableStream } 形态。
+ */
+async function downloadFeishuResource(messageId, fileKey, kind) {
+  if (!apiClient) throw new Error('飞书未连接');
+  const res = await apiClient.im.messageResource.get({
+    path: { message_id: messageId, file_key: fileKey },
+    params: { type: kind === 'image' ? 'image' : 'file' },
+  });
+  if (res && typeof res.getReadableStream === 'function') {
+    const chunks = [];
+    for await (const c of res.getReadableStream()) chunks.push(Buffer.from(c));
+    return Buffer.concat(chunks);
+  }
+  if (res && typeof res.writeFile === 'function') {
+    const os = require('os');
+    const tmp = path2.join(os.tmpdir(), 'feishu-dl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+    await res.writeFile(tmp);
+    const buf = fs2.readFileSync(tmp);
+    try { fs2.unlinkSync(tmp); } catch (_) {}
+    return buf;
+  }
+  throw new Error('SDK 未提供可用的下载方法');
+}
+
 /** 确保 apiClient 已创建 */
 function ensureApiClient() {
   const cfg = readConfig();
@@ -150,9 +213,36 @@ function connect(cb) {
               console.log('[Feishu] 已记录推送目标 open_id:', openId);
             }
           }
-          const text = extractText(data);
           const chatId = extractChatId(data);
           const chatType = extractChatType(data);
+
+          // 媒体消息（图片/文件）：下载到收件箱，把本地路径告知 AI
+          const mediaInfo = extractMediaInfo(data);
+          if (mediaInfo) {
+            try {
+              const buf = await downloadFeishuResource(mediaInfo.messageId, mediaInfo.fileKey, mediaInfo.kind);
+              const inbox = require('../main/media/inbox');
+              const saved = inbox.save('feishu', buf, mediaInfo.fileName);
+              if (!saved.success) {
+                console.warn('[Feishu] 媒体落盘失败:', saved.error);
+                try { if (callbacks.onUserMessage) callbacks.onUserMessage('【收到' + (mediaInfo.kind === 'image' ? '图片' : '文件') + '，但保存失败：' + saved.error + '】', chatId, chatType); } catch (_) {}
+                return;
+              }
+              const label = mediaInfo.kind === 'image' ? '图片' : '文件';
+              const hint = mediaInfo.kind === 'image'
+                ? '可用 view_image 工具查看'
+                : '可用 read 工具读取（文本）或 bash 处理';
+              const notice = '【用户通过飞书发来' + label + '】本地路径：' + saved.path + '（' + (saved.size / 1024).toFixed(1) + ' KB）\n' + hint;
+              console.log('[Feishu] 收到媒体 ' + mediaInfo.kind + ', 已存 ' + saved.path);
+              try { if (callbacks.onUserMessage) callbacks.onUserMessage(notice, chatId, chatType); } catch (_) {}
+            } catch (err) {
+              console.error('[Feishu] 媒体下载失败:', err.message);
+              try { if (callbacks.onUserMessage) callbacks.onUserMessage('【用户发来' + (mediaInfo.kind === 'image' ? '图片' : '文件') + '，但下载失败：' + err.message + '】', chatId, chatType); } catch (_) {}
+            }
+            return;
+          }
+
+          const text = extractText(data);
           if (text) {
             console.log('[Feishu] 收到消息, 长度=' + text.length + ' 类型=' + (chatType || '未知') + (chatId ? ' chat=' + chatId : '') + ' 内容=' + JSON.stringify(text.slice(0, 60)));
             try { if (callbacks.onUserMessage) callbacks.onUserMessage(text, chatId, chatType); } catch (_) {}
@@ -229,4 +319,17 @@ async function sendText(text, chatId) {
   }
 }
 
-module.exports = { connect, disconnect, sendText, getStatus, listChats, readConfig };
+/**
+ * 供媒体适配器获取已创建的 apiClient。
+ * 未连接时返回 null，调用方应处理。
+ */
+function getApiClient() {
+  try {
+    ensureApiClient();
+    return apiClient || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+module.exports = { connect, disconnect, sendText, getStatus, listChats, readConfig, getApiClient };

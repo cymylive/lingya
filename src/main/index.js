@@ -155,6 +155,27 @@ try {
   console.error('[LingYa] 初始化飞书配置存储失败:', err.message);
 }
 
+// 初始化微信 iLink 配置存储（全局共享）
+try {
+  require('../weixin/config').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化微信配置存储失败:', err.message);
+}
+
+// 初始化 QQ 配置存储（全局共享）
+try {
+  require('../qq/config').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化 QQ 配置存储失败:', err.message);
+}
+
+// 初始化媒体子系统（收件箱 + 通道适配器）
+try {
+  require('./media').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化媒体子系统失败:', err.message);
+}
+
 // 初始化安全增强配置存储（CTF 注入 + 拒绝拦截）
 try {
   const secStore = require('./security-store');
@@ -922,6 +943,20 @@ try {
   require('./feishu-ipc').initFeishu();
 } catch (err) {
   console.error('[LingYa] 初始化飞书失败:', err.message);
+}
+
+// 微信 iLink：若已登录并启用则自动恢复长轮询
+try {
+  require('./weixin-ipc').autoConnectIfEnabled();
+} catch (err) {
+  console.error('[LingYa] 初始化微信通道失败:', err.message);
+}
+
+// QQ：若已配置并启用则自动连接
+try {
+  require('./qq-ipc').autoConnectIfEnabled();
+} catch (err) {
+  console.error('[LingYa] 初始化 QQ 通道失败:', err.message);
 }
 
 // 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口

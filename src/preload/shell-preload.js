@@ -83,6 +83,25 @@ const api = {
   bindFeishuChat: (chatId, chatName) => ipcRenderer.invoke('feishu-bind-chat', { chatId, chatName }),
   feishuReconnect: () => ipcRenderer.invoke('feishu-reconnect'),
   feishuDisconnect: () => ipcRenderer.invoke('feishu-disconnect'),
+  // 微信 iLink
+  getWeixinConfig: () => ipcRenderer.invoke('weixin-get-config'),
+  saveWeixinConfig: (data) => ipcRenderer.invoke('weixin-save-config', { data }),
+  getWeixinQrcode: () => ipcRenderer.invoke('weixin-get-qrcode'),
+  checkWeixinQrcode: (qrcode) => ipcRenderer.invoke('weixin-check-qrcode', { qrcode }),
+  weixinReconnect: () => ipcRenderer.invoke('weixin-reconnect'),
+  weixinDisconnect: () => ipcRenderer.invoke('weixin-disconnect'),
+  weixinLogout: () => ipcRenderer.invoke('weixin-logout'),
+  // QQ
+  getQqConfig: () => ipcRenderer.invoke('qq-get-config'),
+  saveQqConfig: (data) => ipcRenderer.invoke('qq-save-config', { data }),
+  reconnectQq: () => ipcRenderer.invoke('qq-reconnect'),
+  disconnectQq: () => ipcRenderer.invoke('qq-disconnect'),
+  qqReport: (payload) => ipcRenderer.invoke('qq-report', payload),
+  // 媒体收件箱
+  getMediaConfig: () => ipcRenderer.invoke('media-get-config'),
+  saveMediaConfig: (data) => ipcRenderer.invoke('media-save-config', { data }),
+  pickMediaDir: () => ipcRenderer.invoke('media-pick-dir'),
+  openMediaDir: () => ipcRenderer.invoke('media-open-dir'),
   // MCP
   listMcpServers: () => ipcRenderer.invoke('list-mcp-servers'),
   upsertMcpServer: (server) => ipcRenderer.invoke('upsert-mcp-server', { server }),
