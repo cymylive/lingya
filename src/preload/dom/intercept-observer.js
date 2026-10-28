@@ -347,9 +347,17 @@ async function processInterceptedResponse(text, force, interrupted) {
       }
     }
     console.log('[LingYa][拦截] 生成中断，丢弃中断内容');
+    // 【状态收口】中断分支提前 return，后续没有任何代码会把状态推走。
+    // 若不在这里复位，状态机会永久停在 RESPONDED，UI 显示「正在解析回复」永不消失
+    //（2026-10-28 实测：detail.text 为空 + 无代码块 → 卡 3 分钟以上）。
+    try { taskState.reset('回复中断且无可执行内容'); } catch (_) {}
     return;
   }
-  if (!raw) return;
+  if (!raw) {
+    // 同上：空回复不构成「正在解析」，复位避免状态泄漏。
+    try { taskState.reset('收到空回复'); } catch (_) {}
+    return;
+  }
 
   console.log('[LingYa][拦截] 收到完整回复，长度=' + raw.length);
 

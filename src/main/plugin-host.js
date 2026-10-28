@@ -514,6 +514,9 @@ function listPlugins() {
     description: p.description,
     icon: p.icon,
     enabled: p.enabled,
+    // 置顶状态必须透传给前端：draw() 依赖 p.pinned 排序 + 回显复选框。
+    // 漏传会导致「勾选后不生效、刷新后勾选消失」（scanPlugins 里本来就有这个字段）。
+    pinned: p.pinned === true,
     loaded: loaded.has(p.id),
     toolNames: loaded.has(p.id) ? (loaded.get(p.id).toolNames || []) : [],
     dir: p.dir,

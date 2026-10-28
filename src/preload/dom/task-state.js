@@ -98,6 +98,30 @@ function notify(reason) {
 function startTicker() {
   if (tickTimer) return;
   tickTimer = setInterval(() => {
+    // 【兜底自动恢复】RESPONDED 卡死自愈。
+    //
+    // 根因（2026-10-28 实测）：DeepSeek 偶发发「中断帧」，hook 拿到的 detail.text 为空，
+    // intercept-observer 却已把状态切到 RESPONDED；随后 processInterceptedResponse
+    // 因 raw 为空走中断分支提前 return，没人再把状态推回 IDLE。
+    // 表现：界面上 AI 明明已输出代码块，状态条却一直显示「正在解析回复 3m05s」。
+    //
+    // 为什么不放在 checkStall：checkStall 只做诊断上报，不改变状态。
+    // 这里在 ticker 里做自愈，覆盖所有提前 return 的泄漏路径。
+    //
+    // 为什么排除 queued：排队等待处理是正常的长耗时场景（前一个 bashOutput 还没跑完），
+    // 此时重置会误报「已结束」，把用户正在等的任务状态抹掉。
+    try {
+      const stallThreshold = STALL_THRESHOLDS[current.state] || 0;
+      if (current.state === STATES.RESPONDED && !current.queued && stallThreshold > 0) {
+        const stalled = Date.now() - current.enteredAt;
+        if (stalled > stallThreshold) {
+          console.log('[LingYa][状态机] RESPONDED 已停滞 ' + Math.round(stalled / 1000) +
+            's 超过阈值 ' + Math.round(stallThreshold / 1000) + 's，无后续动作 → 自动恢复 IDLE');
+          reset('RESPONDED 超时自动恢复');
+        }
+      }
+    } catch (_) { /* 自愈失败不影响 tick */ }
+
     // 有订阅者就刷新。
     // 【不要在这里判断 IDLE】状态机可能已回 IDLE，但后台任务（bashBackground 起的
     // 服务/爬虫）仍在跑，UI 需要继续走计时。是否显示由 renderTaskbar 自己决定。

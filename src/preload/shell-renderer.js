@@ -773,6 +773,15 @@
       var ps = (data.plugins || []).slice().sort(function(a,b){ return (b.pinned?1:0) - (a.pinned?1:0); });
       box.className='';
       var html='';
+      // 插件管理操作区放在最顶部：导入/打开目录/刷新是高频入口，
+      // 插件多时若留在页面底部需要长距离滚动才能点到。
+      html+='<div style="display:flex;gap:6px;margin-bottom:8px;">'+
+        '<button class="sh-btn primary" id="sh-plug-import" style="flex:1;font-size:11.5px;">导入插件包</button>'+
+        '<button class="sh-btn" id="sh-plug-opendir" style="flex:1;font-size:11.5px;">打开插件目录</button>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-bottom:12px;">'+
+        '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
+      '</div>';
       // DSH 区块移到最顶部
       html+='<div class="sh-card" style="margin-bottom:12px;">'+
         '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">DSH 外部插件（npm）</div>'+
@@ -824,13 +833,6 @@
           '</div>'+
         '</div>';
       }
-      html+='<div style="display:flex;gap:6px;margin-top:8px;">'+
-        '<button class="sh-btn primary" id="sh-plug-import" style="flex:1;font-size:11.5px;">导入插件包</button>'+
-        '<button class="sh-btn" id="sh-plug-opendir" style="flex:1;font-size:11.5px;">打开插件目录</button>'+
-      '</div>'+
-      '<div style="display:flex;gap:6px;margin-top:6px;">'+
-        '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
-      '</div>';
       box.innerHTML=html;
 
       var pins=box.querySelectorAll('.sh-plug-pin');
