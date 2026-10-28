@@ -79,5 +79,8 @@ build/graphify-dist/
 build/graphify-work/
  
 # graphify binaries - 67MB, built locally, not tracked 
-resources/graphify/ 
+resources/graphify/*
+!resources/graphify/LICENSE
+!resources/graphify/LICENSE-MIT
+!resources/graphify/NOTICE
 build/graphify-work-cli/
