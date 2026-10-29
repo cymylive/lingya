@@ -373,6 +373,12 @@ let electronAPI = {
     ipcRenderer.on('feishu-stop', handler);
     return () => ipcRenderer.removeListener('feishu-stop', handler);
   },
+  // QQ/微信 共用的 /stop 通道（channel-commands.js 发出 lingya-stop-task）
+  onStopTask: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('lingya-stop-task', handler);
+    return () => ipcRenderer.removeListener('lingya-stop-task', handler);
+  },
   // ========== 定时任务 API ==========
   scheduleList: () => ipcRenderer.invoke('schedule-list'),
   scheduleAdd: (data) => ipcRenderer.invoke('schedule-add', data),

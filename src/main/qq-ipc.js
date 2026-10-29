@@ -11,6 +11,7 @@ const { ipcMain } = require('electron');
 const windowState = require('./window');
 const qqClient = require('../qq/client');
 const roundCollector = require('./round-collector');
+const { formatNow, formatTodoPanel, formatEmptyPanel, stripMarkdown } = require('./channel-panel');
 const { readConfig, writeConfig } = require('../qq/config');
 const profileManager = require('./profile-manager');
 
@@ -18,6 +19,16 @@ let qqInited = false;
 
 /** 每个 profile 最近的 QQ 消息来源 { msgId, openid, kind } */
 const lastQqSource = new Map();
+
+/**
+ * 每个 profile 本轮是否已推过任务计划面板。
+ * 用于 task-done 时判断：没推过就补一个「无计划」面板头，保证格式统一。
+ * 由 user-message 重置为 false，todo-panel 置为 true。
+ */
+const panelPushedThisRound = new Map();
+
+/** 缓存每个 profile 当前的待办列表，供状态变化时生成面板 */
+const todosCache = new Map();
 
 /** 最近发过消息的 QQ 用户/群：openid -> { at, kind }，用于面板选择绑定目标 */
 const recentQqUsers = new Map();
@@ -282,38 +293,48 @@ function registerQqIpc() {
     //   实时轻提示保留（知道它在动），正文与工具流水在 task-done 时合成一条推出。
     //   工具过程以「bash → read → write」链式摘要呈现，不刷屏。
     let body = '';
+    const getPanel = (state, isFinal) => {
+      const todos = todosCache.get(profileId) || [];
+      if (todos.length > 0) return formatTodoPanel(todos, state, { isFinal });
+      return formatEmptyPanel(state);
+    };
+
     if (type === 'user-message') {
       roundCollector.onUserMessage(profileId, p.text);
+      panelPushedThisRound.set(profileId, false);
+      todosCache.delete(profileId);
       if (cfg.pushUserMessage) body = '👤 我：' + String(p.text || '').trim();
     } else if (type === 'ai-start') {
       roundCollector.onAiStart(profileId);
-      if (cfg.pushToolStatus) body = '🧠 AI 正在生成…';
+      body = getPanel('🧠 AI 正在思考…', false);
     } else if (type === 'ai-reply') {
       roundCollector.onAiReply(profileId, p.text, !!p.hasTool, p.thinking);
-      // 不再单独推送，等 task-done 汇总
+      // 不推
     } else if (type === 'tool-start') {
       roundCollector.onToolStart(profileId, p.toolName);
-      if (cfg.pushToolStatus) {
-        body = cfg.pushToolName && p.toolName ? '🔧 正在调用工具：' + p.toolName : '🔧 AI 正在调用工具…';
-      }
+      body = getPanel('🔧 AI 正在调用工具：' + (p.toolName || '…'), false);
     } else if (type === 'tool-end') {
       roundCollector.onToolEnd(profileId);
-      // 不再单独推送
+      body = getPanel('🧠 AI 正在思考…', false);
+    } else if (type === 'todo-panel') {
+      panelPushedThisRound.set(profileId, true);
+      if (Array.isArray(p.todos)) todosCache.set(profileId, p.todos);
+      body = getPanel(p.activity || '🔨 正在执行计划…', false);
     } else if (type === 'task-done') {
       const round = roundCollector.finish(profileId);
+      panelPushedThisRound.delete(profileId);
       if (round && (cfg.pushAiReply || cfg.pushToolStatus)) {
         const parts = [];
+        parts.push(getPanel('✅ 已回复', true));
         if (round.userText) parts.push('👤 我：' + round.userText);
-        // 思考摘要：纯文本通道截断到 300 字，防止刷屏
         const thinkingText = (round.thinkings || []).join('\n\n').trim();
         if (thinkingText) {
-          const brief = thinkingText.length > 300
-            ? thinkingText.slice(0, 300) + '…（共 ' + thinkingText.length + ' 字）'
-            : thinkingText;
+          const brief = thinkingText.length > 300 ? thinkingText.slice(0, 300) + '…（共 ' + thinkingText.length + ' 字）' : thinkingText;
           parts.push('💭 思考过程:\n' + brief);
         }
-        const text = round.replies.length > 0 ? round.replies.join('\n\n') : '（本轮无文字回复）';
-        parts.push('🤖 AI：\n' + text);
+        if (round.replies.length > 0) {
+          parts.push('🤖 AI：\n' + round.replies.join('\n\n'));
+        }
         const chain = roundCollector.buildToolChainSummary(round.tools);
         if (chain) {
           const secs = (round.durationMs / 1000).toFixed(1);
@@ -321,12 +342,15 @@ function registerQqIpc() {
         }
         body = parts.join('\n\n────────\n\n');
       } else if (cfg.pushTaskDone) {
-        body = '🏁 任务完成';
+        body = getPanel('✅ 任务完成', true);
       }
+      todosCache.delete(profileId);
     }
 
     if (!body.trim()) return { success: true, skipped: true };
 
+    // 【2026-10-30】推送前剥 Markdown 符号（QQ 不渲染，原样显示是乱码）
+    body = stripMarkdown(body);
     console.log('[QQ] 准备推送到 QQ, 目标:', src.openid, '内容长度:', body.length);
     const r = await qqClient.sendText(body, src);
     if (!r.success) console.warn('[QQ] 推送失败:', r.error);
@@ -362,4 +386,4 @@ function autoConnectIfEnabled() {
   });
 }
 
-module.exports = { registerQqIpc, autoConnectIfEnabled };
+module.exports = { registerQqIpc, autoConnectIfEnabled, formatTodoPanel, formatEmptyPanel, formatNow };

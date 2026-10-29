@@ -27,6 +27,10 @@ function report(payload) {
 }
 
 let inited = false;
+
+// 当前活动状态（供任务面板展示）：AI 生成 / 调工具
+let currentActivity = '🧠 AI 正在生成…';
+
 function initWeixinBridge() {
   if (inited) return;
   inited = true;
@@ -67,6 +71,7 @@ function initWeixinBridge() {
   try {
     window.addEventListener('lingya-ai-start', () => {
       if (!enabled) return;
+      currentActivity = '🧠 AI 正在生成…';
       report({ type: 'ai-start' });
     });
   } catch (_) {}
@@ -77,16 +82,48 @@ function initWeixinBridge() {
     if (!enabled) return;
     const clean = stripToolBlocks(text);
     const hasTool = /```(?:lingya|javascript|js)/i.test(text);
-    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool, thinking: String(thinking || '') });
+    // 【2026-10-30】不再塞占位文本。空回复由主进程判断是否推送。
+    report({ type: 'ai-reply', text: clean, hasTool: hasTool, thinking: String(thinking || '') });
     if (!hasTool) report({ type: 'task-done' });
   });
 
   // 5. 工具调用状态
   onToolCall((ev) => {
     if (!enabled || !ev) return;
-    if (ev.phase === 'start') report({ type: 'tool-start', toolName: ev.toolName || '' });
-    else if (ev.phase === 'end') report({ type: 'tool-end' });
+    if (ev.phase === 'start') {
+      currentActivity = '🔧 AI 正在调用工具' + (ev.toolName ? '：' + ev.toolName : '…');
+      report({ type: 'tool-start', toolName: ev.toolName || '' });
+    } else if (ev.phase === 'end') {
+      currentActivity = '🧠 AI 正在生成…';
+      report({ type: 'tool-end' });
+    }
   });
+
+  // 7. 任务计划面板：todo 每次变化推一条完整面板（与 QQ 通道同一格式）
+  try {
+    if (window.electronAPI && typeof window.electronAPI.onTodosUpdated === 'function') {
+      window.electronAPI.onTodosUpdated((payload) => {
+        if (!enabled) return;
+        const todos = (payload && Array.isArray(payload.todos)) ? payload.todos : null;
+        if (!todos || todos.length === 0) return;
+        report({ type: 'todo-panel', todos: todos, activity: currentActivity });
+      });
+    }
+  } catch (_) {}
+
+  // 6. Weixin /stop 命令 → 停止当前任务
+  // 【2026-10-30 修复】channel-commands.js 发出的是 'lingya-stop-task'，
+  // 但此前全项目没有任何监听器，导致 QQ/微信 的 /stop 完全无效（只有飞书能用）。
+  try {
+    window.electronAPI.onStopTask(() => {
+      try {
+        const { stopTask } = require('../overlay/events');
+        if (typeof stopTask === 'function') stopTask(true);
+      } catch (err) {
+        console.error('[LingYa Weixin] /stop 执行失败:', err.message);
+      }
+    });
+  } catch (_) {}
 }
 
 module.exports = { initWeixinBridge, stripToolBlocks };

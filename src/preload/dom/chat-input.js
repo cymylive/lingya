@@ -347,11 +347,19 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
   // 关键：上传后必须往输入框填一行「引导语」，否则平台会因输入框为空
   // 拒绝发送（实测 DeepSeek 弹「没有内容」）。附件才是真正的正文。
   let uploaded = false;
+  let uploadedName = '';
   try {
     const fileUpload = require('./file-upload');
-    uploaded = await fileUpload.uploadContent(msg, input);
+    const result = await fileUpload.uploadContent(msg, input);
+    // uploadContent 返回 { ok, fileName }；兼容旧的布尔返回
+    if (result && typeof result === 'object') {
+      uploaded = !!result.ok;
+      uploadedName = result.fileName || '';
+    } else {
+      uploaded = !!result;
+    }
     if (uploaded) {
-      console.log('[LingYa] 已上传 .md 附件，长度=' + msg.length);
+      console.log('[LingYa] 已上传附件 ' + uploadedName + '，长度=' + msg.length);
     }
   } catch (err) {
     console.warn('[LingYa] 文件上传异常，回退文本发送:', err && err.message);
@@ -359,8 +367,15 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
   }
 
   if (uploaded) {
-    // 填引导语，满足平台非空校验，同时提示 AI 去读附件
-    const hint = '请阅读附件 lingya-input.md 并按其中内容执行。';
+    // 填引导语，满足平台非空校验，同时提示 AI 去读附件。
+    // 文案池随机 + 带当前文件名，避免整段对话重复同一串字（机器指纹）。
+    let hint;
+    try {
+      const { pickHint } = require('./upload-hint');
+      hint = pickHint(uploadedName);
+    } catch (_) {
+      hint = '帮我看看附件';
+    }
     if (!(await setInputContent(input, hint))) {
       console.warn('[LingYa] 引导语填入失败，仍尝试发送');
     }
@@ -444,6 +459,11 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     let sent = false;
     try { sent = await triggerSend(input); } catch (err) {
       console.error('[LingYa] 触发发送异常:', err && err.message);
+    }
+    if (!sent) {
+      // 零宽引导语兜底：平台若 trim 掉 \u200B，改用「。」重试一次
+      console.warn('[LingYa] 首次发送失败，尝试零宽引导语兜底重试（' + (tag || '') + '）');
+      sent = await retrySendWithFallbackHint(input, tag);
     }
     if (!sent) {
       console.error('[LingYa] 发送失败，跳过状态记录（' + (tag || '') + '）');
@@ -712,14 +732,22 @@ async function sendInitialPromptToInput() {
   // 与 sendToChat 保持一致：内容存成附件，输入框只填一行引导语。
   // 失败时回退文本填入，保证初始化不会因此卡死。
   let uploaded = false;
+  let uploadedName = '';
   try {
     const fileUpload = require('./file-upload');
-    uploaded = await fileUpload.uploadContent(state.initialPromptContent, input);
+    const result = await fileUpload.uploadContent(state.initialPromptContent, input);
+    // uploadContent 返回 { ok, fileName }；兼容旧的布尔返回
+    if (result && typeof result === 'object') {
+      uploaded = !!result.ok;
+      uploadedName = result.fileName || '';
+    } else {
+      uploaded = !!result;
+    }
     if (uploaded) {
       const chunkInfo = (Array.isArray(state.initialPromptChunks) && state.initialPromptChunks.length > 1)
         ? '（第 ' + (state.initialPromptChunkIndex + 1) + '/' + state.initialPromptChunks.length + ' 段）'
         : '';
-      console.log('[LingYa] 初始提示已上传为 .md 附件' + chunkInfo +
+      console.log('[LingYa] 初始提示已上传为附件 ' + uploadedName + chunkInfo +
         '，长度=' + state.initialPromptContent.length);
     }
   } catch (err) {
@@ -728,8 +756,15 @@ async function sendInitialPromptToInput() {
   }
 
   if (uploaded) {
-    // 填引导语，满足平台非空校验
-    if (!(await setInputContent(input, '请阅读附件 lingya-input.md 并按其中内容执行。'))) {
+    // 填引导语，满足平台非空校验（文案池随机，与 sendToChat 一致）
+    let hint;
+    try {
+      const { pickHint } = require('./upload-hint');
+      hint = pickHint(uploadedName);
+    } catch (_) {
+      hint = '帮我看看附件';
+    }
+    if (!(await setInputContent(input, hint))) {
       console.warn('[LingYa] 初始提示引导语填入失败，仍尝试发送');
     }
   } else {
@@ -780,6 +815,11 @@ async function sendInitialPromptToInput() {
     let sent = false;
     try { sent = await triggerSend(input); } catch (err) {
       console.error('[LingYa] 初始提示发送异常:', err && err.message);
+    }
+    if (!sent) {
+      // 零宽引导语兜底：平台若 trim 掉 \u200B，改用「。」重试一次
+      console.warn('[LingYa] 初始提示首次发送失败，尝试零宽引导语兜底重试');
+      sent = await retrySendWithFallbackHint(input, '初始提示');
     }
     state.pendingInitialPrompt = false;
     // 记录已实际发出的段（只在确实发出后记，发送失败允许重试）
@@ -984,6 +1024,47 @@ async function fallbackSend(provider, input) {
     if (showToast) showToast('⚠️ 消息未能发送，请手动发一条消息恢复', 6000);
   } catch (_) { /* 覆盖层未就绪时忽略 */ }
   return false;
+}
+
+/**
+ * 零宽引导语兜底重试（2026-10-30）
+ *
+ * 背景：上传附件后输入框填的是零宽空格 \u200B，视觉上等于「没有引导语」。
+ *      实测 DeepSeek 认可零宽空格为「非空」，发送按钮可点、消息能发出。
+ *      但如果平台未来改为 trim 掉零宽字符，发送按钮会保持 disabled，
+ *      triggerSend 就会返回 false。
+ *
+ * 兜底策略：改用可见的「。」重填输入框，再触发一次发送。
+ *          这是最后一道保险，正常情况下不会触发。
+ *
+ * @param {Element} input 输入框元素
+ * @param {string} tag 消息标签（仅用于日志）
+ * @returns {Promise<boolean>} 重试是否成功
+ */
+async function retrySendWithFallbackHint(input, tag) {
+  if (!input) return false;
+  try {
+    const { FALLBACK_HINT } = require('./upload-hint');
+    const filled = await setInputContent(input, FALLBACK_HINT);
+    if (!filled) {
+      console.warn('[LingYa] 兜底引导语填入失败（' + (tag || '') + '）');
+      return false;
+    }
+    await new Promise(function (r) { setTimeout(r, 300); });
+    let retried = false;
+    try { retried = await triggerSend(input); } catch (err) {
+      console.error('[LingYa] 兜底重试发送异常:', err && err.message);
+    }
+    if (retried) {
+      console.log('[LingYa] 零宽引导语兜底重试成功（' + (tag || '') + '）');
+    } else {
+      console.error('[LingYa] 零宽引导语兜底重试仍失败（' + (tag || '') + '）');
+    }
+    return !!retried;
+  } catch (err) {
+    console.warn('[LingYa] 兜底重试流程异常:', err && err.message);
+    return false;
+  }
 }
 /**
  * 注册主进程消息监听（initial-prompt）

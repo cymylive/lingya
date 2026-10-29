@@ -13,7 +13,9 @@ const feishuClient = require('../feishu/client');
 const { readConfig, writeConfig } = require('../feishu/config');
 const profileManager = require('./profile-manager');
 const roundCollector = require('./round-collector');
-const { buildRoundCard } = require('../feishu/round-card');
+// 【2026-10-30】飞书 task-done 已改为纯文本面板（与 QQ/微信统一），
+// 不再使用 buildRoundCard 交互卡片。文件保留，将来若要恢复卡片可直接引用。
+const { formatTodoPanel, formatEmptyPanel, stripMarkdown } = require('./channel-panel');
 
 let feishuInited = false;
 
@@ -23,6 +25,15 @@ const lastFeishuSource = new Map();
 // 每个 profile 的任务活跃状态（看门狗用）
 // { active: 是否处于"任务进行中", lastActivity: 最后活动时间戳, warned: 是否已告警 }
 const taskState = new Map();
+
+/**
+ * 每个 profile 本轮是否已推过任务计划面板。
+ * task-done 时若没推过，补一个「无计划」面板头，保证与 QQ/微信格式一致。
+ */
+const panelPushedThisRound = new Map();
+
+/** 缓存每个 profile 当前的待办列表，供状态变化时生成面板 */
+const todosCache = new Map();
 
 // 看门狗：每隔一段时间检查各 profile 是否"静默卡住"
 const STALL_CHECK_INTERVAL_MS = 15 * 1000;
@@ -517,7 +528,7 @@ function registerFeishuIpc() {
     }
     const type = payload && payload.type;
     const push = async (text, label) => {
-      const r = await feishuClient.sendText(text, chatId);
+      const r = await feishuClient.sendText(stripMarkdown(text), chatId);
       if (!r.success) console.warn('[Feishu] 推送失败（' + label + '）:', r.error);
       return r;
     };
@@ -539,48 +550,63 @@ function registerFeishuIpc() {
     //   - ai-reply / tool-end：只进轮次收集器，不单独推送
     //   - task-done：推 1 条交互卡片，正文在上、执行过程折叠在下
     try {
+      const getPanel = (state, isFinal) => {
+        const todos = todosCache.get(pid) || [];
+        if (todos.length > 0) return formatTodoPanel(todos, state, { isFinal });
+        return formatEmptyPanel(state);
+      };
+
       if (type === 'user-message') {
         const t = String((payload && payload.text) || '').trim();
         roundCollector.onUserMessage(pid, t);
+        panelPushedThisRound.set(pid, false);
+        todosCache.delete(pid);
         if (!cfg.pushUserMessage) return { success: true };
         if (t) return await push('👤 我：' + t, 'user-message');
         return { success: true };
       } else if (type === 'ai-start') {
         roundCollector.onAiStart(pid);
-        if (!cfg.pushToolStatus) return { success: true };
-        return await push('🧠 AI 正在生成…', 'ai-start');
+        return await push(getPanel('🧠 AI 正在思考…', false), 'ai-start');
       } else if (type === 'ai-reply') {
         roundCollector.onAiReply(pid, payload && payload.text, !!(payload && payload.hasTool));
         return { success: true };
       } else if (type === 'tool-start') {
         roundCollector.onToolStart(pid, payload && payload.toolName);
-        if (!cfg.pushToolStatus) return { success: true };
-        return await push(cfg.pushToolName && payload.toolName
-          ? '🔧 正在调用工具：' + payload.toolName
-          : '🔧 AI 正在调用工具…', 'tool-start');
+        return await push(getPanel('🔧 AI 正在调用工具：' + (payload.toolName || '…'), false), 'tool-start');
       } else if (type === 'tool-end') {
         roundCollector.onToolEnd(pid);
-        return { success: true };
+        return await push(getPanel('🧠 AI 正在思考…', false), 'tool-end');
+      } else if (type === 'todo-panel') {
+        panelPushedThisRound.set(pid, true);
+        if (Array.isArray(payload && payload.todos)) todosCache.set(pid, payload.todos);
+        const panelBody = getPanel((payload && payload.activity) || '🔨 正在执行计划…', false);
+        if (!panelBody) return { success: true };
+        return await push(panelBody, 'todo-panel');
       } else if (type === 'task-done') {
         const round = roundCollector.finish(pid);
-        // 无内容可推（例如完全空轮）时直接返回
-        if (!round) {
-          if (!cfg.pushTaskDone) return { success: true };
-          return await push('🏁 任务完成', 'task-done');
-        }
-        // 卡片：正文 + 折叠过程。推送开关沿用「有正文就推」的语义。
-        if (cfg.pushAiReply || cfg.pushToolStatus) {
-          try {
-            const card = buildRoundCard(round);
-            const r = await feishuClient.sendCard(card, chatId);
-            if (!r.success) console.warn('[Feishu] 卡片推送失败:', r.error);
-            return r;
-          } catch (e) {
-            console.warn('[Feishu] 卡片渲染失败，回退文本:', e && e.message);
+        panelPushedThisRound.delete(pid);
+        if (round && (cfg.pushAiReply || cfg.pushToolStatus)) {
+          const parts = [];
+          parts.push(getPanel('✅ 已回复', true));
+          if (round.userText) parts.push('👤 我：' + round.userText);
+          const thinkingText = (round.thinkings || []).join('\n\n').trim();
+          if (thinkingText) {
+            const brief = thinkingText.length > 300 ? thinkingText.slice(0, 300) + '…（共 ' + thinkingText.length + ' 字）' : thinkingText;
+            parts.push('💭 思考过程:\n' + brief);
           }
+          if (round.replies.length > 0) {
+            parts.push('🤖 AI：\n' + round.replies.join('\n\n'));
+          }
+          const chain = roundCollector.buildToolChainSummary(round.tools);
+          if (chain) {
+            const secs = (round.durationMs / 1000).toFixed(1);
+            parts.push('🔧 执行过程（' + round.tools.length + ' 步，' + secs + 's）:\n' + chain);
+          }
+          const finalBody = parts.join('\n\n────────\n\n');
+          if (finalBody) return await push(finalBody, 'task-done');
         }
         if (!cfg.pushTaskDone) return { success: true };
-        return await push('🏁 任务完成', 'task-done');
+        return await push(getPanel('✅ 任务完成', true), 'task-done');
       }
     } catch (err) {
       console.error('[Feishu] 推送异常:', err.message);

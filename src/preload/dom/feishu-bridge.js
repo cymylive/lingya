@@ -33,6 +33,10 @@ function report(payload) {
 }
 
 let inited = false;
+
+// 当前活动状态（供任务面板展示）：AI 生成 / 调工具
+let currentActivity = '🧠 AI 正在生成…';
+
 function initFeishuBridge() {
   if (inited) return;
   inited = true;
@@ -65,6 +69,7 @@ function initFeishuBridge() {
   try {
     window.addEventListener('lingya-ai-start', () => {
       if (!enabled) return;
+      currentActivity = '🧠 AI 正在生成…';
       report({ type: 'ai-start' });
     });
   } catch (_) {}
@@ -77,7 +82,8 @@ function initFeishuBridge() {
     if (!enabled) return;
     const clean = stripToolBlocks(text);
     const hasTool = /\`\`\`(?:lingya|javascript|js)/i.test(text);
-    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool, thinking: String(thinking || '') });
+    // 【2026-10-30】不再塞占位文本。空回复由主进程判断是否推送。
+    report({ type: 'ai-reply', text: clean, hasTool: hasTool, thinking: String(thinking || '') });
     // 无后续工具 → 任务收尾，单独上报"完成"标志
     if (!hasTool) report({ type: 'task-done' });
   });
@@ -85,9 +91,26 @@ function initFeishuBridge() {
   // 3. 工具调用状态 → 上报（仅状态；工具名是否带上由主进程按配置决定）
   onToolCall((ev) => {
     if (!enabled || !ev) return;
-    if (ev.phase === 'start') report({ type: 'tool-start', toolName: ev.toolName || '' });
-    else if (ev.phase === 'end') report({ type: 'tool-end' });
+    if (ev.phase === 'start') {
+      currentActivity = '🔧 AI 正在调用工具' + (ev.toolName ? '：' + ev.toolName : '…');
+      report({ type: 'tool-start', toolName: ev.toolName || '' });
+    } else if (ev.phase === 'end') {
+      currentActivity = '🧠 AI 正在生成…';
+      report({ type: 'tool-end' });
+    }
   });
+
+  // 6. 任务计划面板：todo 每次变化推一条完整面板（与 QQ/微信同一格式）
+  try {
+    if (window.electronAPI && typeof window.electronAPI.onTodosUpdated === 'function') {
+      window.electronAPI.onTodosUpdated((payload) => {
+        if (!enabled) return;
+        const todos = (payload && Array.isArray(payload.todos)) ? payload.todos : null;
+        if (!todos || todos.length === 0) return;
+        report({ type: 'todo-panel', todos: todos, activity: currentActivity });
+      });
+    }
+  } catch (_) {}
 
   // 4. 飞书来消息 → 主进程转发到此 → 发给 AI
   try {

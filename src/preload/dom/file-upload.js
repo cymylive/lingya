@@ -2,11 +2,31 @@
  * 文件上传发送：将文本内容写入虚拟 .md 文件，通过 input[type=file] 上传。
  *
  * 全局替换文本输入：所有发送都走文件传输，不再直接填字。
- * 固定文件名 lingya-input.md，内容每次在内存中替换，不产生磁盘垃圾。
+ * 文件名每次随机生成（随机词 + 时分秒），内容每次在内存中替换，不产生磁盘垃圾。
  *
  * 发送顺序（由 chat-input.js 控制）：优先可信回车，失败再点发送按钮。
  */
-const FILE_NAME = 'lingya-input.md';
+// ===== 附件文件名：拟真随机（2026-10-30）=====
+// 原固定名 lingya-input.md 在每条消息的附件卡片上重复出现，是强机器指纹。
+// 改为「随机词 + 时分秒」组合，每次上传换一个，且不含恒定前缀。
+// 时间戳用短格式（时分秒）而非完整日期：同日多条也不会重名，也不暴露规律。
+const FILE_WORDS = ['笔记', '任务', '说明', '草稿', '分析', '资料', '片段', '文档', '记录', '备忘'];
+
+/** 两位补零 */
+function pad2(n) {
+  return n < 10 ? '0' + n : String(n);
+}
+
+/**
+ * 生成一个拟真文件名：<随机词>-<时分秒>.md
+ * @returns {string}
+ */
+function pickFileName() {
+  const word = FILE_WORDS[Math.floor(Math.random() * FILE_WORDS.length)];
+  const d = new Date();
+  const stamp = pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
+  return word + '-' + stamp + '.md';
+}
 
 // ===== 并发锁（2026-10-29 审计修复）=====
 // 无锁时两次 sendToChat 并发调用 uploadContent，都会读到相同的 beforeCount，
@@ -20,8 +40,8 @@ function findFileInput() {
 }
 
 /** 用字符串构造一个 File 对象（不落盘） */
-function buildFile(content) {
-  return new File([content], FILE_NAME, { type: 'text/markdown' });
+function buildFile(content, fileName) {
+  return new File([content], fileName, { type: 'text/markdown' });
 }
 
 /**
@@ -68,6 +88,9 @@ function countFileName(scope, name) {
  * @returns {Promise<boolean>} 附件是否成功挂载到页面
  */
 async function uploadContentInternal(content, input) {
+  // 本次上传使用的文件名：每次调用独立生成，保证不重复
+  const fileName = pickFileName();
+
   // 页面刚导航完时 file input 可能还没渲染，重试最多 5 秒
   let fileInput = findFileInput();
   if (!fileInput) {
@@ -79,7 +102,7 @@ async function uploadContentInternal(content, input) {
   }
   if (!fileInput) {
     console.warn('[LingYa] 未找到文件上传控件（等待 5s 后仍无），无法走文件发送');
-    return false;
+    return { ok: false, fileName };
   }
 
   // 1. 清空输入框，避免残留文本混入
@@ -91,8 +114,8 @@ async function uploadContentInternal(content, input) {
   // 渲染在该范围之外，计数恒为 0 → 检测超时 → chat-input.js 回退把全文塞进
   // 输入框，界面出现「附件 + 正文」双份内容。
   // 附件挂载位置由平台决定，不能假设；改用整页计数增量，挂在哪都能看见。
-  const beforeCount = countFileName(document.body, FILE_NAME);
-  console.log('[LingYa][上传诊断] 上传前全页文件名出现次数=' + beforeCount);
+  const beforeCount = countFileName(document.body, fileName);
+  console.log('[LingYa][上传诊断] 上传前全页文件名出现次数=' + beforeCount + '（' + fileName + '）');
 
   // 2.5 残留附件处理（2026-10-29 审计后修订）
   //
@@ -105,14 +128,14 @@ async function uploadContentInternal(content, input) {
 
   // 3. 构造并注入文件
   try {
-    const file = buildFile(content);
+    const file = buildFile(content, fileName);
     const dt = new DataTransfer();
     dt.items.add(file);
     fileInput.files = dt.files;
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
   } catch (err) {
     console.warn('[LingYa] 注入文件失败:', err && err.message);
-    return false;
+    return { ok: false, fileName };
   }
 
   // 4. 轮询等待文件名出现次数增加（最多 8 秒）
@@ -132,11 +155,11 @@ async function uploadContentInternal(content, input) {
   let lastCount = beforeCount;
   while (Date.now() - start < 8000) {
     await new Promise((r) => setTimeout(r, 200));
-    lastCount = countFileName(document.body, FILE_NAME);
+    lastCount = countFileName(document.body, fileName);
     if (lastCount > beforeCount) {
       console.log('[LingYa][上传诊断] 检测到附件（DOM 计数）：' + beforeCount + ' → ' + lastCount);
       await new Promise((r) => setTimeout(r, 400));
-      return true;
+      return { ok: true, fileName };
     }
     // 兜底 B：平台已把 files 读走（注入后 fileInput.files 会从 1 变 0）。
     //
@@ -152,13 +175,13 @@ async function uploadContentInternal(content, input) {
     if (fileCount === 0) {
       console.log('[LingYa][上传诊断] 检测到附件（files 已被平台消费）');
       await new Promise((r) => setTimeout(r, 300));
-      return true;
+      return { ok: true, fileName };
     }
   }
 
   console.warn('[LingYa] 文件上传超时（8s 内既无 DOM 计数增加，files 也为空：' +
     beforeCount + ' → ' + lastCount + '）');
-  return false;
+  return { ok: false, fileName };
 }
 
 /**
@@ -172,4 +195,4 @@ function uploadContent(content, input) {
   return p;
 }
 
-module.exports = { uploadContent, FILE_NAME, findFileInput };
+module.exports = { uploadContent, pickFileName, findFileInput };
