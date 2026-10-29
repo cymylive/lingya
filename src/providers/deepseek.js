@@ -80,10 +80,19 @@ function deepseekHookInstaller() {
     return /^\/api\/v[\d.]+\/chat\//.test(pathname) && /completion/i.test(pathname);
   }
 
-  function dispatch(text, finished, tokenUsage, msgIds, interrupted) {
+  function dispatch(text, finished, tokenUsage, msgIds, interrupted, thinking) {
     try {
       window.dispatchEvent(new CustomEvent('lingya-ai-response', {
-        detail: { text: text || '', finished: !!finished, tokenUsage: tokenUsage || null, msgIds: msgIds || null, interrupted: !!interrupted }
+        detail: {
+          text: text || '',
+          finished: !!finished,
+          tokenUsage: tokenUsage || null,
+          msgIds: msgIds || null,
+          interrupted: !!interrupted,
+          // 深度思考内容（DeepSeek 的「已思考」块）。没有时为空串。
+          // 2026-10-30 新增：此前 THINK 片段被直接丢弃，推送通道拿不到。
+          thinking: thinking || '',
+        }
       }));
     } catch (e) { /* ignore */ }
   }
@@ -140,6 +149,8 @@ function deepseekHookInstaller() {
     var currentIndex = -1;
     var observed = false;
     var text = '';
+    // 深度思考内容（THINK 片段）。与 text 分开累积，派发时单独带出。
+    var thinking = '';
     var finished = false;
     // 生成被中断（服务端明确标记 INTERRUPTED/BROKEN/FAILED）
     var interrupted = false;
@@ -219,7 +230,10 @@ function deepseekHookInstaller() {
       for (var i = 0; i < fragments.length; i++) {
         var c = fragText(fragments[i]);
         if (!c) continue;
-        if (!isThink(types[i])) text += c;
+        // 2026-10-30：THINK 片段此前被丢弃，现在单独累积到 thinking，
+        // 由 dispatch 一并传出，供推送通道展示「思考过程」。
+        if (isThink(types[i])) thinking += c;
+        else text += c;
       }
     }
 
@@ -270,15 +284,17 @@ function deepseekHookInstaller() {
         if (first) consumeFragmentContent(snap, stypes);
         return;
       }
-      if (isThinkingPatch(parsed.p) && typeof parsed.v === 'string') return;
+      if (isThinkingPatch(parsed.p) && typeof parsed.v === 'string') { thinking += parsed.v; return; }
       if (typeof parsed.p === 'string' && isResponseTextPatch(parsed.p) && typeof parsed.v === 'string') {
         var m = /^response\/fragments\/(-?\d+)\//.exec(parsed.p);
         var idx = m ? Number(m[1]) : -1;
-        if (!isThink(typeAt(idx))) text += parsed.v;
+        if (isThink(typeAt(idx))) thinking += parsed.v;
+        else text += parsed.v;
         return;
       }
       if (parsed.p === undefined && typeof parsed.v === 'string') {
-        if (!isThink(typeAt(currentIndex))) text += parsed.v;
+        if (isThink(typeAt(currentIndex))) thinking += parsed.v;
+        else text += parsed.v;
         return;
       }
       if (parsed.p === 'response/status' || parsed.p === 'quasi_status') {
@@ -290,6 +306,7 @@ function deepseekHookInstaller() {
     return {
       consume: consume,
       get text() { return text; },
+      get thinking() { return thinking; },
       get finished() { return finished; },
       get interrupted() { return interrupted; },
       get tokenUsage() { return tokenUsage; },
@@ -313,7 +330,7 @@ function deepseekHookInstaller() {
       }
       if (extractor.finished && !dispatched) {
         dispatched = true;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted, extractor.thinking);
       }
     }
 
@@ -333,7 +350,7 @@ function deepseekHookInstaller() {
         }
       } catch (e) { /* ignore */ }
       var isInterrupted = extractor.interrupted || !extractor.finished;
-      dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted);
+      dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted, extractor.thinking);
     }
 
     function pump() {
@@ -347,7 +364,7 @@ function deepseekHookInstaller() {
         }
         if (extractor.finished && !dispatched) {
           dispatched = true;
-          dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
+          dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted, extractor.thinking);
         }
         pump();
       }).catch(function () { finalize(); });
@@ -496,7 +513,7 @@ function deepseekHookInstaller() {
       }
       if (extractor.finished && !dispatched) {
         dispatched = true;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted);
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted, extractor.thinking);
       }
     }
 
@@ -511,7 +528,7 @@ function deepseekHookInstaller() {
         dispatched = true;
         // 请求结束但未收到 FINISHED → 判定为中断
         var isInterrupted = extractor.interrupted || !extractor.finished;
-        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted);
+        dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, isInterrupted, extractor.thinking);
       }
     });
   }

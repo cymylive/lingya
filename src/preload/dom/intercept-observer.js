@@ -493,7 +493,8 @@ const responseListeners = new Set();
 
 /**
  * 注册"AI 回复完成"监听器
- * @param {Function} cb 收到完成回复时调用，参数为完整文本
+ * @param {Function} cb 收到完成回复时调用，参数为 (text, thinking)
+ *        thinking 是深度思考内容，可能为空串
  * @returns {Function} 取消注册
  */
 function onInterceptedResponse(cb) {
@@ -710,9 +711,12 @@ function startInterceptObserver() {
       if (detail.msgIds) {
         state.lastResponseMsgIds = detail.msgIds;
       }
-      // 通知监听器
+      // 通知监听器（第二个参数 thinking：深度思考内容，可能为空串）
+      const _thinkLen = String(detail.thinking || '').length;
+      console.log('[LingYa][拦截] 收到回复：正文 ' + String(detail.text || '').length +
+        ' 字符，思考 ' + _thinkLen + ' 字符' + (_thinkLen === 0 ? '（本轮无思考或捕获失败）' : ''));
       for (const cb of responseListeners) {
-        try { cb(detail.text || ''); } catch (_) { /* ignore */ }
+        try { cb(detail.text || '', detail.thinking || ''); } catch (_) { /* ignore */ }
       }
       enqueueProcessing(() => processInterceptedResponse(detail.text, false, !!detail.interrupted));
     } catch (err) {
