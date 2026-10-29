@@ -272,7 +272,44 @@ function onUserMessageSent(cb) {
   return () => { if (onUserMessageSentCb === cb) onUserMessageSentCb = null; };
 }
 
+// ===== 自动消息合并缓冲（2026-10-29）=====
+// 实现抽到 ./send-merger.js：纯调度逻辑、sender 可注入、可单测。
+// 这里只负责把 doSendToChat 注入进去。
+//
+// 只有「程序自动发送 + 未指定固定延迟」的消息参与合并：
+//   - 工具结果回传、JS 汇总、插件自动消息     → 合并
+//   - 飞书/微信/QQ（fixedDelay=300/500）      → 独立发送
+//   - AutoRename / 压缩摘要（fixedDelay=300）  → 独立发送
+//   - 用户面板手动插入（非 auto）              → 独立发送
+const { createSendMerger } = require('./send-merger');
+
+const sendMerger = createSendMerger({
+  send: (msg, tag, afterSent, opts) => doSendToChat(msg, tag, undefined, afterSent, opts),
+  windowMs: 800,
+  log: (m) => console.log('[LingYa]' + m),
+  warn: (m) => console.warn('[LingYa]' + m),
+});
+
+/**
+ * 分发器：决定这条消息「进合并缓冲」还是「独立立即发送」。
+ *
+ * 只有同时满足以下条件的才进缓冲（见上方 MERGE_WINDOW_MS 注释）：
+ *   1. opts.auto === true —— 程序自动消息（工具回传、JS 汇总、插件）
+ *   2. fixedDelay === undefined —— 调用方没指定固定延迟
+ *
+ * 用户消息、飞书/微信/QQ、AutoRename、压缩摘要、面板手动插入
+ * 一律走原路径，行为与改动前完全一致。
+ */
 async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
+  const isAuto = !!(opts && opts.auto);
+  const canMerge = isAuto && fixedDelay === undefined;
+  if (canMerge) {
+    return sendMerger.enqueue(msg, tag, afterSent, opts);
+  }
+  return doSendToChat(msg, tag, fixedDelay, afterSent, opts);
+}
+
+async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
   state.touch(); // 发消息 = 有活动
   const isAuto = !!(opts && opts.auto);
   // 【重要】程序自动发送的消息绝不能清除 stopped ——

@@ -72,7 +72,11 @@ test('非法值（NaN / 非数字）回退到默认值', () => {
 test('project-context 必须从配置读 chunkSize 而非只用硬编码常量', () => {
   const src = fs.readFileSync(PROJECT_CONTEXT, 'utf-8');
   assert.ok(/cfg\.promptChunkSize/.test(src), '未从配置读取 promptChunkSize');
-  assert.ok(/splitPromptIntoChunks\(combined, chunkSize/.test(src), '未把配置值传给分片函数');
+  // 2026-10-29：初始化改为单文件发送，不再把配置值传给分片函数。
+  // 这里断言「不再切片」这一新约束，防止有人把切片逻辑加回来。
+  assert.ok(!/splitPromptIntoChunks\(combined, chunkSize/.test(src),
+    'initProject 不应再调用分片函数（改走单文件上传）');
+  assert.ok(/const chunks = \[combined\]/.test(src), '未改为单文件发送');
 });
 
 test('配置值真的影响分片结果（端到端）', () => {

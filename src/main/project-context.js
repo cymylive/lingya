@@ -554,9 +554,9 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   }
 
   stepLog('提示词组装完成');
-  // 分批发送：单条消息体量过大更容易被平台侧判定为异常，也更像机器一次性倾倒。
-  // 拆成几段依次发送，每段都自然带上"第几段/共几段"的说明，观感接近人类分次粘贴配置。
-  // 单段上限从配置读取（用户可在设置面板调整），非法值回退到默认常量。
+  // 单文件发送（2026-10-29 起）：早先按 15000 字符切片是为了绕开平台输入框长度限制，
+  // 全局改走文件上传后该限制不存在，切片只会让一次初始化产生多个 .md 附件，故废除。
+  // chunkSize 仍从配置读取，仅为兼容设置面板与 splitPromptIntoChunks 的单测。
   let chunkSize = PROMPT_CHUNK_TARGET_SIZE;
   try {
     const cfg = securityStore.getConfig();
@@ -565,9 +565,12 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
       chunkSize = Math.floor(n);
     }
   } catch (_) { /* 读配置失败用默认值，不影响初始化 */ }
-  const chunks = splitPromptIntoChunks(combined, chunkSize, PROMPT_CHUNK_MAX);
+  // 废除切片（2026-10-29）：全局改为文件上传后，输入框长度限制不再存在，
+  // 整个 systemPrompt 作为单个 .md 附件发送，一次初始化只产生 1 个附件。
+  // splitPromptIntoChunks 保留（单测与设置面板兼容），但 initProject 不再调用。
+  const chunks = [combined];
   console.log('[LingYa] 准备发送初始提示（不含目录树），总长度:', combined.length,
-    '，单段上限:', chunkSize, '，拆分为', chunks.length, '段');
+    '，单文件发送（不切片，配置值 ' + chunkSize + ' 仅保留兼容）');
 
   // ===== 启动自检：核心规则必须落在第 1 段 =====
   // 分段发送时 AI 收到第 1 段就开始回复，后续段到达也纠正不了已形成的判断
@@ -607,11 +610,8 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     lastInitPromptSentAt.set(throttleKey, now);
 
     const batchId = makeInitialPromptBatchId();
-    if (chunks.length > 1) {
-      mainWindow.webContents.send('initial-prompt', { chunks, batchId });
-    } else {
-      mainWindow.webContents.send('initial-prompt', { chunks: [combined], batchId, single: true });
-    }
+    // 恒为单段：整份 systemPrompt 一次上传，界面只出现 1 个 lingya-input.md
+    mainWindow.webContents.send('initial-prompt', { chunks: [combined], batchId, single: true });
     console.log('[LingYa] initial-prompt 已发送，batchId=' + batchId +
       '，段数=' + chunks.length + '，总长度=' + combined.length);
   }
