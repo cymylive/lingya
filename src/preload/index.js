@@ -154,6 +154,7 @@ function init() {
     // 飞书同步：上报用户消息/AI回复/工具状态，并接收飞书来消息
     require('./dom/feishu-bridge').initFeishuBridge();
     require('./dom/weixin-bridge').initWeixinBridge();
+    require('./dom/qq-bridge').initQqBridge();
   } catch (err) {
     console.error('[LingYa] 飞书同步启动失败:', err);
   }

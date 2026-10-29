@@ -4,18 +4,22 @@
  *  - 接收 AI 页面上报（weixin-report）→ 按配置推送到微信
  *  - 微信来消息 → 转发给当前活跃窗口的 AI 页面
  *
- * 与飞书的区别：iLink 以单聊为主，没有群绑定概念，
- * 消息一律路由到主窗口（或最近活跃窗口）。
+ * 消息路由：优先按「该微信用户绑定的窗口」分发；未绑定才回退主窗口。
+ * 这样多个通道可以绑定到不同窗口并行工作，互不干扰。
  */
 const { ipcMain } = require('electron');
 const windowState = require('./window');
 const weixinClient = require('../weixin/client');
 const { readConfig, writeConfig } = require('../weixin/config');
+const profileManager = require('./profile-manager');
 
 let weixinInited = false;
 
 /** 每个 profile 最近一条微信消息的来源 userId，用于 AI 回复按来源回推 */
 const lastWeixinSource = new Map();
+
+/** 最近发过消息的微信用户：userId -> { at }，用于面板选择绑定目标 */
+const recentWeixinUsers = new Map();
 
 /** 每个 profile 的任务活跃状态（看门狗用） */
 const taskState = new Map();
@@ -74,10 +78,36 @@ function startStallWatchdog() {
  * iLink 是单聊模型，不区分群，一律回退主窗口。
  */
 async function forwardUserMessage(text, fromUserId) {
-  const ctx = windowState.getMainContext();
+  // 优先按「该微信用户绑定的窗口」路由；未绑定才回退主窗口
+  let ctx = null;
+  try {
+    const bound = profileManager.getProfileByWeixinUser(fromUserId);
+    if (bound) {
+      ctx = windowState.getWindowByProfileId(bound.id);
+      if (ctx) {
+        console.log('[Weixin] 按绑定路由到窗口:', bound.name);
+      } else {
+        console.warn('[Weixin] 绑定的窗口未打开，回退主窗口:', bound.name);
+      }
+    }
+  } catch (err) {
+    console.warn('[Weixin] 查绑定失败:', err.message);
+  }
+  if (!ctx) ctx = windowState.getMainContext();
   if (!ctx) {
     console.warn('[Weixin] 没有活跃窗口，消息丢弃');
     return;
+  }
+  if (fromUserId) {
+    recentWeixinUsers.set(fromUserId, { at: Date.now() });
+    // 只保留最近 20 个，防止无限增长
+    if (recentWeixinUsers.size > 20) {
+      let oldestKey = null, oldestAt = Infinity;
+      for (const [k, v] of recentWeixinUsers) {
+        if (v.at < oldestAt) { oldestAt = v.at; oldestKey = k; }
+      }
+      if (oldestKey) recentWeixinUsers.delete(oldestKey);
+    }
   }
   if (ctx.profileId) {
     lastWeixinSource.set(ctx.profileId, { userId: fromUserId || '' });
@@ -106,59 +136,11 @@ async function forwardUserMessage(text, fromUserId) {
 
 /** 处理微信来消息里的斜杠命令 */
 async function handleWeixinCommand(text, fromUserId, ctx) {
-  const cmd = String(text || '').trim();
-  if (!cmd.startsWith('/')) return false;
-  const parts = cmd.slice(1).split(/\s+/);
-  const name = parts[0];
-  const win = ctx && ctx.win;
-
   const reply = async (msg) => {
     try { await weixinClient.sendText(msg, fromUserId); } catch (_) {}
     return true;
   };
-
-  if (name === 'help' || name === '?') {
-    return reply([
-      '🤖 LingYa 微信指令：',
-      '/new [项目名] — 开新对话',
-      '/list — 列出会话',
-      '/stop — 停止当前任务',
-      '/help — 显示本帮助',
-    ].join('\n'));
-  }
-
-  if (name === 'stop') {
-    try {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('lingya-stop-task');
-      }
-      return reply('⏹ 已发送停止指令');
-    } catch (err) {
-      return reply('❌ 停止失败: ' + err.message);
-    }
-  }
-
-  if (name === 'new') {
-    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
-    try {
-      win.webContents.send('lingya-new-conversation', { title: parts.slice(1).join(' ') || '' });
-      return reply('✅ 已触发新建对话');
-    } catch (err) {
-      return reply('❌ 新建失败: ' + err.message);
-    }
-  }
-
-  if (name === 'list') {
-    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
-    try {
-      win.webContents.send('lingya-list-conversations');
-      return reply('📋 已在桌面列出会话');
-    } catch (err) {
-      return reply('❌ 列会话失败: ' + err.message);
-    }
-  }
-
-  return reply('❓ 未知指令：/' + name + '，发 /help 查看用法');
+  return await require('./channel-commands').handleCommand(text, ctx, reply, '微信');
 }
 
 /** 广播微信模式开关（供 AI 页面 bridge 决定是否监听） */
@@ -202,6 +184,51 @@ function registerWeixinIpc() {
       status: st.status,
       statusDetail: st.detail,
     };
+  });
+
+  // ===== 窗口绑定：读当前窗口绑定的微信用户 =====
+  ipcMain.handle('weixin-get-binding', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profile = ctx ? profileManager.getProfileById(ctx.profileId) : null;
+    return {
+      success: true,
+      userId: (profile && profile.weixinUserId) || '',
+      userName: (profile && profile.weixinUserName) || '',
+      profileId: ctx ? ctx.profileId : '',
+    };
+  });
+
+  // ===== 窗口绑定：绑定/解绑当前窗口到某微信用户 =====
+  ipcMain.handle('weixin-bind-user', async (event, { userId, userName } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.profileId) return { success: false, error: '找不到窗口' };
+    // 同一个微信用户只能绑一个窗口：先清掉其他窗口的绑定
+    if (userId) {
+      const others = profileManager.readProfiles().filter(p => p.weixinUserId === userId && p.id !== ctx.profileId);
+      for (const o of others) {
+        profileManager.setProfileWeixinUser(o.id, '', '');
+      }
+    }
+    const p = profileManager.setProfileWeixinUser(ctx.profileId, userId || '', userName || '');
+    if (!p) return { success: false, error: '更新失败' };
+    return { success: true };
+  });
+
+  // ===== 最近发过消息的微信用户（供面板选择绑定目标）=====
+  ipcMain.handle('weixin-list-recent-users', async () => {
+    const list = [];
+    for (const [userId, info] of recentWeixinUsers) {
+      // 查一下这个用户当前绑在哪个窗口
+      const bound = profileManager.getProfileByWeixinUser(userId);
+      list.push({
+        userId,
+        at: info.at,
+        boundProfileId: bound ? bound.id : '',
+        boundProfileName: bound ? bound.name : '',
+      });
+    }
+    list.sort((a, b) => b.at - a.at);
+    return { success: true, users: list };
   });
 
   // 扫码登录：拿二维码

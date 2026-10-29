@@ -1797,6 +1797,14 @@
         '<label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="sh-wx-enabled" /> 启用微信通道</label>'+
       '</div>'+
       '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">窗口绑定</div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">当前：<span id="sh-wx-bind-cur">未绑定</span></div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">绑定的微信用户发来消息时，只在指定窗口处理，实现多通道并行不冲突。</div>'+
+        '<select id="sh-wx-bind-user" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;"><option value="">加载中…</option></select>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn" id="sh-wx-bind-apply">绑定此用户</button><button class="sh-btn" id="sh-wx-bind-clear">解绑</button><button class="sh-btn" id="sh-wx-bind-refresh">刷新列表</button></div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;">提示：需先用该微信账号给 Bot 发过消息，才会出现在列表里。</div>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
         '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">扫码登录</div>'+
         '<div id="sh-wx-qrcode" style="min-height:40px;margin-bottom:6px;text-align:center;"></div>'+
         '<div id="sh-wx-tip" style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">点击「获取二维码」，用微信扫码登录</div>'+
@@ -1844,6 +1852,52 @@
       })['catch'](function(){});
     }
     loadWx();
+
+    // ===== 窗口绑定 =====
+    function loadWxBinding(){
+      if(!window.shellAPI||!window.shellAPI.getWeixinBinding) return;
+      window.shellAPI.getWeixinBinding().then(function(b){
+        var cur=ev('sh-wx-bind-cur');
+        if(cur) cur.textContent=(b&&b.userId)?((b.userName||'未知')+'（已绑定）'):'未绑定';
+      })['catch'](function(){});
+    }
+    function loadWxRecentUsers(){
+      if(!window.shellAPI||!window.shellAPI.listWeixinRecentUsers) return;
+      var sel=ev('sh-wx-bind-user'); if(!sel) return;
+      sel.innerHTML='<option value="">加载中…</option>';
+      window.shellAPI.listWeixinRecentUsers().then(function(r){
+        var sel2=ev('sh-wx-bind-user'); if(!sel2) return;
+        if(!r||!r.success){ sel2.innerHTML='<option value="">加载失败</option>'; return; }
+        var us=r.users||[];
+        if(!us.length){ sel2.innerHTML='<option value="">（暂无记录，请先用微信给 Bot 发消息）</option>'; return; }
+        sel2.innerHTML='<option value="">— 选择要绑定的微信用户 —</option>'+us.map(function(u){
+          var label=u.userId.slice(0,16)+'…'+(u.boundProfileName?(' [已绑:'+u.boundProfileName+']'):'');
+          return '<option value="'+esc(u.userId)+'">'+esc(label)+'</option>';
+        }).join('');
+      })['catch'](function(){ var s=ev('sh-wx-bind-user'); if(s) s.innerHTML='<option value="">加载异常</option>'; });
+    }
+    function refreshWxBinding(){ loadWxBinding(); loadWxRecentUsers(); }
+    refreshWxBinding();
+
+    var wb=ev('sh-wx-bind-apply');
+    if(wb) wb.addEventListener('click',function(){
+      var sel=ev('sh-wx-bind-user');
+      if(!sel||!sel.value){ toast2('请选择要绑定的微信用户'); return; }
+      var uid=sel.value;
+      window.shellAPI.bindWeixinUser(uid, '').then(function(r){
+        if(r&&r.success){ toast2('已绑定'); refreshWxBinding(); }
+        else toast2('绑定失败：'+((r&&r.error)||''));
+      })['catch'](function(){ toast2('绑定失败'); });
+    });
+    var wc=ev('sh-wx-bind-clear');
+    if(wc) wc.addEventListener('click',function(){
+      window.shellAPI.bindWeixinUser('', '').then(function(r){
+        if(r&&r.success){ toast2('已解绑'); refreshWxBinding(); }
+        else toast2('解绑失败');
+      })['catch'](function(){});
+    });
+    var wr=ev('sh-wx-bind-refresh');
+    if(wr) wr.addEventListener('click',function(){ refreshWxBinding(); toast2('已刷新'); });
 
     function showQr(url){
       var box=ev('sh-wx-qrcode'); if(!box) return;
@@ -1932,6 +1986,14 @@
         '<label style="display:flex;align-items:center;gap:8px;font-size:12px;"><input type="checkbox" id="sh-qq-enabled" /> 启用 QQ 通道</label>'+
       '</div>'+
       '<div class="sh-card" style="margin-bottom:8px;">'+
+        '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">窗口绑定</div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">当前：<span id="sh-qq-bind-cur">未绑定</span></div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;">绑定的 QQ 用户/群发来消息时，只在指定窗口处理，实现多通道并行不冲突。</div>'+
+        '<select id="sh-qq-bind-user" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;"><option value="">加载中…</option></select>'+
+        '<div style="display:flex;gap:6px;"><button class="sh-btn" id="sh-qq-bind-apply">绑定此用户</button><button class="sh-btn" id="sh-qq-bind-clear">解绑</button><button class="sh-btn" id="sh-qq-bind-refresh">刷新列表</button></div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-top:4px;">提示：需先用该 QQ 账号给 Bot 发过消息，才会出现在列表里。</div>'+
+      '</div>'+
+      '<div class="sh-card" style="margin-bottom:8px;">'+
         '<div style="font-size:11px;color:var(--ck-text-dim);">App ID</div>'+
         '<input id="sh-qq-appid" style="width:100%;box-sizing:border-box;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:5px;color:var(--ck-text);font-size:12px;margin-bottom:4px;" placeholder="q.qq.com 创建机器人后获得" />'+
         '<div style="font-size:11px;color:var(--ck-text-dim);">App Secret</div>'+
@@ -1977,6 +2039,53 @@
       })['catch'](function(){});
     }
     loadQq();
+
+    // ===== 窗口绑定 =====
+    function loadQqBinding(){
+      if(!window.shellAPI||!window.shellAPI.getQqBinding) return;
+      window.shellAPI.getQqBinding().then(function(b){
+        var cur=ev('sh-qq-bind-cur');
+        if(cur) cur.textContent=(b&&b.openId)?((b.openName||'未知')+'（已绑定）'):'未绑定';
+      })['catch'](function(){});
+    }
+    function loadQqRecentUsers(){
+      if(!window.shellAPI||!window.shellAPI.listQqRecentUsers) return;
+      var sel=ev('sh-qq-bind-user'); if(!sel) return;
+      sel.innerHTML='<option value="">加载中…</option>';
+      window.shellAPI.listQqRecentUsers().then(function(r){
+        var sel2=ev('sh-qq-bind-user'); if(!sel2) return;
+        if(!r||!r.success){ sel2.innerHTML='<option value="">加载失败</option>'; return; }
+        var us=r.users||[];
+        if(!us.length){ sel2.innerHTML='<option value="">（暂无记录，请先用 QQ 给 Bot 发消息）</option>'; return; }
+        sel2.innerHTML='<option value="">— 选择要绑定的 QQ 用户/群 —</option>'+us.map(function(u){
+          var kindTxt=u.kind==='group'?'群':'单聊';
+          var label='['+kindTxt+'] '+u.openId.slice(0,16)+'…'+(u.boundProfileName?(' [已绑:'+u.boundProfileName+']'):'');
+          return '<option value="'+esc(u.openId)+'">'+esc(label)+'</option>';
+        }).join('');
+      })['catch'](function(){ var s=ev('sh-qq-bind-user'); if(s) s.innerHTML='<option value="">加载异常</option>'; });
+    }
+    function refreshQqBinding(){ loadQqBinding(); loadQqRecentUsers(); }
+    refreshQqBinding();
+
+    var qb=ev('sh-qq-bind-apply');
+    if(qb) qb.addEventListener('click',function(){
+      var sel=ev('sh-qq-bind-user');
+      if(!sel||!sel.value){ toast2('请选择要绑定的 QQ 用户/群'); return; }
+      var oid=sel.value;
+      window.shellAPI.bindQqOpenId(oid, '').then(function(r){
+        if(r&&r.success){ toast2('已绑定'); refreshQqBinding(); }
+        else toast2('绑定失败：'+((r&&r.error)||''));
+      })['catch'](function(){ toast2('绑定失败'); });
+    });
+    var qc=ev('sh-qq-bind-clear');
+    if(qc) qc.addEventListener('click',function(){
+      window.shellAPI.bindQqOpenId('', '').then(function(r){
+        if(r&&r.success){ toast2('已解绑'); refreshQqBinding(); }
+        else toast2('解绑失败');
+      })['catch'](function(){});
+    });
+    var qr=ev('sh-qq-bind-refresh');
+    if(qr) qr.addEventListener('click',function(){ refreshQqBinding(); toast2('已刷新'); });
 
     var sv=ev('sh-qq-save');
     if(sv) sv.addEventListener('click',function(){

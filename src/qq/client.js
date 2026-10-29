@@ -47,8 +47,8 @@ const RECONNECT_MAX_MS = 60000;
 /** 最大重连次数：超过后停止，等用户手动重连 */
 const MAX_RECONNECT_ATTEMPTS = 20;
 
-/** 消息去重窗口（毫秒） */
-const DEDUPE_TTL_MS = 5 * 60 * 1000;
+/** 消息去重窗口（毫秒）：只防止网络层的极短时间内重复推送，重连重发必须放行 */
+const DEDUPE_TTL_MS = 10 * 1000;
 
 let currentStatus = 'disconnected';
 let statusDetail = '';
@@ -318,6 +318,9 @@ async function handleWsMessage(raw) {
   // ---- DISPATCH 事件 ----
   if (t === 'READY') {
     sessionId = (d && d.session_id) || '';
+    // 重连成功说明之前可能掉线了，清空去重缓存，允许腾讯重推掉线的消息
+    seenMsgIds.clear();
+    console.log('[QQ] 会话已就绪，已清空去重缓存');
     const botName = (d && d.user && d.user.username) || '';
     console.log('[QQ] ✅ 连接成功，bot=' + botName);
     canResume = false;

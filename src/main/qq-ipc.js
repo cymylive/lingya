@@ -4,18 +4,22 @@
  *  - 接收 AI 页面上报（qq-report）→ 按配置推送
  *  - QQ 来消息 → 转发给当前活跃窗口的 AI 页面
  *
- * 与飞书的差异：QQ 是被动回复模型（60 秒窗口），没有群绑定概念，
- * 消息一律路由到主窗口。主动推送有每月 4 条限制。
+ * 消息路由：优先按「该 QQ 用户/群绑定的窗口」分发；未绑定才回退主窗口。
+ * 主动推送有每月 4 条限制。
  */
 const { ipcMain } = require('electron');
 const windowState = require('./window');
 const qqClient = require('../qq/client');
 const { readConfig, writeConfig } = require('../qq/config');
+const profileManager = require('./profile-manager');
 
 let qqInited = false;
 
 /** 每个 profile 最近的 QQ 消息来源 { msgId, openid, kind } */
 const lastQqSource = new Map();
+
+/** 最近发过消息的 QQ 用户/群：openid -> { at, kind }，用于面板选择绑定目标 */
+const recentQqUsers = new Map();
 
 /** 任务活跃状态（看门狗用） */
 const taskState = new Map();
@@ -83,10 +87,36 @@ function broadcastQqMode(on) {
  * QQ 来消息 → 转发给活跃窗口的 AI 页面。
  */
 async function forwardUserMessage(text, openid, kind, msgId) {
-  const ctx = windowState.getMainContext();
+  // 优先按「该 QQ 用户/群绑定的窗口」路由；未绑定才回退主窗口
+  let ctx = null;
+  try {
+    const bound = profileManager.getProfileByQqOpenId(openid);
+    if (bound) {
+      ctx = windowState.getWindowByProfileId(bound.id);
+      if (ctx) {
+        console.log('[QQ] 按绑定路由到窗口:', bound.name);
+      } else {
+        console.warn('[QQ] 绑定的窗口未打开，回退主窗口:', bound.name);
+      }
+    }
+  } catch (err) {
+    console.warn('[QQ] 查绑定失败:', err.message);
+  }
+  if (!ctx) ctx = windowState.getMainContext();
   if (!ctx) {
     console.warn('[QQ] 没有活跃窗口，消息丢弃');
     return;
+  }
+  if (openid) {
+    recentQqUsers.set(openid, { at: Date.now(), kind: kind || 'c2c' });
+    // 只保留最近 20 个
+    if (recentQqUsers.size > 20) {
+      let oldestKey = null, oldestAt = Infinity;
+      for (const [k, v] of recentQqUsers) {
+        if (v.at < oldestAt) { oldestAt = v.at; oldestKey = k; }
+      }
+      if (oldestKey) recentQqUsers.delete(oldestKey);
+    }
   }
   if (ctx.profileId) {
     lastQqSource.set(ctx.profileId, { msgId, openid, kind });
@@ -114,63 +144,62 @@ async function forwardUserMessage(text, openid, kind, msgId) {
 
 /** 斜杠命令 */
 async function handleQqCommand(text, openid, kind, msgId, ctx) {
-  const cmd = String(text || '').trim();
-  if (!cmd.startsWith('/')) return false;
-  const parts = cmd.slice(1).split(/\s+/);
-  const name = parts[0];
-  const win = ctx && ctx.win;
-
   const reply = async (msg) => {
     try { await qqClient.sendText(msg, { msgId, openid, kind }); } catch (_) {}
     return true;
   };
-
-  if (name === 'help' || name === '?') {
-    return reply([
-      '🤖 LingYa QQ 指令：',
-      '/new [项目名] — 开新对话',
-      '/list — 列出会话',
-      '/stop — 停止当前任务',
-      '/help — 显示本帮助',
-    ].join('\n'));
-  }
-
-  if (name === 'stop') {
-    try {
-      if (win && !win.isDestroyed()) win.webContents.send('lingya-stop-task');
-      return reply('⏹ 已发送停止指令');
-    } catch (err) {
-      return reply('❌ 停止失败: ' + err.message);
-    }
-  }
-
-  if (name === 'new') {
-    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
-    try {
-      win.webContents.send('lingya-new-conversation', { title: parts.slice(1).join(' ') || '' });
-      return reply('✅ 已触发新建对话');
-    } catch (err) {
-      return reply('❌ 新建失败: ' + err.message);
-    }
-  }
-
-  if (name === 'list') {
-    if (!win || win.isDestroyed()) return reply('❌ 目标窗口不可用');
-    try {
-      win.webContents.send('lingya-list-conversations');
-      return reply('📋 已在桌面列出会话');
-    } catch (err) {
-      return reply('❌ 列会话失败: ' + err.message);
-    }
-  }
-
-  return reply('❓ 未知指令：/' + name + '，发 /help 查看用法');
+  return await require('./channel-commands').handleCommand(text, ctx, reply, 'QQ');
 }
 
 function registerQqIpc() {
   ipcMain.handle('qq-is-enabled', async () => {
     const cfg = readConfig();
     return { enabled: cfg.enabled === true && !!cfg.appId && !!cfg.appSecret };
+  });
+
+  // ===== 窗口绑定：读当前窗口绑定的 QQ 用户 =====
+  ipcMain.handle('qq-get-binding', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const profile = ctx ? profileManager.getProfileById(ctx.profileId) : null;
+    return {
+      success: true,
+      openId: (profile && profile.qqOpenId) || '',
+      openName: (profile && profile.qqOpenName) || '',
+      profileId: ctx ? ctx.profileId : '',
+    };
+  });
+
+  // ===== 窗口绑定：绑定/解绑当前窗口到某 QQ 用户/群 =====
+  ipcMain.handle('qq-bind-openid', async (event, { openId, openName } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx || !ctx.profileId) return { success: false, error: '找不到窗口' };
+    // 同一个 QQ 目标只能绑一个窗口
+    if (openId) {
+      const others = profileManager.readProfiles().filter(p => p.qqOpenId === openId && p.id !== ctx.profileId);
+      for (const o of others) {
+        profileManager.setProfileQqOpenId(o.id, '', '');
+      }
+    }
+    const p = profileManager.setProfileQqOpenId(ctx.profileId, openId || '', openName || '');
+    if (!p) return { success: false, error: '更新失败' };
+    return { success: true };
+  });
+
+  // ===== 最近发过消息的 QQ 用户（供面板选择绑定目标）=====
+  ipcMain.handle('qq-list-recent-users', async () => {
+    const list = [];
+    for (const [openId, info] of recentQqUsers) {
+      const bound = profileManager.getProfileByQqOpenId(openId);
+      list.push({
+        openId,
+        kind: info.kind,
+        at: info.at,
+        boundProfileId: bound ? bound.id : '',
+        boundProfileName: bound ? bound.name : '',
+      });
+    }
+    list.sort((a, b) => b.at - a.at);
+    return { success: true, users: list };
   });
 
   ipcMain.handle('qq-get-config', async () => {
@@ -265,7 +294,10 @@ function registerQqIpc() {
 
     if (!body.trim()) return { success: true, skipped: true };
 
+    console.log('[QQ] 准备推送到 QQ, 目标:', src.openid, '内容长度:', body.length);
     const r = await qqClient.sendText(body, src);
+    if (!r.success) console.warn('[QQ] 推送失败:', r.error);
+    else console.log('[QQ] 推送成功');
     return r;
   });
 

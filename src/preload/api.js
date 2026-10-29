@@ -321,6 +321,13 @@ let electronAPI = {
   qqReport: (payload) => {
     return ipcRenderer.invoke('qq-report', payload);
   },
+  // ========== 通道窗口绑定 API ==========
+  getWeixinBinding: () => ipcRenderer.invoke('weixin-get-binding'),
+  bindWeixinUser: (userId, userName) => ipcRenderer.invoke('weixin-bind-user', { userId, userName }),
+  listWeixinRecentUsers: () => ipcRenderer.invoke('weixin-list-recent-users'),
+  getQqBinding: () => ipcRenderer.invoke('qq-get-binding'),
+  bindQqOpenId: (openId, openName) => ipcRenderer.invoke('qq-bind-openid', { openId, openName }),
+  listQqRecentUsers: () => ipcRenderer.invoke('qq-list-recent-users'),
   // ========== 媒体收件箱 API ==========
   getMediaConfig: () => ipcRenderer.invoke('media-get-config'),
   saveMediaConfig: (data) => ipcRenderer.invoke('media-save-config', { data }),
@@ -350,6 +357,16 @@ let electronAPI = {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('weixin-user-message', handler);
     return () => ipcRenderer.removeListener('weixin-user-message', handler);
+  },
+  onQqMode: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('qq-mode', handler);
+    return () => ipcRenderer.removeListener('qq-mode', handler);
+  },
+  onQqUserMessage: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('qq-user-message', handler);
+    return () => ipcRenderer.removeListener('qq-user-message', handler);
   },
   onFeishuStop: (cb) => {
     const handler = () => cb();

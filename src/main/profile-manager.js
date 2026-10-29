@@ -72,6 +72,10 @@ function createProfile(name, providerId) {
     createdAt: new Date().toISOString(),
     feishuChatId: '',
     feishuChatName: '',
+    weixinUserId: '',
+    weixinUserName: '',
+    qqOpenId: '',
+    qqOpenName: '',
   };
   profiles.push(profile);
   writeProfiles(profiles);
@@ -232,6 +236,46 @@ function getProfileByFeishuChat(chatId) {
   return readProfiles().find(p => p.feishuChatId === chatId) || null;
 }
 
+// ================= 微信绑定 =================
+
+/** 设置某 profile 绑定的微信用户；空串表示解绑 */
+function setProfileWeixinUser(id, userId, userName) {
+  const profiles = readProfiles();
+  const p = profiles.find(x => x.id === id);
+  if (!p) return null;
+  p.weixinUserId = userId || '';
+  p.weixinUserName = userName || '';
+  writeProfiles(profiles);
+  console.log('[Profile] 微信绑定更新:', id, userId ? (userName + '(' + userId + ')') : '(解绑)');
+  return p;
+}
+
+/** 按微信 userId 反查 profile */
+function getProfileByWeixinUser(userId) {
+  if (!userId) return null;
+  return readProfiles().find(p => p.weixinUserId === userId) || null;
+}
+
+// ================= QQ 绑定 =================
+
+/** 设置某 profile 绑定的 QQ 用户/群；空串表示解绑 */
+function setProfileQqOpenId(id, openId, openName) {
+  const profiles = readProfiles();
+  const p = profiles.find(x => x.id === id);
+  if (!p) return null;
+  p.qqOpenId = openId || '';
+  p.qqOpenName = openName || '';
+  writeProfiles(profiles);
+  console.log('[Profile] QQ 绑定更新:', id, openId ? (openName + '(' + openId + ')') : '(解绑)');
+  return p;
+}
+
+/** 按 QQ openid 反查 profile */
+function getProfileByQqOpenId(openId) {
+  if (!openId) return null;
+  return readProfiles().find(p => p.qqOpenId === openId) || null;
+}
+
 module.exports = {
   readProfiles,
   writeProfiles,
@@ -244,6 +288,10 @@ module.exports = {
   deleteProfile,
   setProfileFeishuChat,
   getProfileByFeishuChat,
+  setProfileWeixinUser,
+  getProfileByWeixinUser,
+  setProfileQqOpenId,
+  getProfileByQqOpenId,
   reorderProfiles,
   updateProfileNumber,
   moveIdBefore,

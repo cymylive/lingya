@@ -306,8 +306,32 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
     } catch (_) { /* ignore */ }
     return false;
   }
-  if (!(await setInputContent(input, msg))) {
-    return false;
+  // ===== 全局走文件上传：把内容写成 .md 通过附件发送 =====
+  // 关键：上传后必须往输入框填一行「引导语」，否则平台会因输入框为空
+  // 拒绝发送（实测 DeepSeek 弹「没有内容」）。附件才是真正的正文。
+  let uploaded = false;
+  try {
+    const fileUpload = require('./file-upload');
+    uploaded = await fileUpload.uploadContent(msg, input);
+    if (uploaded) {
+      console.log('[LingYa] 已上传 .md 附件，长度=' + msg.length);
+    }
+  } catch (err) {
+    console.warn('[LingYa] 文件上传异常，回退文本发送:', err && err.message);
+    uploaded = false;
+  }
+
+  if (uploaded) {
+    // 填引导语，满足平台非空校验，同时提示 AI 去读附件
+    const hint = '请阅读附件 lingya-input.md 并按其中内容执行。';
+    if (!(await setInputContent(input, hint))) {
+      console.warn('[LingYa] 引导语填入失败，仍尝试发送');
+    }
+  } else {
+    // 兜底：原有文本填入逻辑
+    if (!(await setInputContent(input, msg))) {
+      return false;
+    }
   }
   // 双策略延迟：
   //   - 上次请求往返（思考+回复）> adaptiveThreshold → 慢请求，走思考耗时自适应
@@ -647,8 +671,35 @@ async function sendInitialPromptToInput() {
     return false;
   }
 
-  if (!(await setInputContent(input, state.initialPromptContent))) {
-    return false;
+  // ===== 初始化提示词同样走 .md 文件上传 =====
+  // 与 sendToChat 保持一致：内容存成附件，输入框只填一行引导语。
+  // 失败时回退文本填入，保证初始化不会因此卡死。
+  let uploaded = false;
+  try {
+    const fileUpload = require('./file-upload');
+    uploaded = await fileUpload.uploadContent(state.initialPromptContent, input);
+    if (uploaded) {
+      const chunkInfo = (Array.isArray(state.initialPromptChunks) && state.initialPromptChunks.length > 1)
+        ? '（第 ' + (state.initialPromptChunkIndex + 1) + '/' + state.initialPromptChunks.length + ' 段）'
+        : '';
+      console.log('[LingYa] 初始提示已上传为 .md 附件' + chunkInfo +
+        '，长度=' + state.initialPromptContent.length);
+    }
+  } catch (err) {
+    console.warn('[LingYa] 初始提示上传失败，回退文本:', err && err.message);
+    uploaded = false;
+  }
+
+  if (uploaded) {
+    // 填引导语，满足平台非空校验
+    if (!(await setInputContent(input, '请阅读附件 lingya-input.md 并按其中内容执行。'))) {
+      console.warn('[LingYa] 初始提示引导语填入失败，仍尝试发送');
+    }
+  } else {
+    // 兜底：原有文本填入
+    if (!(await setInputContent(input, state.initialPromptContent))) {
+      return false;
+    }
   }
 
   // 分批发送的段间间隔必须随机化。
@@ -863,7 +914,18 @@ function triggerSend(input) {
  * 全部失败时明确报错，让用户手动发一条恢复循环。
  */
 async function fallbackSend(provider, input) {
-  // 方法 1: 平台 Provider 提供的发送按钮
+  // 方法 1: 可信 Enter 按键（优先——用户指定顺序）
+  if (input) {
+    const ok = await trustedPressEnter(input);
+    if (ok) {
+      console.log('[LingYa] 已通过可信 Enter 触发发送');
+      state.lastSendMethod = 'trusted-enter';
+      return true;
+    }
+    console.warn('[LingYa] 可信 Enter 失败，尝试点击发送按钮');
+  }
+
+  // 方法 2: 平台 Provider 提供的发送按钮
   if (provider && typeof provider.findSendButton === 'function') {
     let btn = null;
     try { btn = provider.findSendButton(); } catch (_) { btn = null; }
@@ -874,17 +936,7 @@ async function fallbackSend(provider, input) {
         state.lastSendMethod = 'trusted-click';
         return true;
       }
-      console.warn('[LingYa] 可信点击发送按钮失败，尝试 Enter');
-    }
-  }
-
-  // 方法 2: 可信 Enter 按键
-  if (input) {
-    const ok = await trustedPressEnter(input);
-    if (ok) {
-      console.log('[LingYa] 已通过可信 Enter 触发发送');
-      state.lastSendMethod = 'trusted-enter';
-      return true;
+      console.warn('[LingYa] 可信点击发送按钮失败');
     }
   }
 

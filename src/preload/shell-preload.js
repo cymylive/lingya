@@ -97,6 +97,13 @@ const api = {
   reconnectQq: () => ipcRenderer.invoke('qq-reconnect'),
   disconnectQq: () => ipcRenderer.invoke('qq-disconnect'),
   qqReport: (payload) => ipcRenderer.invoke('qq-report', payload),
+  // 通道窗口绑定
+  getWeixinBinding: () => ipcRenderer.invoke('weixin-get-binding'),
+  bindWeixinUser: (userId, userName) => ipcRenderer.invoke('weixin-bind-user', { userId, userName }),
+  listWeixinRecentUsers: () => ipcRenderer.invoke('weixin-list-recent-users'),
+  getQqBinding: () => ipcRenderer.invoke('qq-get-binding'),
+  bindQqOpenId: (openId, openName) => ipcRenderer.invoke('qq-bind-openid', { openId, openName }),
+  listQqRecentUsers: () => ipcRenderer.invoke('qq-list-recent-users'),
   // 媒体收件箱
   getMediaConfig: () => ipcRenderer.invoke('media-get-config'),
   saveMediaConfig: (data) => ipcRenderer.invoke('media-save-config', { data }),
