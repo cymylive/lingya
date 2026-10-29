@@ -71,11 +71,13 @@ function initFeishuBridge() {
 
   // 2. AI 回复完成 → 上报（剥离工具代码块，飞书只看对话）
   // hasTool=true 表示这轮还要继续调工具，主进程据此判断任务是否真的收尾
-  onInterceptedResponse((text) => {
-    if (!enabled || !text) return;
+  onInterceptedResponse((text, thinking) => {
+    // thinking 可能与 text 同时存在，也可能只有 thinking（纯思考轮次）。
+    // 不能因 !text 直接 return，否则纯思考轮次的思考内容会丢失。
+    if (!enabled) return;
     const clean = stripToolBlocks(text);
     const hasTool = /\`\`\`(?:lingya|javascript|js)/i.test(text);
-    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool });
+    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool, thinking: String(thinking || '') });
     // 无后续工具 → 任务收尾，单独上报"完成"标志
     if (!hasTool) report({ type: 'task-done' });
   });

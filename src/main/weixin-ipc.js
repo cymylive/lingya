@@ -10,6 +10,7 @@
 const { ipcMain } = require('electron');
 const windowState = require('./window');
 const weixinClient = require('../weixin/client');
+const roundCollector = require('./round-collector');
 const { readConfig, writeConfig } = require('../weixin/config');
 const profileManager = require('./profile-manager');
 
@@ -329,24 +330,60 @@ function registerWeixinIpc() {
     // 更新活跃状态（看门狗用）
     if (type === 'user-message' || type === 'tool-start') touchActivity(profileId, true);
 
+    // 【轮次聚合（2026-10-30）】微信不支持卡片，与 QQ 同策略纯文本降级：
+    //   实时轻提示保留，正文与工具链摘要在 task-done 时合成一条推出。
     let shouldPush = false;
     let body = '';
-    if (type === 'user-message' && cfg.pushUserMessage) {
-      shouldPush = true;
-      body = '👤 ' + String(p.text || '');
-    } else if (type === 'ai-reply' && cfg.pushAiReply) {
-      shouldPush = true;
-      body = String(p.text || '');
-    } else if (type === 'tool-start' && cfg.pushToolStatus) {
-      shouldPush = true;
-      body = cfg.pushToolName && p.toolName ? '🔧 正在调用工具：' + p.toolName : '🔧 AI 正在调用工具…';
-    } else if (type === 'tool-end' && cfg.pushToolStatus) {
-      shouldPush = true;
-      body = '✅ 工具调用完成';
-    } else if (type === 'task-done' && cfg.pushTaskDone) {
-      shouldPush = true;
-      body = '🏁 任务完成';
+    if (type === 'user-message') {
+      roundCollector.onUserMessage(profileId, p.text);
+      if (cfg.pushUserMessage) {
+        shouldPush = true;
+        body = '👤 ' + String(p.text || '');
+      }
+    } else if (type === 'ai-start') {
+      roundCollector.onAiStart(profileId);
+      if (cfg.pushToolStatus) {
+        shouldPush = true;
+        body = '🧠 AI 正在生成…';
+      }
+    } else if (type === 'ai-reply') {
+      roundCollector.onAiReply(profileId, p.text, !!p.hasTool, p.thinking);
+      // 不单独推送，等 task-done 汇总
+    } else if (type === 'tool-start') {
+      roundCollector.onToolStart(profileId, p.toolName);
+      if (cfg.pushToolStatus) {
+        shouldPush = true;
+        body = cfg.pushToolName && p.toolName ? '🔧 正在调用工具：' + p.toolName : '🔧 AI 正在调用工具…';
+      }
+    } else if (type === 'tool-end') {
+      roundCollector.onToolEnd(profileId);
+      // 不单独推送
+    } else if (type === 'task-done') {
       touchActivity(profileId, false);
+      const round = roundCollector.finish(profileId);
+      if (round && (cfg.pushAiReply || cfg.pushToolStatus)) {
+        shouldPush = true;
+        const parts = [];
+        if (round.userText) parts.push('👤 我：' + round.userText);
+        const thinkingText = (round.thinkings || []).join('\n\n').trim();
+        if (thinkingText) {
+          const brief = thinkingText.length > 300
+            ? thinkingText.slice(0, 300) + '…（共 ' + thinkingText.length + ' 字）'
+            : thinkingText;
+          parts.push('💭 思考过程:\n' + brief);
+        }
+        const text = round.replies.length > 0 ? round.replies.join('\n\n') : '（本轮无文字回复）';
+        parts.push('🤖 AI：\n' + text);
+        const chain = roundCollector.buildToolChainSummary(round.tools);
+        if (chain) {
+          const secs = (round.durationMs / 1000).toFixed(1);
+          parts.push('💭 执行过程（' + round.tools.length + ' 步，' + secs + 's）:\n' + chain);
+        }
+        body = parts.join('\n\n────────\n\n');
+      } else if (cfg.pushTaskDone) {
+        shouldPush = true;
+        body = '🏁 任务完成';
+      }
     }
 
     if (!shouldPush || !body.trim()) return { success: true, skipped: true };

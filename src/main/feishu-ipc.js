@@ -12,6 +12,8 @@ const windowState = require('./window');
 const feishuClient = require('../feishu/client');
 const { readConfig, writeConfig } = require('../feishu/config');
 const profileManager = require('./profile-manager');
+const roundCollector = require('./round-collector');
+const { buildRoundCard } = require('../feishu/round-card');
 
 let feishuInited = false;
 
@@ -530,27 +532,53 @@ function registerFeishuIpc() {
     else if (type === 'task-done') touchActivity(pid, false); // 任务收尾
 
     // —— 2. 按配置推送 ——
+    //
+    // 【轮次聚合（2026-10-30）】原先每种事件各推一条文本，一轮下来七八条碎片，
+    // 用户要在里面拼凑「AI 到底做了什么」。现在改为：
+    //   - ai-start / tool-start：保留轻量实时提示（知道它在动）
+    //   - ai-reply / tool-end：只进轮次收集器，不单独推送
+    //   - task-done：推 1 条交互卡片，正文在上、执行过程折叠在下
     try {
       if (type === 'user-message') {
-        if (!cfg.pushUserMessage) return { success: true };
         const t = String((payload && payload.text) || '').trim();
+        roundCollector.onUserMessage(pid, t);
+        if (!cfg.pushUserMessage) return { success: true };
         if (t) return await push('👤 我：' + t, 'user-message');
         return { success: true };
       } else if (type === 'ai-start') {
+        roundCollector.onAiStart(pid);
         if (!cfg.pushToolStatus) return { success: true };
         return await push('🧠 AI 正在生成…', 'ai-start');
       } else if (type === 'ai-reply') {
-        if (!cfg.pushAiReply) return { success: true };
-        const t = String((payload && payload.text) || '').trim();
-        if (t) return await push('🤖 AI：' + t, 'ai-reply');
+        roundCollector.onAiReply(pid, payload && payload.text, !!(payload && payload.hasTool));
         return { success: true };
       } else if (type === 'tool-start') {
+        roundCollector.onToolStart(pid, payload && payload.toolName);
         if (!cfg.pushToolStatus) return { success: true };
-        return await push(cfg.pushToolName && payload.toolName ? '🔧 正在调用工具：' + payload.toolName : '🔧 AI 正在调用工具…', 'tool-start');
+        return await push(cfg.pushToolName && payload.toolName
+          ? '🔧 正在调用工具：' + payload.toolName
+          : '🔧 AI 正在调用工具…', 'tool-start');
       } else if (type === 'tool-end') {
-        if (!cfg.pushToolStatus) return { success: true };
-        return await push('✅ 工具调用完成', 'tool-end');
+        roundCollector.onToolEnd(pid);
+        return { success: true };
       } else if (type === 'task-done') {
+        const round = roundCollector.finish(pid);
+        // 无内容可推（例如完全空轮）时直接返回
+        if (!round) {
+          if (!cfg.pushTaskDone) return { success: true };
+          return await push('🏁 任务完成', 'task-done');
+        }
+        // 卡片：正文 + 折叠过程。推送开关沿用「有正文就推」的语义。
+        if (cfg.pushAiReply || cfg.pushToolStatus) {
+          try {
+            const card = buildRoundCard(round);
+            const r = await feishuClient.sendCard(card, chatId);
+            if (!r.success) console.warn('[Feishu] 卡片推送失败:', r.error);
+            return r;
+          } catch (e) {
+            console.warn('[Feishu] 卡片渲染失败，回退文本:', e && e.message);
+          }
+        }
         if (!cfg.pushTaskDone) return { success: true };
         return await push('🏁 任务完成', 'task-done');
       }

@@ -320,6 +320,48 @@ async function sendText(text, chatId) {
 }
 
 /**
+ * 发送交互式卡片。
+ *
+ * 与 sendText 的区别：卡片支持 markdown、折叠面板（collapsible_panel）、
+ * 分割线等富文本元素，是「思考过程默认收起、点击展开」的唯一实现方式。
+ *
+ * @param {object} card 飞书卡片 JSON（schema 2.0）
+ * @param {string} [chatId] 群 chat_id；为空则回退单聊
+ */
+async function sendCard(card, chatId) {
+  if (!lark) return { success: false, error: '未安装 @larksuiteoapi/node-sdk' };
+  const cfg = readConfig();
+  if (!cfg.appId || !cfg.appSecret) return { success: false, error: '未配置' };
+  ensureApiClient();
+  const content = JSON.stringify(card);
+  if (chatId) {
+    try {
+      const res = await apiClient.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chatId, msg_type: 'interactive', content },
+      });
+      if (res && (res.code === 0 || res.code === undefined)) return { success: true };
+      return { success: false, error: (res && res.msg) || '发送失败' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+  if (!cfg.targetOpenId) {
+    return { success: false, error: '该窗口尚未绑定飞书群（请先在飞书页绑定群）' };
+  }
+  try {
+    const res = await apiClient.im.message.create({
+      params: { receive_id_type: 'open_id' },
+      data: { receive_id: cfg.targetOpenId, msg_type: 'interactive', content },
+    });
+    if (res && (res.code === 0 || res.code === undefined)) return { success: true };
+    return { success: false, error: (res && res.msg) || '发送失败' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * 供媒体适配器获取已创建的 apiClient。
  * 未连接时返回 null，调用方应处理。
  */
@@ -332,4 +374,4 @@ function getApiClient() {
   }
 }
 
-module.exports = { connect, disconnect, sendText, getStatus, listChats, readConfig, getApiClient };
+module.exports = { connect, disconnect, sendText, sendCard, getStatus, listChats, readConfig, getApiClient };

@@ -72,11 +72,12 @@ function initQqBridge() {
   } catch (_) {}
 
   // 4. AI 回复完成
-  onInterceptedResponse((text) => {
-    if (!enabled || !text) return;
+  onInterceptedResponse((text, thinking) => {
+    // thinking 可能与 text 同时存在，也可能只有 thinking（纯思考轮次）。
+    if (!enabled) return;
     const clean = stripToolBlocks(text);
     const hasTool = /```(?:lingya|javascript|js)/i.test(text);
-    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool });
+    report({ type: 'ai-reply', text: clean || '(本轮无文本，继续执行工具)', hasTool: hasTool, thinking: String(thinking || '') });
     if (!hasTool) report({ type: 'task-done' });
   });
 
