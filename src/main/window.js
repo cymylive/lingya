@@ -77,12 +77,13 @@ function setWindowView(windowId, view) {
  * 这里只登记“它现在显示在这个窗口里”，供 IPC 反查用。
  * @returns {object|null} 挂载成功返回 ctx，窗口不存在返回 null
  */
-function addAttachedView(windowId, view) {
+function addAttachedView(windowId, panel) {
   const ctx = windows.get(windowId);
   if (!ctx) return null;
   if (!ctx.attachedViews) ctx.attachedViews = [];
-  if (view && !ctx.attachedViews.includes(view)) {
-    ctx.attachedViews.push(view);
+  // panel = { view, sidebarView, sidebarOpen, sidebarWidth }
+  if (panel && panel.view && !ctx.attachedViews.find(p => p.view === panel.view)) {
+    ctx.attachedViews.push(panel);
   }
   return ctx;
 }
@@ -100,7 +101,7 @@ function clearAttachedView(windowId) {
 function removeAttachedView(windowId, view) {
   const ctx = windows.get(windowId);
   if (!ctx || !ctx.attachedViews) return null;
-  const idx = ctx.attachedViews.indexOf(view);
+  const idx = ctx.attachedViews.findIndex(p => p.view === view);
   if (idx >= 0) ctx.attachedViews.splice(idx, 1);
   if (ctx.attachedViews.length === 0) ctx.splitDirection = null;
   return ctx;

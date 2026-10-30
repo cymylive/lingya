@@ -1059,36 +1059,45 @@ function layoutAIView(mainWindow) {
     const w = Math.max(0, b.width - sw);
     let h = Math.max(0, b.height - top);
 
-    // 合并模式：宿主自己的 active tab 在前，其后依次是附加视图
+    // 合并模式：宿主 active tab -> 附加面板（侧边栏 + AI 视图）
     const attached = ctx.attachedViews || [];
-    if (ctx.splitDirection && attached.length) {
-      // 左右分屏且内容超出视口时，底部留出滚动条的高度
-      if (ctx.splitDirection === 'horizontal') {
-        const count = 1 + attached.length;
-        const contentW = computeScrollContentWidth(
-          { x: sw, y: top, width: w, height: h }, 'horizontal', count, SPLIT_GAP, SPLIT_MIN_WIDTH
-        );
-        if (contentW > w) h = Math.max(0, h - SPLIT_SCROLLBAR_H);
-      }
+    if (ctx.splitDirection === 'horizontal' && attached.length) {
       const activeTab = ctx.tabs.get(ctx.activeTabId);
-      const views = [];
-      if (activeTab && activeTab.view) views.push(activeTab.view);
-      for (const v of attached) if (v) views.push(v);
-      const rects = computeSplitLayout(
-        { x: sw, y: top, width: w, height: h },
-        ctx.splitDirection, views.length, SPLIT_GAP,
-        SPLIT_MIN_WIDTH, ctx.scrollX || 0
-      );
-      if (rects) {
-        views.forEach((v, i) => { try { v.setBounds(rects[i]); } catch (_) {} });
+
+      // 1) 计算每个面板的尺寸
+      let totalSidebarW = 0;
+      for (const p of attached) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+      const count = 1 + attached.length;
+      const availW = w - sw - totalSidebarW;
+      const viewW = Math.max(800, Math.floor(availW / count));
+      const totalContentW = sw + viewW * count + totalSidebarW;
+
+      if (totalContentW > w) h = Math.max(0, h - SPLIT_SCROLLBAR_H);
+      const scrollX = ctx.scrollX || 0;
+      let currentX = sw;
+
+      // 2) 宿主面板（只有 AI 视图，侧边栏在最左边）
+      if (activeTab && activeTab.view) {
+        activeTab.view.setBounds({ x: currentX - scrollX, y: top, width: viewW, height: h });
       }
-      // 其余隐藏标签放在第一个格子，避免切回时闪
-      const first = rects && rects[0];
-      if (first) {
-        for (const t of ctx.tabs.values()) {
-          if (t === activeTab) continue;
-          try { t.view.setBounds(first); } catch (_) {}
+      currentX += viewW;
+
+      // 3) 附加面板
+      for (const panel of attached) {
+        const sw2 = panel.sidebarOpen ? (panel.sidebarWidth || 320) : 46;
+        if (panel.sidebarView) {
+          try { panel.sidebarView.setBounds({ x: currentX - scrollX, y: top, width: sw2, height: h }); } catch (_) {}
         }
+        if (panel.view) {
+          try { panel.view.setBounds({ x: currentX + sw2 - scrollX, y: top, width: viewW, height: h }); } catch (_) {}
+        }
+        currentX += sw2 + viewW;
+      }
+
+      // 4) 其余隐藏标签
+      for (const t of ctx.tabs.values()) {
+        if (t === activeTab) continue;
+        try { t.view.setBounds({ x: sw - scrollX, y: top, width: viewW, height: h }); } catch (_) {}
       }
       return;
     }
@@ -1103,7 +1112,22 @@ function layoutAIView(mainWindow) {
 ipcMainForProfile.handle('shell-sidebar-toggle', async (event, { open, width } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
+    if (!ctx) return { success: false, error: '窗口不存在' };
+
+    // 如果这是分屏面板的侧边栏，只调整该面板
+    if (ctx.hostCtx) {
+      const hostCtx = ctx.hostCtx;
+      const panels = hostCtx.attachedViews || [];
+      const panel = panels.find(p => p.sidebarView && p.sidebarView.webContents === event.sender);
+      if (panel) {
+        panel.sidebarOpen = !!open;
+        if (open) panel.sidebarWidth = width || 320;
+        layoutAIView(hostCtx.rawWin);
+        return { success: true };
+      }
+    }
+
+    if (!ctx.win) return { success: false, error: '窗口不存在' };
     const mainWindow = ctx.win.__rawWindow || ctx.win;
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
     const w = (typeof width === 'number' && width >= SIDEBAR_MIN && width <= SIDEBAR_MAX) ? Math.round(width) : SIDEBAR_DEFAULT;
@@ -1135,7 +1159,21 @@ ipcMainForProfile.handle('shell-sidebar-toggle', async (event, { open, width } =
 ipcMainForProfile.handle('shell-sidebar-resize', async (event, { width } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false };
+    if (!ctx) return { success: false };
+
+    // 如果这是分屏面板的侧边栏拖拽
+    if (ctx.hostCtx) {
+      const hostCtx = ctx.hostCtx;
+      const panels = hostCtx.attachedViews || [];
+      const panel = panels.find(p => p.sidebarView && p.sidebarView.webContents === event.sender);
+      if (panel) {
+        panel.sidebarWidth = width || 320;
+        layoutAIView(hostCtx.rawWin);
+        return { success: true, width };
+      }
+    }
+
+    if (!ctx.win) return { success: false };
     const mainWindow = ctx.win.__rawWindow || ctx.win;
     if (!mainWindow || mainWindow.isDestroyed()) return { success: false };
     const w = (typeof width === 'number' && width >= SIDEBAR_MIN && width <= SIDEBAR_MAX) ? Math.round(width) : SIDEBAR_DEFAULT;
@@ -1170,8 +1208,8 @@ ipcMainForProfile.handle('shell-sidebar-drag', async (event, { phase } = {}) => 
 ipcMainForProfile.handle('shell-send-to-chat', async (event, { text, tag } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
-    const wc = ctx.win.webContents;
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const wc = windowState.getViewWebContents(ctx);
     if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
     wc.send('lingya-send-to-chat', { text: String(text || ''), tag: tag || '' });
     return { success: true };
@@ -1183,8 +1221,8 @@ ipcMainForProfile.handle('shell-send-to-chat', async (event, { text, tag } = {})
 ipcMainForProfile.handle('shell-insert-to-chat', async (event, { text, tag, delay } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
-    const wc = ctx.win.webContents;
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const wc = windowState.getViewWebContents(ctx);
     if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
     wc.send('lingya-insert-to-chat', { text: String(text||''), tag: tag||'', delay: (typeof delay==='number'?delay:undefined) });
     return { success: true };
@@ -1195,8 +1233,8 @@ ipcMainForProfile.handle('shell-insert-to-chat', async (event, { text, tag, dela
 ipcMainForProfile.handle('shell-new-chat', async (event) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
-    const wc = ctx.win.webContents;
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const wc = windowState.getViewWebContents(ctx);
     if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
     let homeUrl = null;
     try { const { getProviderByUrl } = require('../providers'); const p = getProviderByUrl(wc.getURL()); if (p && p.homeUrl) homeUrl = p.homeUrl; } catch (_) {}
@@ -1210,8 +1248,8 @@ ipcMainForProfile.handle('shell-new-chat', async (event) => {
 ipcMainForProfile.handle('shell-run-action', async (event, { action } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
-    const wc = ctx.win.webContents;
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const wc = windowState.getViewWebContents(ctx);
     if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
     wc.send('lingya-run-action', { action: String(action||'') });
     return { success: true };
@@ -1240,18 +1278,53 @@ ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, dire
     if (!hostWin || hostWin.isDestroyed()) return { success: false, error: '发起窗口已销毁' };
     if (!sourceWin || sourceWin.isDestroyed()) return { success: false, error: '目标窗口已销毁' };
 
-    // 1) 从来源窗口摘下视图
+    // 1) 为来源窗口创建独立的侧边栏视图
+    let sidebarView = null;
+    try {
+      const profileData = profileManager.getProfileById(sourceCtx.profileId);
+      if (profileData) {
+        sidebarView = new (require('electron').WebContentsView)({
+          webPreferences: {
+            preload: path.join(__dirname, '..', 'preload', 'shell-preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            partition: profileData.partition,
+            additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
+          }
+        });
+        sidebarView.webContents.loadFile(path.join(__dirname, '..', 'ui', 'shell.html'));
+        // 注册归属，让这个侧边栏发出的 IPC 能找到原上下文
+        windowState.rememberViewOwner(sidebarView.webContents, sourceCtx);
+      }
+    } catch (e) {
+      console.error('[LingYa] 创建分屏侧边栏失败:', e.message);
+    }
+
+    // 2) 从来源窗口摘下视图
     try { sourceWin.contentView.removeChildView(plan.view); } catch (_) {}
 
-    // 2) 挂到宿主窗口，并登记
+    // 3) 挂到宿主窗口
     hostWin.contentView.addChildView(plan.view);
-    windowState.addAttachedView(hostCtx.win.id, plan.view);
+    if (sidebarView) hostWin.contentView.addChildView(sidebarView);
+
+    const panel = {
+      view: plan.view,
+      sidebarView: sidebarView,
+      sidebarOpen: false,
+      sidebarWidth: 320,
+    };
+    windowState.addAttachedView(hostCtx.win.id, panel);
     hostCtx.splitDirection = plan.direction;
 
-    // 3) 登记视图归属 —— 来源窗口马上销毁，只能靠这张表找回 profile/session
+    // 4) 更新来源窗口的上下文指向宿主，让工具调用能落到宿主里
+    sourceCtx.hostCtx = hostCtx;
+    sourceCtx.win = hostCtx.win;
+    sourceCtx.rawWin = hostCtx.rawWin;
+
     windowState.rememberViewOwner(plan.view.webContents, sourceCtx);
 
-    // 4) 来源窗口已空，关闭它
+    // 5) 来源窗口已空，关闭它
     const sourceId = sourceCtx.win.id;
     try { sourceWin.destroy(); } catch (_) {}
     try { windowState.removeWindow(sourceId); } catch (_) {}
@@ -1286,7 +1359,15 @@ ipcMainForProfile.handle('window-unmerge', async (event, { webContentsId } = {})
     const restoredIds = [];
     for (const view of targets) {
       const ownerCtx = windowState.getContextByWebContents(view.webContents);
+      const panels = ctx.attachedViews || [];
+      const panel = panels.find(p => p.view === view);
+
       try { hostWin.contentView.removeChildView(view); } catch (_) {}
+      if (panel && panel.sidebarView) {
+        try { hostWin.contentView.removeChildView(panel.sidebarView); } catch (_) {}
+        try { panel.sidebarView.webContents.close(); } catch (_) {}
+      }
+      
       windowState.removeAttachedView(ctx.win.id, view);
       try {
         const id = await createRestoredWindow(view, ownerCtx);
@@ -1374,8 +1455,8 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX } = {}) 
 ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
-    if (!ctx || !ctx.win) return { success: false, error: '窗口不存在' };
-    const wc = ctx.win.webContents;
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const wc = windowState.getViewWebContents(ctx);
     if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
     wc.send('lingya-set-setting', { key: String(key||''), value: value });
     return { success: true };

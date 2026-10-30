@@ -15,7 +15,7 @@ test('addWindow 后 ctx.attachedViews 初始为空数组', () => {
   assert.strictEqual(ctx.splitDirection, null);
 });
 
-test('addAttachedView 可挂多个视图，getContextByWebContents 仍返回 OWNER ctx', () => {
+test('addAttachedView 可挂多个面板，getContextByWebContents 仍返回 OWNER ctx', () => {
   const ws = require('../../src/main/window');
   const wc = { id: 'attached-wc' };
   const ownerView = { webContents: wc };
@@ -24,9 +24,9 @@ test('addAttachedView 可挂多个视图，getContextByWebContents 仍返回 OWN
   const wA = { id: 'a', on: () => {}, isDestroyed: () => false };
   ws.addWindow(wA, 'pA', 'deepseek', { a: 1 });
 
-  ws.addAttachedView('a', ownerView);
-  const v2 = { webContents: { id: 'wc2' } };
-  ws.addAttachedView('a', v2);
+  ws.addAttachedView('a', { view: ownerView, sidebarView: null, sidebarOpen: false, sidebarWidth: 320 });
+  const view2 = { webContents: { id: 'wc2' } };
+  ws.addAttachedView('a', { view: view2, sidebarView: null, sidebarOpen: false, sidebarWidth: 320 });
 
   assert.strictEqual(ws.getWindowContext('a').attachedViews.length, 2);
   const ctx = ws.getContextByWebContents(wc);
@@ -35,7 +35,7 @@ test('addAttachedView 可挂多个视图，getContextByWebContents 仍返回 OWN
 
 test('addAttachedView 对不存在的窗口返回 null 不抛错', () => {
   const ws = require('../../src/main/window');
-  const r = ws.addAttachedView(999, { webContents: { id: 'x' } });
+  const r = ws.addAttachedView(999, { view: { webContents: { id: 'x' } } });
   assert.strictEqual(r, null);
 });
 
@@ -44,19 +44,20 @@ test('addAttachedView 重复挂同一个视图不会重复入数组', () => {
   const w = { id: 3, on: () => {}, isDestroyed: () => false };
   ws.addWindow(w, 'p3', 'qwen', {});
   const view = { webContents: { id: 'dup' } };
-  ws.addAttachedView(3, view);
-  ws.addAttachedView(3, view);
+  const panel = { view, sidebarView: null, sidebarOpen: false, sidebarWidth: 320 };
+  ws.addAttachedView(3, panel);
+  ws.addAttachedView(3, panel);
   assert.strictEqual(ws.getWindowContext(3).attachedViews.length, 1);
 });
 
-test('removeAttachedView 移除单个，最后一个移除时清空方向', () => {
+test('removeAttachedView 按 view 移除单个，最后一个移除时清空方向', () => {
   const ws = require('../../src/main/window');
   const w = { id: 4, on: () => {}, isDestroyed: () => false };
   ws.addWindow(w, 'p4', 'qwen', {});
   const v1 = { webContents: { id: 'v1' } };
   const v2 = { webContents: { id: 'v2' } };
-  ws.addAttachedView(4, v1);
-  ws.addAttachedView(4, v2);
+  ws.addAttachedView(4, { view: v1 });
+  ws.addAttachedView(4, { view: v2 });
   ws.getWindowContext(4).splitDirection = 'horizontal';
 
   ws.removeAttachedView(4, v1);
@@ -72,8 +73,8 @@ test('clearAttachedView 清空全部并归零方向', () => {
   const ws = require('../../src/main/window');
   const w = { id: 5, on: () => {}, isDestroyed: () => false };
   ws.addWindow(w, 'p5', 'qwen', {});
-  ws.addAttachedView(5, { webContents: { id: 'a' } });
-  ws.addAttachedView(5, { webContents: { id: 'b' } });
+  ws.addAttachedView(5, { view: { webContents: { id: 'a' } } });
+  ws.addAttachedView(5, { view: { webContents: { id: 'b' } } });
   ws.getWindowContext(5).splitDirection = 'vertical';
   ws.clearAttachedView(5);
   assert.strictEqual(ws.getWindowContext(5).attachedViews.length, 0);
