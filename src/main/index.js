@@ -2189,7 +2189,10 @@ if (_shouldQuit) {
     });
   }
 
-  app.whenReady().then(() => {
+  // 强制禁用 Windows 11 原生覆盖滚动条，否则自定义 CSS 无法生效
+app.commandLine.appendSwitch('disable-features', 'OverlayScrollbar,OverlayScrollbars,WindowsOverlayScrollbar');
+
+app.whenReady().then(() => {
     setupAppMenu();
     createWindow(null);
 

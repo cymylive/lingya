@@ -34,22 +34,12 @@ function deepseekHookInstaller() {
   var MARKER = Symbol.for('l.hook.ds');
   if (window[MARKER]) return;
 
-  /**
-   * 把被包裹的原生函数伪装成 native code。
-   * 平台常用 Function.prototype.toString.call(fn).includes('[native code]') 判断劫持。
-   * 这里覆盖 fn.toString()，让直接调用 fn.toString() 的检测拿不到真实源码。
-   * 注意：Function.prototype.toString.call(fn) 仍会拿到真实源码 —— 那需要替换
-   * Function.prototype.toString 本身，侵入性太大且容易弄坏站点，不做。
-   */
-  function spoofNative(fn, name) {
-    try {
-      Object.defineProperty(fn, 'toString', {
-        value: function () { return 'function ' + name + '() { [native code] }'; },
-        configurable: true,
-        writable: true,
-      });
-    } catch (e) { /* 属性不可配置时忽略，不影响功能 */ }
-  }
+  // 【2026-10-30 移除 spoofNative】
+  // 原实现用 Object.defineProperty 给被 hook 的函数加自有 toString，
+  // 试图伪装成 [native code]。但原生函数的 toString 是继承的，
+  // 加自有属性后 hasOwnProperty('toString') 恒为 true —— 两行代码即可判定劫持。
+  // 伪装失败比不伪装更糟：主动伪造 native 标识在平台协议里属于「假扮身份」，
+  // 性质重于「自动化操作」。因此移除伪装，hook 本身保持原样。
   window[MARKER] = true;
 
   // 主路径（已知的 DeepSeek 流式补全端点）
@@ -406,20 +396,34 @@ function deepseekHookInstaller() {
         }
       }
       if (!lower['authorization']) return;
-      localStorage.setItem('lingya-ds-headers', JSON.stringify(lower));
+      // 【2026-10-30】不再写 localStorage['lingya-ds-headers']。
+      // 原实现把含 Bearer token 的完整请求头明文落在页面 storage 里：
+      //   ① 页面任意脚本可读走 token（安全问题）
+      //   ② 键名带 lingya- 前缀，一行 Object.keys(localStorage) 即暴露工具身份
+      // 改为：主世界内存 + 派发事件给隔离世界，token 不落任何持久化存储。
+      window.__lingyaDsHeaders = lower;
+      window.dispatchEvent(new CustomEvent('lingya-ds-headers', { detail: lower }));
     } catch (e) { /* ignore */ }
   }
 
   // ---------- 自检探针：确认 hook 已生效且事件通道贯通 ----------
   // 主世界派发的 CustomEvent 若因隔离世界/时序问题收不到，整个 Agent 循环会静默失效。
   // 这里在注入完成后延迟派发一个自检事件，由 preload 侧记录日志（用户可见）。
-  setTimeout(function () {
-    try {
-      window.dispatchEvent(new CustomEvent('lingya-hook-ready', {
-        detail: { provider: 'deepseek', at: Date.now() }
-      }));
-    } catch (e) { /* ignore */ }
-  }, 0);
+  // 【2026-10-30 修时序竞态】原实现只在注入完成后 setTimeout(0) 派发一次。
+  // 但本函数是通过 webFrame.executeJavaScript 异步注入主世界的，注入完成时
+  // preload 侧的 intercept-observer 可能还没 require 到（它的自检监听器在那里注册）。
+  // 事件派发早于监听器注册 → 事件丢失 → 5 秒后误报「hook 自检超时」。
+  // 改为派发 3 次（0 / 400 / 1200ms），覆盖监听器注册窗口。
+  // 监听器侧有幂等保护（window.__lingyaHookReadySeen__），重复收到只打一次日志。
+  [0, 400, 1200].forEach(function (delay) {
+    setTimeout(function () {
+      try {
+        window.dispatchEvent(new CustomEvent('lingya-hook-ready', {
+          detail: { provider: 'deepseek', at: Date.now() }
+        }));
+      } catch (e) { /* ignore */ }
+    }, delay);
+  });
 
   // ---------- fetch 拦截 ----------
   var origFetch = window.fetch;
@@ -457,7 +461,6 @@ function deepseekHookInstaller() {
         return response;
       });
     };
-    spoofNative(window.fetch, 'fetch');
   }
 
   // ---------- XHR 拦截（被动读取 responseText）----------
@@ -475,12 +478,10 @@ function deepseekHookInstaller() {
     } catch (e) { /* ignore */ }
     return origSetRequestHeader.apply(this, arguments);
   };
-  spoofNative(XMLHttpRequest.prototype.setRequestHeader, 'setRequestHeader');
   XMLHttpRequest.prototype.open = function (method, url) {
     try { xhrInfo.set(this, { url: url, method: method }); } catch (e) { /* ignore */ }
     return origOpen.apply(this, arguments);
   };
-  spoofNative(XMLHttpRequest.prototype.open, 'open');
   XMLHttpRequest.prototype.send = function (body) {
     var info = xhrInfo.get(this);
     if (info && isCompletion(info.url, info.method)) {
@@ -491,7 +492,6 @@ function deepseekHookInstaller() {
     }
     return origSend.apply(this, arguments);
   };
-  spoofNative(XMLHttpRequest.prototype.send, 'send');
 
 
   function observeXhr(xhr) {

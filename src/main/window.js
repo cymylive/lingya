@@ -197,6 +197,26 @@ function getAllContexts() {
   return Array.from(windows.values());
 }
 
+// ===== 【2026-10-30】「全部分屏」总控台变更广播（100ms 节流）=====
+// 触发源：todo 变化 / 工具开始结束 / AI 生成状态变化。
+// 为什么要节流：AI 一轮任务可能连续调十几个工具，每次都广播会让侧边栏
+// 反复拉全量数据。100ms 内的多次变化合并成一次，肉眼仍是实时的。
+let __allTodosTimer = null;
+function broadcastAllTodosChanged() {
+  if (__allTodosTimer) return;
+  __allTodosTimer = setTimeout(() => {
+    __allTodosTimer = null;
+    for (const c of windows.values()) {
+      try {
+        const raw = c.rawWin;
+        if (raw && !raw.isDestroyed() && raw.webContents && !raw.webContents.isDestroyed()) {
+          raw.webContents.send('lingya-all-todos-changed');
+        }
+      } catch (_) { /* 单窗口失败不影响其他 */ }
+    }
+  }, 100);
+}
+
 function getWindowByProfileId(profileId) {
   for (const ctx of windows.values()) {
     if (ctx.profileId === profileId) return ctx;
@@ -224,4 +244,5 @@ module.exports = {
   getAllWindows,
   getAllContexts,
   getWindowByProfileId,
+  broadcastAllTodosChanged,
 };

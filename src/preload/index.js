@@ -97,31 +97,26 @@ function init() {
   try {
     const style = document.createElement('style');
     style.textContent = `
-      /* 强制隐藏横向滚动条，防止微小的横向溢出导致滚动条出现 */
-      ::-webkit-scrollbar:horizontal {
-        display: none !important;
-        height: 0 !important;
-      }
-      /* 纵向滚动条变细、半透明 */
+      /* 横向滚动条也染成青色，保留显示 */
+      /* 不再切断横向溢出，顺其自然 */
+      /* 纵向滚动条变细、主题青色 */
       ::-webkit-scrollbar {
-        width: 6px !important;
-        height: 6px !important;
+        width: 10px !important;
+        height: 10px !important;
       }
       ::-webkit-scrollbar-track {
-        background: transparent !important;
+        background: rgba(255,255,255,0.03) !important;
       }
       ::-webkit-scrollbar-thumb {
-        background: rgba(150, 150, 150, 0.3) !important;
-        border-radius: 4px !important;
+        background: rgba(45, 212, 191, 0.55) !important;
+        border-radius: 5px !important;
+        border: 2px solid transparent !important;
+        background-clip: padding-box !important;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: rgba(150, 150, 150, 0.6) !important;
+        background: rgba(45, 212, 191, 0.85) !important;
       }
-      /* 兼容 Firefox 等 */
-      * {
-        scrollbar-width: thin !important;
-        scrollbar-color: rgba(150, 150, 150, 0.3) transparent !important;
-      }
+      /* 已删除 scrollbar-color 避免原生接管 */
     `;
     (document.head || document.documentElement).appendChild(style);
   } catch (e) {

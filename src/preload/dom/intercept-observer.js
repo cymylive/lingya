@@ -581,6 +581,15 @@ function startInterceptObserver() {
     try {
       const detail = ev && ev.detail;
       if (!detail || !detail.finished) return;
+      // 【2026-10-30】记录本次回复的总字符数（正文 + 思考），供下一条消息的延迟计算使用。
+      // 真人读完长回复会等更久才发下一条 —— 这是「间隔 vs 回复长度」正相关的来源。
+      // 实测基线：回复 4143 字节 → 等 8.7s；回复 8603 字节 → 等 14.5s。
+      try {
+        // 只记正文长度：延迟模拟的是「读完回复」的时间，思考内容用户通常折叠不看。
+        // 实测基线：正文 604 字符 → 等 8.7s，正文 710 字符 → 等 14.5s。
+        const len = String(detail.text || '').length;
+        if (len > 0) state.lastResponseLen = len;
+      } catch (_) {}
       if (state.stopped) {
         // 已停止：忽略本次完成事件，同时清掉请求起点。
         // 否则停止后下一次回复会把「停止前的等待时长」也算进思考耗时，
@@ -690,6 +699,11 @@ function startInterceptObserver() {
         const thinkMs = Date.now() - state.lastRequestStartAt;
         state.lastRequestStartAt = 0;
         state.lastThinkMs = thinkMs;
+        // 【新功能】防爆锁解锁：收到新会话的第一条 AI 回复后，解除 isMigrating
+        if (state.isMigrating) {
+          console.log('[LingYa 迁移] 新会话已产生第一轮回复，解除防爆锁');
+          state.isMigrating = false;
+        }
 
         const ratio = Number(state.thinkRatio) || 0;
         const maxDelay = Number(state.thinkMaxDelay) || 0;
@@ -728,6 +742,8 @@ function startInterceptObserver() {
   // 用户/开发者能立刻定位，而不是面对「AI 回复不执行」的静默失败。
   window.addEventListener('lingya-hook-ready', (ev) => {
     const d = (ev && ev.detail) || {};
+    // 【2026-10-30】幂等：主世界为解决时序竞态会派发多次，这里只记录第一次。
+    if (window.__lingyaHookReadySeen__) return;
     window.__lingyaHookReadySeen__ = true;
     console.log('[LingYa][拦截] ✅ hook 自检通过：provider=' + (d.provider || '?') +
       '，事件通道贯通');

@@ -175,6 +175,68 @@ function doUnarchive(sessionId) {
  *   Body: { chat_session_ids: [sessionId] }
  *   成功：{ data: { biz_code: 0 } }
  */
+/** 静默删除会话（无弹窗，供后台自动流程使用） */
+async function deleteSessionSilent(sessionId) {
+  if (!sessionId) return false;
+  console.log('[LingYa 迁移] 准备静默删除旧会话: ' + sessionId);
+  try {
+    let token = null;
+    try { token = JSON.parse(localStorage.getItem('userToken') || '{}').value; } catch (_) {}
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const resp = await fetch('/api/v0/chat_session/delete', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({ chat_session_ids: [sessionId] }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const json = await resp.json();
+    const code = json && json.data && json.data.biz_code;
+    if (code !== 0) throw new Error('biz_code=' + code + ' ' + (json && json.data && json.data.biz_msg || ''));
+
+    // 从归档存储中移除
+    const map = readArchived();
+    delete map[sessionId];
+    writeArchived(map);
+
+    // 把侧边栏上的 DOM 节点干掉，避免残留。
+    // 因为刚切回首页，侧边栏可能还没渲染完，所以起一个 10 秒的定时器反复查杀。
+    let killCount = 0;
+    const killDom = setInterval(() => {
+      killCount++;
+      let found = false;
+      try {
+        const anchors = findConversationAnchors();
+        for (const it of anchors) {
+          if (it.sessionId === sessionId) {
+            const row = findRowElement(it.anchor);
+            if (row && row.parentElement) {
+              row.remove();
+              found = true;
+            }
+          }
+        }
+      } catch (_) {}
+      
+      if (found || killCount > 10) {
+        clearInterval(killDom);
+        if (found) console.log('[LingYa 迁移] 已强制从侧边栏移除旧会话节点');
+      }
+    }, 1000);
+    
+    // 重新刷新归档区域的显示
+    try { applyArchivedState(); renderArchivedSection(); } catch (_) {}
+
+    console.log('[LingYa 迁移] 旧会话删除成功: ' + sessionId);
+    return true;
+  } catch (e) {
+    console.error('[LingYa 迁移] 静默删除失败:', e && e.message);
+    return false;
+  }
+}
+
 async function doDelete(sessionId, title) {
   if (!sessionId) return;
   const name = title || sessionId.slice(0, 12);
@@ -605,4 +667,4 @@ function stop() {
   try { if (window) window.__lingyaDeepseekArchiveStarted = false; } catch (_) {}
 }
 
-module.exports = { start, stop };
+module.exports = { start, stop, deleteSessionSilent };

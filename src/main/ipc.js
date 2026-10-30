@@ -26,6 +26,15 @@ const userTodoStore = require('../../tools/UserTodoStore');
 const { checkGate } = require('../../tools/plan-gate');
 const memoryJanitor = require('../../tools/memory-janitor');
 const toolLifecycle = require('../../tools/tool-lifecycle');
+const activityTrackerRef = require('./activity-tracker');
+
+// 【2026-10-30】工具开始/结束时立刻广播「总控台数据已变化」。
+// 此前只有 todo 变化和 AI 生成状态变化会广播，「正在执行：glob」这类
+// 工具活动变化只能靠前端 3 秒轮询才反映，看起来不实时。
+// 广播函数在 window.js，内部带 100ms 节流，高频工具调用不会拖垮侧边栏。
+activityTrackerRef.setOnChange(() => {
+  try { windowState.broadcastAllTodosChanged(); } catch (_) { /* 广播失败不影响工具执行 */ }
+});
 
 /** 解析当前会话 ID：优先实时从窗口 URL 提取，fallback 到 handleUrlChange 维护的值。
  *  execute 与 read 共用此函数，避免"新建会话时 sessionId 从 null 变为真实值"导致 key 漂移。 */
@@ -133,10 +142,15 @@ function registerIpcHandlers() {
       // 窗口名 / 平台
       let name = ctx.profileId || '窗口';
       let provider = ctx.providerId || '';
+      let profileNumber = null;
       try {
         const pm = require('./profile-manager');
         const p = pm.getProfileById(ctx.profileId);
-        if (p) { name = p.name || name; if (p.providerId) provider = p.providerId; }
+        if (p) { 
+          name = p.name || name; 
+          if (p.providerId) provider = p.providerId; 
+          if (typeof p.number === 'number') profileNumber = p.number;
+        }
       } catch (_) {}
 
       // 每个窗口可能有多个分屏面板，逐面板统计
@@ -147,10 +161,14 @@ function registerIpcHandlers() {
       const hostTodos = getTodos(hostSession, ctx.profileId);
       const hostWcId = ctx.view ? ctx.view.webContents.id : null;
       const hostGen = generationState.get(hostWcId, now);
+      let hostSessionTitle = null;
+      try { if (ctx.sessionStore) hostSessionTitle = ctx.sessionStore.getSessionTitleById(hostSession); } catch (_) {}
       panels.push({
         webContentsId: hostWcId,
         profileId: ctx.profileId,
+        profileNumber: profileNumber,
         sessionId: hostSession,
+        sessionTitle: hostSessionTitle,
         isHost: true,
         todos: hostTodos.todos,
         archived: hostTodos.archived,
@@ -174,21 +192,47 @@ function registerIpcHandlers() {
       }
       for (const { panel, ctx: oCtx } of owners) {
         let oName = oCtx.profileId || '窗口';
+        let oNumber = null;
         try {
           const pm = require('./profile-manager');
           const pr = pm.getProfileById(oCtx.profileId);
-          if (pr && pr.name) oName = pr.name;
+          if (pr) {
+            if (pr.name) oName = pr.name;
+            if (typeof pr.number === 'number') oNumber = pr.number;
+          }
         } catch (_) {}
-        const sid = resolveSessionId(oCtx, null);
+        let sid = null;
+        try {
+          const wc = panel.view.webContents;
+          if (wc && !wc.isDestroyed() && oCtx.sessionStore) {
+            sid = oCtx.sessionStore.extractSessionIdFromUrl(wc.getURL());
+          }
+        } catch (_) {}
+        if (!sid) sid = resolveSessionId(oCtx, null);
         const key = (oCtx.profileId || 'p') + '::' + (sid || 's');
         const t = getTodos(sid, oCtx.profileId);
         const attWcId = panel.view.webContents.id;
         const attGen = generationState.get(attWcId, now);
+        let attSessionTitle = null;
+        try { if (oCtx.sessionStore && sid) attSessionTitle = oCtx.sessionStore.getSessionTitleById(sid); } catch (_) {}
+        
+        // 兜底：从网页本身的 <title> 取（修复误把含 DeepSeek 的标题过滤掉的问题）
+        if (!attSessionTitle && panel.view && panel.view.webContents) {
+          try {
+            const wt = panel.view.webContents.getTitle();
+            // 只要不是单纯的 'DeepSeek' 或 'LingYa'，就截取前缀
+            if (wt && wt !== 'DeepSeek' && wt !== 'LingYa') {
+              attSessionTitle = wt.replace(/\s*[-·]\s*DeepSeek.*$/i, '').trim();
+            }
+          } catch (_) {}
+        }
         panels.push({
           webContentsId: attWcId,
           profileId: oCtx.profileId,
           profileName: oName,
+          profileNumber: oNumber,
           sessionId: sid,
+          sessionTitle: attSessionTitle,
           isHost: false,
           todos: t.todos,
           archived: t.archived,

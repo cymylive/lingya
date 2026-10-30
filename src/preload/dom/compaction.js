@@ -11,7 +11,7 @@
  *  7. 跳转 → 新页面自动初始化项目
  *
  * 依赖：
- *  - hook 已把真实请求头缓存到 localStorage['lingya-ds-headers']
+ *  - hook 已把真实请求头通过 CustomEvent('lingya-ds-headers') 送到内存
  *  - DeepSeek 把会话消息缓存在 IndexedDB 'deepseek-chat' 的 'history-message' store
  */
 const { sendToChat } = require('./chat-input');
@@ -55,15 +55,27 @@ function getSessionIdFromUrl() {
   return m ? m[1] : null;
 }
 
-/** 从 localStorage 读取缓存的真实请求头 */
+/**
+ * 缓存的真实请求头（含 authorization）。
+ *
+ * 【2026-10-30】原实现从 localStorage['lingya-ds-headers'] 读。
+ * 主世界 hook 改为派发 CustomEvent 传递后，这里改成内存变量接收：
+ *   - 不落任何持久化存储，token 不会被页面脚本读走
+ *   - 不再有带 lingya- 前缀的 storage 键
+ * 事件在首次 completion 请求发出时就会到达，早于用户手动点「压缩」。
+ */
+let cachedHeaders = null;
+try {
+  window.addEventListener('lingya-ds-headers', (ev) => {
+    if (ev && ev.detail && ev.detail['authorization']) {
+      cachedHeaders = ev.detail;
+    }
+  });
+} catch (_) { /* 环境不支持时保持 null，压缩会提示需要先发一条消息 */ }
+
+/** 读取缓存的真实请求头（内存） */
 function getCachedHeaders() {
-  try {
-    const raw = localStorage.getItem('lingya-ds-headers');
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (_) {
-    return null;
-  }
+  return cachedHeaders;
 }
 
 /**

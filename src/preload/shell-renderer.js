@@ -654,6 +654,17 @@
         }
         rendered[name] = false; // 允许下次点击重试
       }
+    } else if (name === 'plan' && window.__lyPlanTab === 'all') {
+      // 【2026-10-30 修复】切回「计划」视图且当前处于「全部分屏」tab 时，
+      // 必须重新挂载 renderAllSplitView。
+      // 原因：switchView 切走时调用了 __lyAllSplitCleanup，把定时器和事件监听都清掉了；
+      // 但 rendered['plan'] 已经是 true，renderPlanView 不会重新执行，
+      // applyPlanTab 也不会重跑 → 自动刷新永久失效，只能手动点刷新。
+      var allWrapEl = document.getElementById('sh-plan-all-wrap');
+      if (allWrapEl && typeof renderAllSplitView === 'function') {
+        allWrapEl.setAttribute('data-rendered', '1');
+        renderAllSplitView(allWrapEl);
+      }
     }
     try { localStorage.setItem('lingya-shell-view', name); } catch(_e){}
   }
@@ -1132,14 +1143,21 @@
             var meta = STATUS_META[p.status] || STATUS_META.idle;
             var sum = p.summary || {};
             var pct = sum.total ? Math.round(sum.completed / sum.total * 100) : 0;
-            var panelName = p.isHost ? '主面板' : (p.profileName || '分屏');
+            var seqName = p.isHost ? '主面板' : (p.profileName || '分屏');
+            var seqNum = (typeof p.profileNumber === 'number' && p.profileNumber !== null) 
+              ? ('@' + p.profileNumber) 
+              : (p.isHost ? '主窗口' : (p.webContentsId || '?'));
 
             h += '<div class="sh-all-card" data-wcid="' + (p.webContentsId || '') + '" data-winid="' + (w.windowId || '') + '" style="padding:8px 10px;border-top:1px solid var(--ck-border);cursor:pointer;">';
-            // 标题行
-            h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
-               + '<span style="font-size:12px;font-weight:600;color:var(--ck-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(panelName) + '</span>'
+            // 第一行：当前窗口序号 + 状态标签
+            h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">'
+               + '<span style="font-size:12px;font-weight:600;color:var(--ck-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">当前窗口序号: ' + seqNum + ' <span style="font-weight:normal;color:var(--ck-text-dim);font-size:11px;">(' + esc(seqName) + ')</span></span>'
                + '<span style="font-size:10px;padding:1px 6px;border-radius:4px;color:' + meta.color + ';background:' + meta.bg + ';font-weight:600;">' + meta.label + '</span>'
                + '</div>';
+            // 第二行：当前会话标题
+            if (p.sessionTitle) {
+              h += '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">当前会话标题: ' + esc(p.sessionTitle) + '</div>';
+            }
             // 进度条
             if(sum.total > 0){
               h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
@@ -1155,23 +1173,20 @@
             } else if(p.generating && p.generating.text){
               h += '<div style="font-size:10px;color:var(--ck-text-dim);">' + esc(p.generating.text) + '</div>';
             }
-            // todo 明细（最多 4 条）
+            // todo 明细（全量显示）
             var todos = p.todos || [];
             if(todos.length){
-              h += '<div style="margin-top:4px;">';
-              var show = Math.min(4, todos.length);
-              for(var ti = 0; ti < show; ti++){
+              // 限制最大高度 120px，超出加滚动条
+              h += '<div style="margin-top:4px; max-height:120px; overflow-y:auto; scrollbar-width:thin;">';
+              for(var ti = 0; ti < todos.length; ti++){
                 var t = todos[ti];
                 var icon = t.status === 'completed' ? '✓' : (t.status === 'in_progress' ? '▶' : '○');
                 var col = t.status === 'completed' ? '#22c55e' : (t.status === 'in_progress' ? '#3b82f6' : 'var(--ck-text-dim)');
                 var deco = t.status === 'completed' ? 'text-decoration:line-through;opacity:.55;' : '';
-                h += '<div style="display:flex;gap:4px;font-size:10.5px;line-height:15px;color:var(--ck-text-2);">'
+                h += '<div style="display:flex;gap:4px;font-size:10.5px;line-height:15px;color:var(--ck-text-2);margin-bottom:2px;">'
                    + '<span style="color:' + col + ';flex-shrink:0;">' + icon + '</span>'
-                   + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + deco + '">' + esc(t.content) + '</span>'
+                   + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + deco + '" title="' + esc(t.content) + '">' + esc(t.content) + '</span>'
                    + '</div>';
-              }
-              if(todos.length > show){
-                h += '<div style="font-size:10px;color:var(--ck-text-dim);padding-left:14px;">还有 ' + (todos.length - show) + ' 项…</div>';
               }
               h += '</div>';
             }
@@ -1209,14 +1224,17 @@
     draw();
     window.__lyRefreshAllSplit = draw;
 
-    // ===== 自动刷新：事件驱动为主 + 3 秒轮询兜底 =====
+    // ===== 自动刷新：事件驱动为主 + 10 秒轮询兜底 =====
+    // 2026-10-30：主进程已补上「工具开始/结束」的广播（100ms 节流），
+    // 状态变化基本都能在 100ms 内到达。轮询从 3 秒放宽到 10 秒，
+    // 只作为「事件丢失」的最后兜底，减少无谓的全量查询。
     if(window.__lyAllSplitCleanup){ try{ window.__lyAllSplitCleanup(); }catch(_){} }
     var _unsub = null;
     var _timer = setInterval(function(){
       var box = document.getElementById('sh-all-body');
       if(!box || !box.isConnected){ _stop(); return; }
       draw();
-    }, 3000);
+    }, 10000);
     function _stop(){
       if(_timer){ clearInterval(_timer); _timer = null; }
       if(_unsub){ try{ _unsub(); }catch(_){} _unsub = null; }

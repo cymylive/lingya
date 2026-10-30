@@ -9,6 +9,19 @@
 
 const activities = new Map(); // sessionKey -> { running, lastToolName, lastAt, lastOk }
 
+// 【2026-10-30】变更回调：工具 start/end 时通知订阅方（主进程广播用）。
+// 本模块是纯逻辑、不依赖 electron，广播函数由 main 侧注入。
+let onChange = null;
+/** 注册变更回调（传 null 取消） */
+function setOnChange(fn) {
+  onChange = typeof fn === 'function' ? fn : null;
+}
+/** 内部：安全触发回调，异常绝不影响工具执行 */
+function fireChange(sessionKey) {
+  if (!onChange) return;
+  try { onChange(sessionKey); } catch (_) { /* 广播失败不影响主流程 */ }
+}
+
 /** 取某会话的活动摘要（不存在时返回空活动，不创建条目） */
 function get(sessionKey) {
   const a = activities.get(sessionKey);
@@ -24,6 +37,7 @@ function start(sessionKey, toolName) {
   a.running += 1;
   a.lastToolName = toolName || 'unknown';
   a.lastAt = Date.now();
+  fireChange(sessionKey);
 }
 
 /** 工具执行结束（ok 表示是否成功） */
@@ -34,6 +48,7 @@ function end(sessionKey, ok) {
   a.running = Math.max(0, a.running - 1);
   a.lastAt = Date.now();
   a.lastOk = (ok === true);
+  fireChange(sessionKey);
 }
 
 /** 清空某会话的活动记录（会话切换/关闭时调用） */
@@ -49,4 +64,4 @@ function stats() {
   return { sessions: activities.size, running };
 }
 
-module.exports = { get, start, end, clear, stats };
+module.exports = { get, start, end, clear, stats, setOnChange };

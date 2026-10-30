@@ -58,6 +58,13 @@ module.exports = {
   serverTokenUsage: null,
   // 最近一次 AI 回复的消息 id（{ requestMessageId, responseMessageId }）
   lastResponseMsgIds: null,
+  // 【2026-10-30 拟人延迟】最近一次 AI 回复的字符数（正文 + 思考）。
+  // 用于让「下一条消息的发送延迟」与「刚读过的内容量」正相关 —— 真人读得越久等得越久。
+  // 由 intercept-observer 在收到回复时写入，chat-input 计算延迟时读取。
+  lastResponseLen: 0,
+  // humanizeDelay 已移除（因严重影响长文本发送体验）
+  // 是否正在执行会话迁移（防爆锁）
+  isMigrating: false,
   // 用户是否点击了「停止」：为 true 时丢弃后续 AI 回复与工具结果，不再自动继续
   stopped: false,
   // 点「停止」的时刻。用于判断「停止后收到的新回复」是否该自动恢复执行

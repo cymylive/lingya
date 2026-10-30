@@ -58,6 +58,9 @@ let electronAPI = {
   listSessions: () => {
     return ipcRenderer.invoke('list-sessions');
   },
+  newChat: () => {
+    return ipcRenderer.invoke('shell-new-chat'); // 复用主进程已有的通道
+  },
   navigateSession: (sessionId) => {
     return ipcRenderer.invoke('navigate-session', { sessionId });
   },

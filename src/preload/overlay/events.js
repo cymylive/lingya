@@ -346,13 +346,36 @@ function formatTokenCount(n) {
  */
 function updateConversationTokenDisplay() {
   const countEl = document.getElementById('lingya-conv-token-count');
-  if (!countEl) return;
-
+  
   const server = state.serverTokenUsage;
+  let tokenText = '0';
   if (server && typeof server.accumulatedTokens === 'number') {
-    countEl.textContent = formatTokenCount(server.accumulatedTokens);
-  } else {
-    countEl.textContent = '0';
+    tokenText = formatTokenCount(server.accumulatedTokens);
+  }
+
+  if (countEl) {
+    countEl.textContent = tokenText;
+  }
+
+  // 完全动态创建，不依赖任何模板 HTML
+  let fabTokenEl = document.getElementById('lingya-fab-token');
+  if (!fabTokenEl) {
+    fabTokenEl = document.createElement('div');
+    fabTokenEl.id = 'lingya-fab-token';
+    fabTokenEl.style.cssText = 'position: fixed; transform: translate(-50%, -100%); background: rgba(12, 14, 16, 0.95); border: 1px solid #2dd4bf; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #2dd4bf; pointer-events: none; z-index: 2147483647; white-space: nowrap; display: block;';
+    document.body.appendChild(fabTokenEl);
+  }
+
+  fabTokenEl.textContent = tokenText;
+
+  // 同步位置
+  const badgeEl = document.getElementById('lingya-status-badge');
+  if (badgeEl) {
+    const rect = badgeEl.getBoundingClientRect();
+    if (rect.width > 0) {
+      fabTokenEl.style.left = (rect.left + rect.width / 2) + 'px';
+      fabTokenEl.style.top = (rect.top - 6) + 'px';
+    }
   }
 }
 
@@ -409,11 +432,73 @@ function checkAutoCompact() {
   // 触发
   autoCompactTriggering = true;
   console.log('[LingYa Compact] 自动触发：当前 ' + server.accumulatedTokens + ' >= 阈值 ' + thresholdTokens);
-  showToast('Token 超阈值（' + autoCompactThresholdWan + '万），自动压缩中...', 4000);
-  runCompaction().finally(() => {
-    // 压缩会跳转页面；若未跳转（失败），重置标志允许下次重试
-    autoCompactTriggering = false;
-  });
+  
+  // 【新功能】全自动迁移会话
+  (async function runMigration() {
+    if (state.isMigrating) return;
+    state.isMigrating = true;
+    showToast('Token 超阈值，正在自动开启新会话并全量迁移上下文...', 4000);
+    
+    try {
+      // 强制中断当前任务
+      state.stopped = true;
+      try { window.electronAPI.clearAbort(); } catch (_) {}
+      
+      // 收集全量历史
+      const cLog = require('../dom/conversation-log');
+      const historyEntries = cLog.getEntries ? cLog.getEntries() : [];
+      const historyMd = cLog.buildMarkdown(historyEntries, { 
+        platform: 'DeepSeek', 
+        projectDir: state.currentProjectDir,
+        now: Date.now()
+      }, { includeToolBlocks: true });
+      
+      // 获取当前旧会话 ID（优先用 state 里的，URL 在切页时可能已改变）
+      let oldSid = state.currentSessionId;
+      if (!oldSid) {
+        try {
+          const provider = require('../../../providers').getProviderByUrl(window.location.href);
+          if (provider && provider.extractSessionId) {
+            oldSid = provider.extractSessionId(window.location.href);
+          }
+        } catch (_) {}
+      }
+      console.log('[LingYa 迁移] 当前待删除旧会话 ID: ' + oldSid);
+
+      // 存入 localStorage，供 auto-inject 读取
+      const migrationData = {
+        history: historyMd,
+        projectDir: state.currentProjectDir || null,
+        oldSessionId: oldSid,
+        timestamp: Date.now()
+      };
+      localStorage.setItem('lingya-pending-migration', JSON.stringify(migrationData));
+      console.log('[LingYa 迁移] 历史已打包，长度=' + historyMd.length + '，准备切新会话');
+      
+      // 清空旧会话记录
+      if (cLog.clearEntries) cLog.clearEntries();
+      
+      // 切新会话（回到首页）
+      if (window.electronAPI && window.electronAPI.newChat) {
+        await window.electronAPI.newChat();
+      } else {
+        throw new Error('window.electronAPI.newChat 不可用');
+      }
+    } catch (err) {
+      console.error('[LingYa 迁移] 失败:', err);
+      state.isMigrating = false;
+      showToast('自动迁移失败: ' + err.message, 5000);
+    } finally {
+      autoCompactTriggering = false;
+      // 如果10秒后还卡在 isMigrating=true（说明由于页面未刷新导致没收到回复解锁），强制解锁
+      setTimeout(() => {
+        if (state.isMigrating) {
+          console.warn('[LingYa 迁移] 超时未收到新会话回复，强制解除防爆锁');
+          state.isMigrating = false;
+        }
+      }, 15000);
+    }
+  })();
 }
 
 /**
@@ -447,6 +532,14 @@ function makeFabDraggable(badge) {
     badge.style.left = left + 'px';
     badge.style.top = top + 'px';
     badge.style.right = 'auto';
+
+    // 同步更新 Token 标签位置
+    const tokenEl = document.getElementById('lingya-fab-token');
+    if (tokenEl) {
+      tokenEl.style.top = (top - 6) + 'px';
+      tokenEl.style.left = cx + 'px';
+      tokenEl.style.top = (top - 6) + 'px';
+    }
     badge.style.bottom = 'auto';
   }
 

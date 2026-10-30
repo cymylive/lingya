@@ -9,22 +9,12 @@ function claudeHookInstaller() {
   var MARKER = Symbol.for('l.hook.claude');
   if (window[MARKER]) return;
 
-  /**
-   * 把被包裹的原生函数伪装成 native code。
-   * 平台常用 Function.prototype.toString.call(fn).includes('[native code]') 判断劫持。
-   * 这里覆盖 fn.toString()，让直接调用 fn.toString() 的检测拿不到真实源码。
-   * 注意：Function.prototype.toString.call(fn) 仍会拿到真实源码 —— 那需要替换
-   * Function.prototype.toString 本身，侵入性太大且容易弄坏站点，不做。
-   */
-  function spoofNative(fn, name) {
-    try {
-      Object.defineProperty(fn, 'toString', {
-        value: function () { return 'function ' + name + '() { [native code] }'; },
-        configurable: true,
-        writable: true,
-      });
-    } catch (e) { /* 属性不可配置时忽略，不影响功能 */ }
-  }
+  // 【2026-10-30 移除 spoofNative】
+  // 原实现用 Object.defineProperty 给被 hook 的函数加自有 toString，
+  // 试图伪装成 [native code]。但原生函数的 toString 是继承的，
+  // 加自有属性后 hasOwnProperty('toString') 恒为 true —— 两行代码即可判定劫持。
+  // 伪装失败比不伪装更糟：主动伪造 native 标识在平台协议里属于「假扮身份」，
+  // 性质重于「自动化操作」。因此移除伪装，hook 本身保持原样。
   window[MARKER] = true;
 
   // claude.ai 的 completion 端点形如：
@@ -186,7 +176,6 @@ function claudeHookInstaller() {
         return response;
       });
     };
-    spoofNative(window.fetch, 'fetch');
   }
 
   // ---------- XHR 拦截（被动读取 responseText）----------
@@ -197,7 +186,6 @@ function claudeHookInstaller() {
     try { xhrInfo.set(this, { url: url, method: method }); } catch (e) { /* ignore */ }
     return origOpen.apply(this, arguments);
   };
-  spoofNative(XMLHttpRequest.prototype.open, 'open');
   XMLHttpRequest.prototype.send = function () {
     var info = xhrInfo.get(this);
     if (info && isCompletion(info.url, info.method)) {
@@ -206,7 +194,6 @@ function claudeHookInstaller() {
     }
     return origSend.apply(this, arguments);
   };
-  spoofNative(XMLHttpRequest.prototype.send, 'send');
 
   function observeXhr(xhr) {
     var lastLen = 0;

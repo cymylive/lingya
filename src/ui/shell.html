@@ -5,7 +5,7 @@
 <title>LingYa</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--ck-bg-solid, #0c0e10); }
+  html, body { width: 100%; height: 100%; overflow: hidden !important; overflow-x: hidden !important; background: var(--ck-bg-solid, #0c0e10); }
   :root {
     --ck-bg: rgba(12,14,16,0.97);
     --ck-bg-solid: #0c0e10;      /* 不透明主背景（标签栏/窗口底色，避免半透明透底） */
@@ -22,6 +22,31 @@
     --ck-title: #ccfbf1;
     --sh-ab-w: 60px;
   }
+  /* ===== 强制全局青色滚动条（横竖双杀） ===== */
+  html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar {
+    width: 8px !important;
+    height: 8px !important;
+    background-color: #2dd4bf !important; /* 强制底色 */
+  }
+  html::-webkit-scrollbar-track, body::-webkit-scrollbar-track, *::-webkit-scrollbar-track {
+    background-color: rgba(0,0,0,0.2) !important;
+  }
+  html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb, *::-webkit-scrollbar-thumb {
+    background-color: #2dd4bf !important;
+    border-radius: 4px !important;
+  }
+  html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover, *::-webkit-scrollbar-thumb:hover {
+    background-color: #5eead4 !important;
+  }
+  /* 单独强制横向滚动条 */
+  html::-webkit-scrollbar:horizontal, body::-webkit-scrollbar:horizontal, *::-webkit-scrollbar:horizontal {
+    height: 8px !important;
+    background-color: #2dd4bf !important;
+  }
+  html::-webkit-scrollbar-thumb:horizontal, body::-webkit-scrollbar-thumb:horizontal, *::-webkit-scrollbar-thumb:horizontal {
+    background-color: #2dd4bf !important;
+  }
+
   html.lingya-theme-light {
     --ck-bg: rgba(252,252,253,0.98);
     --ck-bg-solid: #fcfcfd;
@@ -36,6 +61,55 @@
     --ck-primary: #0d9488;
     --ck-primary-soft: rgba(13,148,136,0.14);
     --ck-title: #0f766e;
+  }
+
+  /* ===== 全局滚动条：主题青色 ===== */
+  /* 方案一：标准 CSS 属性（适用于 Windows 11 强制显示的系统原生滚动条） */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(45, 212, 191, 0.85) rgba(255,255,255,0.03);
+  }
+  /* 方案二：Webkit 伪元素（适用于常规覆盖场景） */
+  ::-webkit-scrollbar {
+    width: 10px !important;
+    height: 10px !important;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.03) !important;
+    border-radius: 5px !important;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(45, 212, 191, 0.55) !important;
+    border-radius: 5px !important;
+    border: 2px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(45, 212, 191, 0.85) !important;
+    border: 2px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: var(--ck-primary) !important;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent !important;
+  }
+  /* 分屏横向滚动条悬停变亮 */
+  #lingya-split-scrollbar-thumb:hover {
+    background: #5eead4 !important;
+  }
+  /* 浅色主题 */
+  html.lingya-theme-light * {
+    scrollbar-color: rgba(13, 148, 136, 0.75) rgba(0,0,0,0.05);
+  }
+  html.lingya-theme-light ::-webkit-scrollbar-thumb {
+    background: rgba(13, 148, 136, 0.55) !important;
+    border: 2px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+  html.lingya-theme-light ::-webkit-scrollbar-thumb:hover {
+    background: rgba(13, 148, 136, 0.85) !important;
   }
 
   /* ===== 全局表单控件：防止 flex 布局把 checkbox 压成 0 宽 ===== */
@@ -193,10 +267,8 @@
   .ck-preview-resizer:hover { background: var(--ck-primary-soft); }
 
   /* 滚动条 */
-  .ck-ft::-webkit-scrollbar, .ck-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
-  .ck-ft::-webkit-scrollbar-track, .ck-preview-body::-webkit-scrollbar-track { background: transparent; }
-  .ck-ft::-webkit-scrollbar-thumb, .ck-preview-body::-webkit-scrollbar-thumb { background: var(--ck-border); border-radius: 4px; }
-  .ck-ft::-webkit-scrollbar-thumb:hover, .ck-preview-body::-webkit-scrollbar-thumb:hover { background: var(--ck-primary-soft); }
+  /* 局部轨道已移除 */
+  /* 局部滚动条样式已移除，统一走全局青色 */
 
   /* ===== 背景色面板 ===== */
   .ck-bg-panel { display: none; flex-direction: column; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--ck-border); flex-shrink: 0; }
@@ -358,8 +430,8 @@
   }
   .ly-dd-close:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
   .ly-dd-body { flex: 1; overflow-y: auto; padding: 4px; }
-  .ly-dd-body::-webkit-scrollbar { width: 6px; }
-  .ly-dd-body::-webkit-scrollbar-thumb { background: var(--ck-border); border-radius: 3px; }
+  /* 局部宽度已移除 */
+  /* .ly-dd-body 滚动条已移除，统一走全局 */
 
   .ly-dd-item {
     display: flex; align-items: center; gap: 6px; padding: 7px 8px;
@@ -431,8 +503,8 @@
   </div>
 
   <!-- 分屏横向滚动条（仅左右分屏且内容溢出时显示） -->
-  <div id="lingya-split-scrollbar" style="display:none;position:fixed;left:0;right:0;bottom:0;height:14px;background:rgba(0,0,0,0.25);z-index:9999;align-items:center;">
-    <div id="lingya-split-scrollbar-thumb" style="position:absolute;height:8px;top:3px;border-radius:4px;background:rgba(120,120,120,0.7);cursor:grab;left:0;width:100px;"></div>
+  <div id="lingya-split-scrollbar" style="display:none;position:fixed;left:0;right:0;bottom:0;height:14px;background:rgba(45, 212, 191, 0.1);z-index:9999;align-items:center;">
+    <div id="lingya-split-scrollbar-thumb" style="position:absolute;height:8px;top:3px;border-radius:4px;background:rgba(45, 212, 191, 0.85);cursor:grab;left:0;width:100px;"></div>
   </div>
 
   <!-- 分屏纵向滚动条（仅上下分屏且内容溢出时显示） -->

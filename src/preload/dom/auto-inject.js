@@ -73,8 +73,92 @@ function hasExistingMessages() {
 
 /** 检查并执行自动注入 */
 function maybeInject() {
-  if (!isEnabled()) return;
   const sid = getSessionId();
+
+  // ===== 【新增】优先处理「会话迁移」待承接数据 =====
+  // 使用 localStorage 状态机，避免页面刷新导致 setTimeout 丢失
+  const pendingMig = localStorage.getItem('lingya-pending-migration');
+  if (pendingMig) {
+    let data = {};
+    try { data = JSON.parse(pendingMig); } catch (_) {}
+    if (!data.stage) data.stage = 'init';
+
+    // 阶段 1：等待输入框，并执行项目初始化
+    if (data.stage === 'init') {
+      const input = document.querySelector('textarea[placeholder*="发送"], textarea[placeholder*="输入"], textarea');
+      if (!input) return; // 等待页面加载
+
+      console.log('[LingYa 迁移] 已到达首页，准备初始化项目并注入历史（长度=' + (data.history ? data.history.length : 0) + '）');
+      require('./../overlay/ui').showToast('正在承接上一个会话的历史...', 4000);
+      
+      if (data.projectDir) {
+        try { window.electronAPI.initProject(data.projectDir, false); } catch (_) {}
+      }
+      
+      data.stage = 'wait';
+      data.initAt = Date.now();
+      localStorage.setItem('lingya-pending-migration', JSON.stringify(data));
+      return;
+    }
+
+    // 阶段 2：等待系统提示词发送完毕（延时），然后发出历史
+    if (data.stage === 'wait' && Date.now() - data.initAt > 8000) {
+      const input = document.querySelector('textarea[placeholder*="发送"], textarea[placeholder*="输入"], textarea');
+      if (!input) return;
+
+      data.stage = 'sent';
+      localStorage.setItem('lingya-pending-migration', JSON.stringify(data));
+
+      console.log('[LingYa 迁移] 延时已到，准备发送历史');
+      try {
+        const state = require('./state');
+        state.stopped = false;
+        state.stoppedAt = 0;
+        if (window.electronAPI && window.electronAPI.clearAbort) {
+          window.electronAPI.clearAbort();
+        }
+        state.initializationDone = true;
+        state.pendingInitialPrompt = false;
+
+        const msg = '【历史上下文承接】\n以下是上一个会话的完整历史记录，请仔细阅读并继续之前的工作。\n\n' + data.history;
+        console.log('[LingYa 迁移] 准备调用 sendMessageToChat, 长度=' + msg.length);
+        require('./chat-input').sendMessageToChat(msg, '历史迁移', { auto: true });
+        console.log('[LingYa 迁移] sendMessageToChat 调用完成');
+      } catch (e) {
+        console.error('[LingYa 迁移] 发送历史异常:', e);
+      }
+      return;
+    }
+
+    // 阶段 3：已发送，清理状态，并静默删除旧会话
+    if (data.stage === 'sent') {
+      localStorage.removeItem('lingya-pending-migration');
+      console.log('[LingYa 迁移] 历史迁移流程全部结束');
+      
+      // 静默删除旧会话
+      if (data.oldSessionId) {
+        console.log('[LingYa 迁移] 开始执行静默删除: ' + data.oldSessionId);
+        try {
+          const archiver = require('./deepseek-history-archiver');
+          if (archiver.deleteSessionSilent) {
+            archiver.deleteSessionSilent(data.oldSessionId).then((ok) => {
+              if (ok) require('./../overlay/ui').showToast('旧会话已自动删除', 3000);
+            });
+          } else {
+            console.error('[LingYa 迁移] archiver.deleteSessionSilent 不存在');
+          }
+        } catch (e) {
+          console.error('[LingYa 迁移] 调用静默删除失败:', e);
+        }
+      } else {
+        console.log('[LingYa 迁移] 没有拿到 oldSessionId，跳过删除');
+      }
+      return;
+    }
+  }
+  // ===== 迁移处理结束 =====
+
+  if (!isEnabled()) return;
   if (!sid) return;                         // 首页/无会话：等待
   if (sid === lastInjectedSessionId) return; // 该会话已注入过
 
@@ -111,6 +195,8 @@ function maybeInject() {
   console.log('[LingYa AutoInject] 新会话 ' + sid + '，自动注入记忆+技能（目录=' + dir + '）');
   try {
     window.electronAPI.initProject(dir, false);
+    
+
   } catch (err) {
     console.error('[LingYa AutoInject] 自动注入失败:', err && err.message);
   }
