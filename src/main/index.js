@@ -646,14 +646,23 @@ function createWindow(profile) {
 
   mainWindow.on('closed', () => {
     sessionsToFlush.delete(winSession);
-    // 关闭所有标签的渲染进程，防止泄漏
     try {
       const ctx = windowState.getWindowContext(mainWindow.id);
+      // 1) 关闭所有标签的渲染进程
       if (ctx && ctx.tabs) {
         for (const t of ctx.tabs.values()) {
           try { t.view.webContents.close(); } catch (_) {}
         }
         ctx.tabs.clear();
+      }
+      // 2) 关闭合并进来的附加视图（它们属于别的 profile，不关就泄漏）
+      if (ctx && ctx.attachedViews) {
+        for (const p of ctx.attachedViews) {
+          try { if (p.sidebarView) p.sidebarView.webContents.close(); } catch (_) {}
+          try { if (p.view) p.view.webContents.close(); } catch (_) {}
+        }
+        ctx.attachedViews = [];
+        ctx.splitDirection = null;
       }
     } catch (_) {}
     windowState.removeWindow(mainWindow.id);
@@ -1364,13 +1373,33 @@ async function performMerge(hostCtx, sourceCtx, direction) {
     };
     windowState.addAttachedView(hostCtx.win.id, panel);
     hostCtx.splitDirection = plan.direction;
+    // 方向可能变了（左右↔上下），旧滚动值会错位，统一归零
+    hostCtx.scrollX = 0;
+    hostCtx.scrollY = 0;
 
     // 4) 登记视图归属（sourceCtx 就是 owner，工具调用靠它找回 profile/session）
     //    注意：不要覆写 sourceCtx.win / rawWin —— 那会让后续逻辑误把宿主当来源
     sourceCtx.hostCtx = hostCtx;
     windowState.rememberViewOwner(plan.view.webContents, sourceCtx);
 
-    // 5) 来源窗口已空，关闭它（先存 id，避免后续 ctx 变动）
+    // 5) 关闭来源窗口的其余标签视图（只搬走了 active tab，其余留着会泄漏）
+    try {
+      const keepView = plan.view;
+      if (sourceCtx.tabs) {
+        for (const t of sourceCtx.tabs.values()) {
+          if (!t.view || t.view === keepView) continue;
+          try { t.view.webContents.close(); } catch (_) {}
+        }
+      }
+      // 只保留搬走的那个标签，避免 sourceCtx.tabs 引用已销毁视图
+      if (sourceCtx.tabs && sourceCtx.activeTabId) {
+        const keep = sourceCtx.tabs.get(sourceCtx.activeTabId);
+        sourceCtx.tabs.clear();
+        if (keep) sourceCtx.tabs.set(sourceCtx.activeTabId, keep);
+      }
+    } catch (_) {}
+
+    // 6) 来源窗口已空，关闭它（先存 id，避免后续 ctx 变动）
     const sourceId = sourceCtx.win.id;
     try { sourceWin.destroy(); } catch (_) {}
     try { windowState.removeWindow(sourceId); } catch (_) {}
@@ -1476,10 +1505,40 @@ ipcMainForProfile.handle('preset-apply', async (event, { id } = {}) => {
     const direction = preset.direction === 'vertical' ? 'vertical' : 'horizontal';
     const missing = [];
 
-    // 1) 逐个面板解析出 ctx：已在开的窗口直接用；没开就按原 profileId 重新打开
+    // 1) 逐个面板解析出 ctx：已在开的窗口直接用；已合并在某个宿主里的也算「已开」；
+    //    两者都没有才按原 profileId 重新打开窗口。
+    //    注意：已合并在宿主里的面板不能重复开窗口，否则会出现两个同 profile 的窗口。
+    const findHostOfAttached = (profileId) => {
+      for (const c of windowState.getAllContexts()) {
+        for (const panel of (c.attachedViews || [])) {
+          const o = windowState.getContextByWebContents(panel.view.webContents);
+          if (o && o.profileId === profileId) return { host: c, owner: o };
+        }
+      }
+      return null;
+    };
+
     const ctxs = [];
     for (const p of panels) {
       let found = p.profileId ? windowState.getWindowByProfileId(p.profileId) : null;
+      if (!found && p.profileId) {
+        // 已合并在某个宿主里：先把它从该宿主拆出来，变成独立窗口后再参与合并，
+        // 否则会把整个宿主窗口当成「一个面板」，布局就错了。
+        const hit = findHostOfAttached(p.profileId);
+        if (hit) {
+          let wcId = null;
+          for (const panel of (hit.host.attachedViews || [])) {
+            const o = windowState.getContextByWebContents(panel.view.webContents);
+            if (o && o.profileId === p.profileId) { wcId = panel.view.webContents.id; break; }
+          }
+          if (wcId != null) {
+            const unRes = await performUnmerge(hit.host, wcId);
+            if (unRes && unRes.success) {
+              found = windowState.getWindowByProfileId(p.profileId);
+            }
+          }
+        }
+      }
       if (!found) {
         // 优先按原 profileId 找回 profile 配置（保留账号/分区/窗口尺寸），
         // 只有该 profile 已被用户删除时，才降级为新建一个。
@@ -1576,7 +1635,11 @@ async function performUnmerge(ctx, webContentsId) {
       }
     }
 
-    if (!ctx.attachedViews || ctx.attachedViews.length === 0) ctx.splitDirection = null;
+    if (!ctx.attachedViews || ctx.attachedViews.length === 0) {
+      ctx.splitDirection = null;
+      ctx.scrollX = 0;
+      ctx.scrollY = 0;
+    }
     layoutAIView(hostWin);
     try {
       hostWin.webContents.send('lingya-split-changed', {
@@ -1838,11 +1901,35 @@ ipcMainForProfile.handle('update-profile-number', async (_event, { profileId, nu
 // 删除指定 profile（会关闭其窗口）
 ipcMainForProfile.handle('delete-profile', async (_event, { profileId }) => {
   if (!profileId) return { success: false, error: '缺少窗口ID' };
+
+  // 1) 独立窗口：直接销毁
   const ctx = windowState.getWindowByProfileId(profileId);
   if (ctx && ctx.win && !ctx.win.isDestroyed()) {
     ctx.win.__forceClose = true;
     ctx.win.destroy();
   }
+
+  // 2) 已被合并到别的宿主里：把该面板的视图销毁并从 attachedViews 摘掉
+  for (const host of windowState.getAllContexts()) {
+    const list = host.attachedViews || [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const panel = list[i];
+      let owner = null;
+      try { owner = windowState.getContextByWebContents(panel.view.webContents); } catch (_) {}
+      if (owner && owner.profileId === profileId) {
+        try { if (panel.sidebarView) panel.sidebarView.webContents.close(); } catch (_) {}
+        try { if (panel.view) panel.view.webContents.close(); } catch (_) {}
+        try { if (host.rawWin && !host.rawWin.isDestroyed()) {
+          if (panel.view) host.rawWin.contentView.removeChildView(panel.view);
+          if (panel.sidebarView) host.rawWin.contentView.removeChildView(panel.sidebarView);
+        } } catch (_) {}
+        list.splice(i, 1);
+      }
+    }
+    if (list.length === 0) host.splitDirection = null;
+    try { if (host.rawWin && !host.rawWin.isDestroyed()) layoutAIView(host.rawWin); } catch (_) {}
+  }
+
   const ok = profileManager.deleteProfile(profileId);
   if (ok) {
     try { require('./agent-store').clearProfile(profileId); } catch (_) {}
