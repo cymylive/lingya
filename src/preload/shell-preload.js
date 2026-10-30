@@ -39,6 +39,17 @@ const api = {
   // 设置分屏滚动偏移（横向 / 纵向）
   setSplitScroll: (scrollX, scrollY) => ipcRenderer.invoke('window-split-scroll', { scrollX, scrollY }),
   onSplitChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-split-changed',h); return ()=>ipcRenderer.removeListener('lingya-split-changed',h); },
+  // ===== 分屏布局预设 =====
+  // 列出全部预设
+  presetList: () => ipcRenderer.invoke('preset-list'),
+  // 把当前分屏布局存为预设（id 传了就覆盖更新）
+  presetSave: (name, id) => ipcRenderer.invoke('preset-save', { name, id }),
+  // 重命名预设
+  presetRename: (id, name) => ipcRenderer.invoke('preset-rename', { id, name }),
+  // 删除预设
+  presetDelete: (id) => ipcRenderer.invoke('preset-delete', { id }),
+  // 一键应用预设（重建分屏布局）
+  presetApply: (id) => ipcRenderer.invoke('preset-apply', { id }),
   // ===== 功能面板 API（v0.6.36 迁移自覆盖层）=====
   // 跨上下文：插入文本到聊天输入框 / 新会话
   insertToChat: (text, tag, delay) => ipcRenderer.invoke('shell-insert-to-chat', { text, tag, delay }),

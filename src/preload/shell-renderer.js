@@ -2669,7 +2669,20 @@
         '<button class="sh-btn" id="sh-win-unmerge-btn" style="width:100%;">⇱ 全部拆回独立窗口</button>'+
       '</div>'+
       '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">把本窗口合并进另一个窗口：点该窗口的「合并」按钮</div>'+
-      '<div id="sh-win-body" class="sh-empty">加载中…</div>');
+      '<div id="sh-win-body" class="sh-empty">加载中…</div>'+
+      '<div style="margin-top:12px;border-top:1px solid var(--ck-border);padding-top:8px;">'+
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'+
+          '<span style="font-size:12px;font-weight:600;color:var(--ck-title);flex:1;">布局预设</span>'+
+          '<button class="sh-btn primary" id="sh-preset-save" style="font-size:11px;padding:2px 8px;">保存当前布局</button>'+
+        '</div>'+
+        '<div id="sh-preset-save-row" style="display:none;margin-bottom:8px;align-items:center;gap:6px;">'+
+          '<input type="text" id="sh-preset-name" placeholder="输入预设名称" style="flex:1;padding:4px 8px;border-radius:4px;border:1px solid var(--ck-border);background:var(--ck-bg);color:var(--ck-title);font-size:12px;outline:none;">'+
+          '<button class="sh-btn primary" id="sh-preset-confirm" style="font-size:11px;padding:2px 8px;">确认</button>'+
+          '<button class="sh-btn" id="sh-preset-cancel" style="font-size:11px;padding:2px 8px;">取消</button>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">保存后可一键还原分屏方案，重启 LingYa 依然保留</div>'+
+        '<div id="sh-preset-body" class="sh-empty">加载中…</div>'+
+      '</div>');
     function load(){
       if(!window.shellAPI||!window.shellAPI.listProfiles) return;
       window.shellAPI.listProfiles().then(function(r){
@@ -2783,6 +2796,145 @@
       })['catch'](function(){ toast2('拆分失败'); });
     });
     refreshSplitState();
+
+    // ===== 布局预设 =====
+    var renamingId = null;
+    function refreshPresets(){
+      var pbox = document.getElementById('sh-preset-body');
+      if(!pbox) return;
+      if(!window.shellAPI || !window.shellAPI.presetList){ pbox.innerHTML='<div class="sh-empty">预设功能不可用（请重启应用）</div>'; return; }
+      window.shellAPI.presetList().then(function(r){
+        var list = (r && r.success && r.presets) || [];
+        if(!list.length){ pbox.innerHTML='<div class="sh-empty">还没有预设。合并好窗口后点「保存当前布局」。</div>'; return; }
+        var h='';
+        for(var i=0;i<list.length;i++){
+          var p=list[i];
+          var dirLabel = p.direction==='vertical' ? '上下' : '左右';
+          var isRenaming = (renamingId === p.id);
+          h+='<div class="sh-list-item" style="display:flex;align-items:center;gap:6px;padding:5px 0;">'
+            +'<div style="flex:1;overflow:hidden;">';
+          if(isRenaming){
+            h+='<input type="text" class="sh-preset-rename-input" data-id="'+esc(p.id)+'" value="'+esc(p.name)+'" style="width:100%;padding:2px 6px;border-radius:3px;border:1px solid var(--ck-border);background:var(--ck-bg);color:var(--ck-title);font-size:12px;outline:none;box-sizing:border-box;">';
+          } else {
+            h+='<div style="font-size:12px;font-weight:600;color:var(--ck-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(p.name)+'</div>';
+          }
+          h+='<div style="font-size:10.5px;color:var(--ck-text-dim);">'+dirLabel+' · '+((p.panels||[]).length)+' 个面板</div>'
+            +'</div>';
+          if(isRenaming){
+            h+='<span class="sh-preset-rename-confirm" data-id="'+esc(p.id)+'" style="cursor:pointer;font-size:11px;color:var(--ck-primary);">确认</span>'
+              +'<span class="sh-preset-rename-cancel" style="cursor:pointer;font-size:11px;color:var(--ck-text-dim);">取消</span>';
+          } else {
+            h+='<span class="sh-preset-apply" data-id="'+esc(p.id)+'" style="cursor:pointer;font-size:11px;color:var(--ck-primary);">应用</span>'
+              +'<span class="sh-preset-rename" data-id="'+esc(p.id)+'" style="cursor:pointer;font-size:11px;color:var(--ck-text);">改名</span>'
+              +'<span class="sh-preset-del" data-id="'+esc(p.id)+'" data-name="'+esc(p.name)+'" style="cursor:pointer;font-size:11px;color:#f87171;">删除</span>';
+          }
+          h+='</div>';
+        }
+        pbox.innerHTML=h;
+        var ap=pbox.querySelectorAll('.sh-preset-apply');
+        for(var a=0;a<ap.length;a++){ (function(el){
+          el.addEventListener('click',function(){
+            var id=el.getAttribute('data-id');
+            if(!confirm('应用这个预设？\n\n当前窗口的分屏布局会被替换（已合并的面板会先拆回独立窗口）。')) return;
+            toast2('正在应用预设…');
+            window.shellAPI.presetApply(id).then(function(r2){
+              if(r2 && r2.success){
+                var extra = (r2.reopened && r2.reopened.length) ? ('（重新打开了 '+r2.reopened.length+' 个窗口）') : '';
+                toast2('预设已应用'+extra);
+              } else {
+                toast2('应用失败：'+((r2&&r2.error)||(r2&&r2.errors&&r2.errors[0])||'未知错误'));
+              }
+              refreshSplitState(); load(); refreshPresets();
+            })['catch'](function(){ toast2('应用失败'); });
+          });
+        })(ap[a]); }
+        var rn=pbox.querySelectorAll('.sh-preset-rename');
+        for(var b=0;b<rn.length;b++){ (function(el){
+          el.addEventListener('click',function(){
+            renamingId = el.getAttribute('data-id');
+            refreshPresets();
+            setTimeout(function(){
+              var inp = pbox.querySelector('.sh-preset-rename-input');
+              if (inp) { inp.focus(); inp.select(); }
+            }, 10);
+          });
+        })(rn[b]); }
+        var rc=pbox.querySelectorAll('.sh-preset-rename-confirm');
+        for(var bc=0;bc<rc.length;bc++){ (function(el){
+          el.addEventListener('click',function(){
+            var id = el.getAttribute('data-id');
+            var inp = pbox.querySelector('.sh-preset-rename-input[data-id="'+id+'"]');
+            if (!inp) return;
+            var nv = inp.value.trim();
+            if (!nv) { toast2('名称不能为空'); return; }
+            window.shellAPI.presetRename(id, nv).then(function(r2){
+              if (r2 && r2.success) { renamingId = null; toast2('已改名'); refreshPresets(); }
+              else { toast2('改名失败：'+((r2&&r2.error)||'未知错误')); }
+            })['catch'](function(){ toast2('改名失败'); });
+          });
+        })(rc[bc]); }
+        var rx=pbox.querySelectorAll('.sh-preset-rename-cancel');
+        for(var bx=0;bx<rx.length;bx++){ (function(el){
+          el.addEventListener('click',function(){
+            renamingId = null;
+            refreshPresets();
+          });
+        })(rx[bx]); }
+        var dl=pbox.querySelectorAll('.sh-preset-del');
+        for(var c=0;c<dl.length;c++){ (function(el){
+          el.addEventListener('click',function(){
+            var id=el.getAttribute('data-id'); var nm=el.getAttribute('data-name')||'';
+            if(!confirm('确定删除预设「'+nm+'」？')) return;
+            window.shellAPI.presetDelete(id).then(function(r2){ toast2(r2&&r2.success?'已删除':'删除失败'); refreshPresets(); })['catch'](function(){});
+          });
+        })(dl[c]); }
+      })['catch'](function(){ pbox.innerHTML='<div class="sh-empty">加载失败</div>'; });
+    }
+
+    var saveBtn = document.getElementById('sh-preset-save');
+    var saveRow = document.getElementById('sh-preset-save-row');
+    var nameInput = document.getElementById('sh-preset-name');
+    var confirmBtn = document.getElementById('sh-preset-confirm');
+    var cancelBtn = document.getElementById('sh-preset-cancel');
+
+    if(saveBtn) saveBtn.addEventListener('click',function(){
+      if(!window.shellAPI || !window.shellAPI.presetSave) return;
+      window.shellAPI.getSplitState().then(function(r){
+        var views=(r&&r.success&&r.views)||[];
+        if(!views.length){ toast2('当前窗口没有分屏，先合并几个窗口再保存'); return; }
+        var d = new Date();
+        var pad = function(n){ return n<10 ? ('0'+n) : String(n); };
+        if(nameInput) nameInput.value = '布局 ' + (d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        if(saveRow) saveRow.style.display = 'flex';
+        saveBtn.style.display = 'none';
+        if(nameInput){ nameInput.focus(); nameInput.select(); }
+      })['catch'](function(){ toast2('读取分屏状态失败'); });
+    });
+
+    if(cancelBtn) cancelBtn.addEventListener('click',function(){
+      if(saveRow) saveRow.style.display = 'none';
+      if(saveBtn) saveBtn.style.display = '';
+    });
+
+    if(confirmBtn) confirmBtn.addEventListener('click',function(){
+      var nv = nameInput ? nameInput.value.trim() : '';
+      if(!nv){ toast2('名称不能为空'); return; }
+      confirmBtn.disabled = true;
+      window.shellAPI.presetSave(nv).then(function(r2){
+        confirmBtn.disabled = false;
+        if(r2&&r2.success){
+          toast2('布局已保存');
+          if(saveRow) saveRow.style.display = 'none';
+          if(saveBtn) saveBtn.style.display = '';
+          refreshPresets();
+        } else {
+          toast2('保存失败：'+((r2&&r2.error)||'未知错误'));
+        }
+      })['catch'](function(e){ confirmBtn.disabled = false; toast2('保存失败：'+(e&&e.message||'未知错误')); });
+    });
+
+    refreshPresets();
+
     var nb=document.getElementById('sh-win-new'); if(nb) nb.addEventListener('click',function(){ window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); load(); })['catch'](function(){}); });
     var rf=document.getElementById('sh-win-refresh'); if(rf) rf.addEventListener('click',function(){ load(); toast2('已刷新'); });
     load();
