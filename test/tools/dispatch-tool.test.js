@@ -9,11 +9,19 @@ const Module = require('module');
 
 // ===== 依赖打桩 =====
 const fakeWindows = new Map();   // profileId -> ctx
+const fakeWcs = new Map();       // webContentsId -> 假 webContents
 let sentMessages = [];           // { profileId, channel, payload }
 const origLoad = Module._load;
 
 function installStubs() {
   Module._load = function (request, parent, isMain) {
+    if (request === 'electron') {
+      return {
+        webContents: {
+          fromId: (id) => fakeWcs.get(id) || null,
+        },
+      };
+    }
     if (request === '../src/main/window' || request === './window') {
       return {
         getAllContexts: () => Array.from(fakeWindows.values()),
@@ -58,6 +66,7 @@ function makeCtx(profileId, name, providerId, opts = {}) {
     isDestroyed: () => false,
     send: (channel, payload) => sentMessages.push({ profileId, channel, payload }),
   };
+  fakeWcs.set(wc.id, wc);
   const ctx = {
     profileId,
     providerId,
@@ -73,6 +82,7 @@ function makeCtx(profileId, name, providerId, opts = {}) {
 
 test.beforeEach(() => {
   fakeWindows.clear();
+  fakeWcs.clear();
   sentMessages = [];
   installStubs();
 });
@@ -157,7 +167,8 @@ test('dispatchToWindow: 目标视图不可用时拒绝', async () => {
   const { DispatchToWindowTool } = loadTools();
   const r = await new DispatchToWindowTool().execute({ target: '主窗口', instruction: 'x' });
   assert.strictEqual(r.success, false);
-  assert.match(r.error, /AI 视图不可用/);
+  // 新逻辑：拿不到 webContentsId 的窗口不会进入列表，因此报「找不到窗口」
+  assert.match(r.error, /找不到窗口|AI 视图不可用/);
 });
 
 test('listWindows: 返回 number 和 tag', async () => {

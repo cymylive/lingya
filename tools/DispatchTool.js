@@ -55,39 +55,76 @@ function deriveWindowStatus(ctx) {
   }
 }
 
-/** 列出所有可用窗口（带 @编号 标签，供派发时精准引用） */
+/** 列出所有可用窗口与分屏面板（带 @编号 标签，供派发时精准引用） */
 function collectWindows() {
   const windowState = require('../src/main/window');
   const profileManager = require('../src/main/profile-manager');
   const out = [];
-  const all = windowState.getAllContexts();
-  console.log('[listWindows] getAllContexts() 返回 ' + all.length + ' 个窗口');
-  for (const ctx of windowState.getAllContexts()) {
-    let name = ctx.profileId || '窗口';
-    let provider = ctx.providerId || '';
+
+  /** 取 profile 元信息（名字 / 平台 / 编号） */
+  function profileMeta(profileId) {
+    let name = profileId || '窗口';
+    let provider = '';
     let number = null;
     try {
-      const p = profileManager.getProfileById(ctx.profileId);
+      const p = profileManager.getProfileById(profileId);
       if (p) {
         name = p.name || name;
         if (p.providerId) provider = p.providerId;
         if (typeof p.number === 'number') number = p.number;
       }
     } catch (_) {}
-    const st = deriveWindowStatus(ctx);
-    console.log('[listWindows] 发现窗口: profileId=' + ctx.profileId + ' number=' + number + ' name=' + name + ' status=' + st.status);
-    out.push({
-      profileId: ctx.profileId,
-      number,                              // 窗口编号（界面可见，可改）
-      tag: number != null ? ('@' + number) : '',  // 派发时用的引用标签
-      name,
-      provider,
-      status: st.status,
-      statusLabel: st.label,
-    });
+    return { name, provider, number };
   }
-  // 按编号排序，方便 AI 输出与用户对照
+
+  const all = windowState.getAllContexts();
+  console.log('[listWindows] getAllContexts() 返回 ' + all.length + ' 个独立窗口');
+
+  for (const ctx of all) {
+    // ---- 宿主面板 ----
+    const hostMeta = profileMeta(ctx.profileId);
+    const hostSt = deriveWindowStatus(ctx);
+    const hostWcId = ctx.view && ctx.view.webContents ? ctx.view.webContents.id : null;
+    if (hostWcId != null) {
+      out.push({
+        profileId: ctx.profileId,
+        number: hostMeta.number,
+        tag: hostMeta.number != null ? ('@' + hostMeta.number) : '',
+        name: hostMeta.name,
+        provider: hostMeta.provider,
+        status: hostSt.status,
+        statusLabel: hostSt.label,
+        webContentsId: hostWcId,
+        isHost: true,
+        hostName: '',
+      });
+    }
+
+    // ---- 合并进来的分屏面板 ----
+    for (const panel of (ctx.attachedViews || [])) {
+      const wc = panel && panel.view && panel.view.webContents;
+      if (!wc || wc.isDestroyed()) continue;
+      const owner = windowState.getContextByWebContents(wc) || ctx;
+      const meta = profileMeta(owner.profileId);
+      const st = deriveWindowStatus(owner);
+      out.push({
+        profileId: owner.profileId,
+        number: meta.number,
+        tag: meta.number != null ? ('@' + meta.number) : '',
+        name: meta.name,
+        provider: meta.provider,
+        status: st.status,
+        statusLabel: st.label,
+        webContentsId: wc.id,
+        isHost: false,
+        hostName: hostMeta.name,
+      });
+    }
+  }
   out.sort((a, b) => (a.number || 9999) - (b.number || 9999));
+  for (const w of out) {
+    console.log('[listWindows] 发现 ' + (w.isHost ? '窗口 ' : '面板 ') + (w.tag || '') + ' ' + w.name + ' wc=' + w.webContentsId + ' status=' + w.status + (w.isHost ? '' : '（合并于 ' + w.hostName + '）'));
+  }
   return out;
 }
 
@@ -249,21 +286,30 @@ class DispatchToWindowTool extends Tool {
         );
       }
 
-      const ctx = windowState.getWindowByProfileId(hit.profileId);
-      if (!ctx) return ToolResult.error('窗口「' + hit.name + '」已关闭');
+      // 找到实际的 webContents（宿主面板或分屏面板都支持）
+      const wcId = hit.webContentsId;
+      if (wcId == null) return ToolResult.error('找不到目标面板的 webContents');
 
-      const wc = ctx.view ? ctx.view.webContents : null;
-      if (!wc || wc.isDestroyed()) return ToolResult.error('目标窗口的 AI 视图不可用');
+      let targetWc = null;
+      try {
+        const { webContents } = require('electron');
+        targetWc = webContents.fromId(wcId);
+      } catch (_) {}
+      if (!targetWc || targetWc.isDestroyed()) {
+        return ToolResult.error('目标面板的 AI 视图不可用（可能已关闭）');
+      }
 
-      // 通过已有的 send-to-chat 通道派发（目标窗口会填入并自动发送）
-      wc.send('lingya-send-to-chat', { text: instruction, tag: '来自其他窗口的派发' });
+      // 通过已有的 send-to-chat 通道派发（目标面板会填入并自动发送）
+      targetWc.send('lingya-send-to-chat', { text: instruction, tag: '来自其他窗口的派发' });
 
+      const where = hit.isHost ? '窗口' : ('面板（合并于 ' + (hit.hostName || '?') + '）');
       return ToolResult.success({
         dispatched: true,
         target: hit.name,
         profileId: hit.profileId,
         targetStatus: hit.statusLabel,
-        message: '已派发到「' + hit.name + '」',
+        webContentsId: wcId,
+        message: '已派发到「' + hit.name + '」' + where,
       });
     } catch (err) {
       return ToolResult.error('派发失败: ' + err.message);
