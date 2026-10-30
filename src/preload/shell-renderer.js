@@ -1183,9 +1183,14 @@
           (function(card){
             card.addEventListener('click', function(){
               var wcid = card.getAttribute('data-wcid');
-              if(window.shellAPI.focusPanel){
-                window.shellAPI.focusPanel(Number(wcid)).then(function(){})['catch'](function(){});
-              }
+              if(!window.shellAPI.focusPanel) return;
+              window.shellAPI.focusPanel(Number(wcid)).then(function(r){
+                // 主进程已经改了 scrollX/scrollY，刷新壳页面的滚动条拇指位置
+                if(r && r.scrolled){
+                  if(window.__lyRefreshHScrollbar) setTimeout(window.__lyRefreshHScrollbar, 50);
+                  if(window.__lyRefreshVScrollbar) setTimeout(window.__lyRefreshVScrollbar, 50);
+                }
+              })['catch'](function(){});
             });
             card.addEventListener('mouseenter', function(){ card.style.background = 'var(--ck-surface)'; });
             card.addEventListener('mouseleave', function(){ card.style.background = ''; });

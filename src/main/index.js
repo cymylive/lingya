@@ -1521,30 +1521,80 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX, scrollY
 });
 
 // 聚焦到某个分屏面板（总控台点击卡片时调用）
+// 分屏面板都在同一个宿主窗口里，单纯 focus() 没意义 —— 真正要做的是
+// 把主窗口的滚动位置挪到该面板可见处（左右分屏滚 X，上下分屏滚 Y）。
 ipcMainForProfile.handle('focus-panel', async (event, { webContentsId } = {}) => {
   try {
     const id = Number(webContentsId);
     if (!id) return { success: false, error: '缺少 webContentsId' };
 
-    // 找到这个视图所属的宿主窗口
     for (const ctx of windowState.getAllContexts()) {
       const hostWin = ctx.rawWin;
       if (!hostWin || hostWin.isDestroyed()) continue;
 
-      // 宿主自己的 active tab？
+      // 找面板索引：0 = 宿主 active tab，1..N = attached
+      let idx = -1;
       const activeTab = ctx.tabs ? ctx.tabs.get(ctx.activeTabId) : null;
       if (activeTab && activeTab.view && activeTab.view.webContents.id === id) {
-        hostWin.focus();
-        if (typeof hostWin.restore === 'function') try { hostWin.restore(); } catch (_) {}
-        return { success: true };
-      }
-      // 附加面板？
-      for (const p of (ctx.attachedViews || [])) {
-        if (p.view && p.view.webContents.id === id) {
-          hostWin.focus();
-          if (typeof hostWin.restore === 'function') try { hostWin.restore(); } catch (_) {}
-          return { success: true };
+        idx = 0;
+      } else {
+        const list = ctx.attachedViews || [];
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].view && list[i].view.webContents.id === id) { idx = i + 1; break; }
         }
+      }
+      if (idx < 0) continue;
+
+      // 先聚焦并还原窗口
+      try { hostWin.focus(); } catch (_) {}
+      if (hostWin.isMinimized && hostWin.isMinimized()) {
+        try { hostWin.restore(); } catch (_) {}
+      }
+
+      // 没有分屏 → 无需滚动
+      if (!ctx.splitDirection || !(ctx.attachedViews || []).length) {
+        return { success: true, scrolled: false };
+      }
+
+      const b = hostWin.getContentBounds();
+      const sw = currentSidebarWidth(hostWin);
+      const w = Math.max(0, b.width - sw);
+      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const panels = ctx.attachedViews || [];
+      const count = 1 + panels.length;
+
+      if (ctx.splitDirection === 'horizontal') {
+        // 每个视图宽度（与 layoutAIView 保持一致）
+        let totalSidebarW = 0;
+        for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+        const availW = w - totalSidebarW;
+        const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
+
+        // 目标面板在内容坐标系里的左边界：前面每个面板的 viewW + 其侧边栏宽度
+        let targetLeft = sw;
+        for (let i = 0; i < idx; i++) {
+          targetLeft += viewW;
+          const p = panels[i];
+          if (p) targetLeft += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+        }
+
+        const contentW = sw + viewW * count + totalSidebarW;
+        const maxScroll = Math.max(0, contentW - w);
+        const x = Math.max(0, Math.min(maxScroll, targetLeft - sw));
+        ctx.scrollX = x;
+        layoutAIView(hostWin);
+        return { success: true, scrolled: true, scrollX: x };
+      }
+
+      if (ctx.splitDirection === 'vertical') {
+        const MIN_HEIGHT = 600;
+        const viewH = Math.max(MIN_HEIGHT, Math.floor(h / count));
+        const contentH = viewH * count;
+        const maxScroll = Math.max(0, contentH - h);
+        const y = Math.max(0, Math.min(maxScroll, idx * viewH));
+        ctx.scrollY = y;
+        layoutAIView(hostWin);
+        return { success: true, scrolled: true, scrollY: y };
       }
     }
     return { success: false, error: '找不到对应面板（窗口可能已关闭）' };
