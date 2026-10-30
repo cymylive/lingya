@@ -597,17 +597,29 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
       console.log('[LingYa] ✅ 核心规则已在第 1 段（第 1 段长度 ' + first.length + '）');
     }
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  // 【修复 2026-10-30】发送目标从 mainWindow.webContents 改为显式取 AI 视图的 webContents。
+  // mainWindow 是 Proxy，.webContents 由 getter 动态返回 activeView.webContents；
+  // 在多标签 / 分屏 / 新窗口场景下这条路径可能返回 null 或非预期视图，
+  // 导致 initial-prompt 发不到真正在显示的 AI 网页（B 窗口点初始化后没反应）。
+  let targetWc = null;
+  try {
+    if (ctx && ctx.view && ctx.view.webContents && !ctx.view.webContents.isDestroyed()) {
+      targetWc = ctx.view.webContents;
+    }
+  } catch (_) {}
+  if (!targetWc && mainWindow && !mainWindow.isDestroyed()) {
+    try { targetWc = mainWindow.webContents; } catch (_) {}
+  }
+
+  if (targetWc) {
     // 节流：同一窗口在最小间隔内重复触发时，只告警不重发。
-    // 触发源有 4 条（手动/自动注入/定时任务/飞书），没有这层就会重复灌同一批提示词。
-    const throttleKey = (ctx && ctx.profileId) || String(mainWindow.webContents.id);
+    const throttleKey = (ctx && ctx.profileId) || String(targetWc.id);
     const now = Date.now();
     const last = lastInitPromptSentAt.get(throttleKey) || 0;
     if (now - last < INIT_PROMPT_MIN_INTERVAL_MS) {
       const waited = Math.round((now - last) / 1000);
       const left = Math.round((INIT_PROMPT_MIN_INTERVAL_MS - (now - last)) / 1000);
-      console.warn('[LingYa][节流] 本窗口 ' + waited + 's 前刚发过初始提示，' +
-        '距最小间隔还差 ' + left + 's，本次不重发（避免重复灌入 systemPrompt）');
+      console.warn('[LingYa][节流] 本窗口 ' + waited + 's 前刚发过初始提示，距最小间隔还差 ' + left + 's，本次不重发');
       stepLog('initial-prompt 被节流拦截');
       return {
         success: true,
@@ -618,10 +630,18 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     lastInitPromptSentAt.set(throttleKey, now);
 
     const batchId = makeInitialPromptBatchId();
-    // 恒为单段：整份 systemPrompt 一次上传，界面只出现 1 个 lingya-input.md
-    mainWindow.webContents.send('initial-prompt', { chunks: [combined], batchId, single: true });
-    console.log('[LingYa] initial-prompt 已发送，batchId=' + batchId +
-      '，段数=' + chunks.length + '，总长度=' + combined.length);
+    try {
+      targetWc.send('initial-prompt', { chunks: [combined], batchId, single: true });
+    } catch (err) {
+      console.error('[LingYa] initial-prompt 发送失败:', err && err.message);
+      return { success: false, error: '发送系统提示词失败: ' + (err && err.message) };
+    }
+    console.log('[LingYa] initial-prompt 已发送 → wcId=' + targetWc.id +
+      '，profileId=' + ((ctx && ctx.profileId) || '(无)') +
+      '，batchId=' + batchId + '，总长度=' + combined.length);
+  } else {
+    console.error('[LingYa] initial-prompt 未发送：找不到可用的 AI 视图 webContents');
+    return { success: false, error: '找不到该窗口的 AI 视图（请重开窗口后重试）' };
   }
   stepLog('initial-prompt 已发送');
 
