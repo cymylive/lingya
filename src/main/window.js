@@ -13,6 +13,28 @@ const windows = new Map(); // windowId -> { win, view, profileId, providerId, se
 let lastActiveWindowId = null;
 
 /**
+ * 视图归属表：webContents -> 拥有它的原始 ctx。
+ * 窗口合并会把视图从原窗口搬到宿主窗口，源窗口随即销毁、ctx 从 windows 移除；
+ * 若只靠 windows 遍历查找，合并后的视图就查不到自己的 profile / sessionStore，
+ * 工具结果回传、会话写入全部失败。这里做一层「视图 → 原 ctx」的持久登记。
+ */
+const viewOwners = new WeakMap();
+
+/** 登记视图归属（合并前调用，记住它属于哪个原始窗口上下文） */
+function rememberViewOwner(webContents, ctx) {
+  if (!webContents || !ctx) return null;
+  viewOwners.set(webContents, ctx);
+  return ctx;
+}
+
+/** 清除视图归属（拆分回独立窗口后重新登记时会覆盖，窗口彻底关闭时调用） */
+function forgetViewOwner(webContents) {
+  if (!webContents) return null;
+  viewOwners.delete(webContents);
+  return null;
+}
+
+/**
  * @param {BrowserWindow} win 壳窗口
  * @param {object} profileId
  * @param {object} providerId
@@ -84,6 +106,9 @@ function getWindowContext(windowId) {
 /** 按 webContents 找上下文：同时匹配壳窗口与 AI 视图（IPC 来源可能是任一） */
 function getContextByWebContents(webContents) {
   if (!webContents) return null;
+  // 0) 视图归属表优先（合并后源窗口已销毁，只能靠这里找回原上下文）
+  const owner = viewOwners.get(webContents);
+  if (owner) return owner;
   for (const ctx of windows.values()) {
     // 1) 真实壳窗口（Proxy 的 target）—— 壳页面 IPC 走这里
     if (ctx.rawWin && ctx.rawWin.webContents === webContents) return ctx;
@@ -165,6 +190,8 @@ module.exports = {
   setWindowView,
   addAttachedView,
   clearAttachedView,
+  rememberViewOwner,
+  forgetViewOwner,
   removeWindow,
   getWindowContext,
   getContextByWebContents,

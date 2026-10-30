@@ -395,21 +395,10 @@ async function createRestoredWindow(view, ownerCtx) {
   ctx.activeTabId = tabId;
   windowState.setMainWindow(winProxy);
   mainWindow.__aiView = view;
+  // 视图归属改指向新窗口的 ctx（原宿主窗口不再拥有它）
+  windowState.rememberViewOwner(view.webContents, windowState.getWindowContext(mainWindow.id));
 
-  const layout = () => {
-    try {
-      const c = windowState.getWindowContext(mainWindow.id);
-      if (!c || !c.tabs) return;
-      const cb = mainWindow.getContentBounds();
-      const sw = currentSidebarWidth(mainWindow);
-      const top = TABBAR_HEIGHT;
-      const w = Math.max(0, cb.width - sw);
-      const h = Math.max(0, cb.height - top);
-      for (const t of c.tabs.values()) {
-        try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
-      }
-    } catch (_) {}
-  };
+  const layout = () => { layoutAIView(mainWindow); };
   ctx.relayout = layout;
   mainWindow.on('resize', layout);
 
@@ -496,21 +485,8 @@ function createWindow(profile) {
   windowState.addWindow(winProxy, profileData.id, profileData.providerId || '', sessionStore, null);
   windowState.setMainWindow(winProxy);
 
-  // 布局：所有标签共享同一区域（顶部让出标签栏，只有 active 可见）
-  const layout = () => {
-    try {
-      const ctx = windowState.getWindowContext(mainWindow.id);
-      if (!ctx || !ctx.tabs) return;
-      const b = mainWindow.getContentBounds();
-      const sw = currentSidebarWidth(mainWindow);
-      const top = TABBAR_HEIGHT;
-      const w = Math.max(0, b.width - sw);
-      const h = Math.max(0, b.height - top);
-      for (const t of ctx.tabs.values()) {
-        try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
-      }
-    } catch (err) { /* ignore */ }
-  };
+  // 布局：统一委托 layoutAIView（同一份实现同时处理普通多标签与合并分屏）
+  const layout = () => { layoutAIView(mainWindow); };
   mainWindow.on('resize', layout);
 
   // ===== 创建第一个（主）标签承载 AI 平台 =====
@@ -1253,14 +1229,16 @@ ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, dire
     windowState.addAttachedView(targetCtx.win.id, plan.view);
     targetCtx.splitDirection = plan.direction;
 
-    // 3) 源窗口已空，关闭它
+    // 3) 登记视图归属 —— 源窗口马上销毁，只能靠这张表找回 profile/session
+    windowState.rememberViewOwner(plan.view.webContents, sourceCtx);
+
+    // 4) 源窗口已空，关闭它
     const sourceId = sourceCtx.win.id;
     try { sourceWin.destroy(); } catch (_) {}
     try { windowState.removeWindow(sourceId); } catch (_) {}
 
-    // 4) 重排目标窗口
+    // 5) 重排目标窗口
     layoutAIView(targetWin);
-    if (targetCtx.relayout) { try { targetCtx.relayout(); } catch (_) {} }
     try {
       targetWin.webContents.send('lingya-split-changed', {
         split: plan.direction,
@@ -1291,10 +1269,9 @@ ipcMainForProfile.handle('window-unmerge', async (event) => {
     windowState.clearAttachedView(ctx.win.id);
     ctx.splitDirection = null;
 
-    // 2) 建新窗口承载它
+    // 2) 建新窗口承载它（内部会重新登记视图归属到新 ctx）
     const restored = await createRestoredWindow(plan.view, ownerCtx);
     layoutAIView(hostWin);
-    if (ctx.relayout) { try { ctx.relayout(); } catch (_) {} }
     try { hostWin.webContents.send('lingya-split-changed', { split: null }); } catch (_) {}
 
     return { success: true, windowId: restored };

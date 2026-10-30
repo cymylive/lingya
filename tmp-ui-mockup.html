@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LingYa 单窗口多标签 UI 原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  body { background: #1e1e1e; height: 100vh; display: flex; flex-direction: column; overflow: hidden; color: #333; }
+  
+  /* 顶部标签栏 (类似 Chrome / Edge 深色模式) */
+  .tab-bar { display: flex; align-items: flex-end; background: #202124; padding: 8px 8px 0 8px; height: 46px; -webkit-app-region: drag; }
+  .tab { display: flex; align-items: center; background: #35363a; color: #9aa0a6; padding: 8px 16px; border-radius: 8px 8px 0 0; margin-right: 4px; font-size: 13px; cursor: pointer; min-width: 160px; max-width: 240px; gap: 8px; -webkit-app-region: no-drag; transition: background 0.2s; }
+  .tab.active { background: #fff; color: #202124; }
+  .tab:hover:not(.active) { background: #4a4b50; }
+  .tab-icon { width: 16px; height: 16px; border-radius: 50%; background: #2dd4bf; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: bold; }
+  .tab-close { margin-left: auto; opacity: 0.5; font-size: 16px; line-height: 1; }
+  .tab-close:hover { opacity: 1; }
+  .tab-new { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #9aa0a6; cursor: pointer; font-size: 20px; -webkit-app-region: no-drag; margin-bottom: 4px; }
+  .tab-new:hover { background: #35363a; color: #fff; }
+  .window-controls { margin-left: auto; display: flex; gap: 12px; align-items: center; padding-right: 8px; padding-bottom: 8px; -webkit-app-region: no-drag; }
+  .window-controls span { color: #9aa0a6; cursor: pointer; font-size: 14px; }
+  .window-controls span:hover { color: #fff; }
+
+  /* 网页主体内容区 */
+  .web-content { flex: 1; background: #fff; position: relative; display: flex; flex-direction: column; overflow: hidden; }
+  
+  /* 模拟 Qwen 界面 */
+  .chat-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; }
+  .logo-area { display: flex; flex-direction: column; align-items: center; margin-bottom: 40px; }
+  .logo-icon { width: 80px; height: 80px; background: #e0f2fe; border-radius: 24px; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+  .logo-icon svg { width: 48px; height: 48px; }
+  .greeting { font-size: 28px; font-weight: 500; color: #1a1a1a; }
+  
+  /* 底部输入框 */
+  .input-area { width: 100%; max-width: 800px; margin-top: 40px; position: relative; }
+  .input-box { display: flex; align-items: center; background: #fff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 12px 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); gap: 12px; }
+  .input-box input { flex: 1; border: none; outline: none; font-size: 16px; color: #333; }
+  .input-box input::placeholder { color: #9ca3af; }
+  .input-actions { display: flex; align-items: center; gap: 12px; }
+  .icon-btn { width: 36px; height: 36px; border-radius: 50%; background: #f3f4f6; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #4b5563; }
+  .send-btn { background: #1a1a1a; color: #fff; }
+
+  /* 悬浮的 LingYa 插件 (右下角) */
+  .lingya-float { position: absolute; bottom: 40px; right: 40px; background: #1e1e24; border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; gap: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); border: 1px solid #333; z-index: 999; }
+  .lingya-brand { display: flex; flex-direction: column; gap: 8px; }
+  .lingya-title { color: #fff; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .lingya-title::before { content: ''; display: block; width: 4px; height: 14px; background: #2dd4bf; border-radius: 2px; }
+  .lingya-btn { background: #2dd4bf; color: #000; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+  .lingya-btn:hover { opacity: 0.8; }
+  .lingya-close { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; background: #333; color: #999; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; border: 1px solid #444; }
+  .lingya-close:hover { color: #fff; background: #444; }
+
+  /* 左下角悬浮球 (备用演示) */
+  .floating-ball { position: absolute; bottom: 30px; left: 30px; width: 48px; height: 48px; background: #2dd4bf; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 20px; box-shadow: 0 4px 12px rgba(45, 212, 191, 0.4); cursor: pointer; z-index: 999; }
+</style>
+</head>
+<body>
+
+  <!-- 顶部 Tab 栏 -->
+  <div class="tab-bar">
+    <!-- 激活的 Tab -->
+    <div class="tab active">
+      <div class="tab-icon">Q</div>
+      <span>Qwen 3.7-Plus</span>
+      <span class="tab-close">×</span>
+    </div>
+    <!-- 未激活的 Tab -->
+    <div class="tab">
+      <div class="tab-icon" style="background:#4d6bfe;">D</div>
+      <span>DeepSeek</span>
+      <span class="tab-close">×</span>
+    </div>
+    <!-- 新建 Tab 按钮 -->
+    <div class="tab-new">+</div>
+
+    <!-- 窗口控制按钮 (模拟) -->
+    <div class="window-controls">
+      <span>—</span>
+      <span>□</span>
+      <span>×</span>
+    </div>
+  </div>
+
+  <!-- 网页内容区 (以 Qwen 为例) -->
+  <div class="web-content">
+    <div class="chat-container">
+      <div class="logo-area">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
+            <path d="M12 12 2.1 12"></path>
+            <path d="M12 12 18.5 18.5"></path>
+          </svg>
+        </div>
+        <div class="greeting">有什么可以帮你的吗？</div>
+      </div>
+
+      <div class="input-area">
+        <div class="input-box">
+          <div class="icon-btn">+</div>
+          <input type="text" placeholder="有什么我能帮你的吗？" disabled>
+          <div class="input-actions">
+            <span style="font-size:13px;color:#666;display:flex;align-items:center;gap:4px;">思考 <span style="font-size:10px;">▼</span></span>
+            <div class="icon-btn">🎤</div>
+            <div class="icon-btn send-btn">↑</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LingYa 悬浮面板 (保留图二底部那个框，移到右下角更协调) -->
+    <div class="lingya-float">
+      <div class="lingya-close">×</div>
+      <div class="lingya-brand">
+        <div class="lingya-title">LingYa</div>
+        <button class="lingya-btn">初始化项目</button>
+      </div>
+    </div>
+    
+  </div>
+
+</body>
+</html>

@@ -2490,6 +2490,10 @@
         '<button class="sh-btn primary" id="sh-win-new" style="flex:1;">新建窗口</button>'+
         '<button class="sh-btn" id="sh-win-refresh" title="重新读取窗口列表" style="flex-shrink:0;">刷新</button>'+
       '</div>'+
+      '<div id="sh-win-unmerge" style="display:none;margin-bottom:6px;">'+
+        '<button class="sh-btn" id="sh-win-unmerge-btn" style="width:100%;">⇱ 拆分当前分屏</button>'+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;">把本窗口合并进另一个窗口：点该窗口的「合并」按钮</div>'+
       '<div id="sh-win-body" class="sh-empty">加载中…</div>');
     function load(){
       if(!window.shellAPI||!window.shellAPI.listProfiles) return;
@@ -2504,6 +2508,7 @@
           h+='<span class="sh-win-num" data-id="'+esc(w.id)+'" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;flex-shrink:0;min-width:14px;" title="点击修改编号">'+esc(String(w.number||(i+1)))+'</span>';
           h+='<span class="sh-win-open" data-id="'+esc(w.id)+'" style="font-weight:600;color:var(--ck-title);flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;">'+esc(w.name)+'</span>';
           h+='<span style="font-size:10px;color:var(--ck-text-dim);">'+esc(w.providerId||'平台')+'</span>';
+          h+='<span class="sh-win-merge" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:var(--ck-primary);">合并</span>';
           h+='<span class="sh-win-rename" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:var(--ck-text);">改名</span>';
           h+='<span class="sh-win-del" data-id="'+esc(w.id)+'" data-name="'+esc(w.name)+'" style="cursor:pointer;font-size:11px;color:#f87171;">删除</span></div></div>';
         }
@@ -2511,6 +2516,17 @@
         var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(e2.getAttribute('data-id'),e2.getAttribute('data-name')); }); })(els[x]); } };
         q('.sh-win-num',function(id){ var cur=null; for(var k=0;k<list.length;k++) if(list[k].id===id) cur=list[k].number; var nv=prompt('新编号',String(cur||'')); if(nv==null) return; var n=parseInt(nv,10); if(!n||n<1){ toast2('编号需为正整数'); return; } window.shellAPI.updateProfileNumber(id,n).then(function(r2){ toast2(r2&&r2.success?'编号已更新':'更新失败'); load(); })['catch'](function(){}); });
         q('.sh-win-open',function(id){ window.shellAPI.openProfileWindow(id).then(function(r2){ toast2(r2&&r2.success?(r2.focused?'已切换':'已打开'):'打开失败'); })['catch'](function(){}); });
+        q('.sh-win-merge',function(id,name){
+          if(!window.shellAPI.mergeWindowTo) return;
+          var dir=prompt('合并方向：输入 h = 左右并排，v = 上下堆叠','h');
+          if(dir==null) return;
+          dir=(dir||'').toLowerCase();
+          var d=(dir==='v'||dir==='vertical')?'vertical':'horizontal';
+          if(!confirm('确定把当前窗口合并进「'+name+'」？\n\n注意：只合并当前显示的标签页，本窗口其它标签会随窗口关闭而丢失。\n合并后本窗口会关闭，内容并排显示在目标窗口里。')) return;
+          window.shellAPI.mergeWindowTo(id,d).then(function(r2){
+            if(r2&&r2.success){ toast2('已合并'); } else { toast2('合并失败：'+((r2&&r2.error)||'未知错误')); }
+          })['catch'](function(){ toast2('合并失败'); });
+        });
         q('.sh-win-rename',function(id,name){ var nn=prompt('新名称',name); if(nn==null) return; window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); });
         q('.sh-win-del',function(id,name){ if(!confirm('确定删除窗口「'+name+'」？')) return; window.shellAPI.deleteProfileWindow(id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
 
@@ -2536,6 +2552,18 @@
         })(rows[di]); }
       })['catch'](function(){});
     }
+    // 拆分按钮：有合并视图时才显示
+    var unbox=document.getElementById('sh-win-unmerge');
+    var unbtn=document.getElementById('sh-win-unmerge-btn');
+    if(window.shellAPI&&window.shellAPI.onSplitChanged){
+      try{ window.shellAPI.onSplitChanged(function(p){ if(unbox) unbox.style.display=(p&&p.split)?'block':'none'; }); }catch(_){}
+    }
+    if(unbtn) unbtn.addEventListener('click',function(){
+      if(!window.shellAPI.unmergeWindow) return;
+      window.shellAPI.unmergeWindow().then(function(r2){
+        if(r2&&r2.success){ toast2('已拆分'); if(unbox) unbox.style.display='none'; } else { toast2('拆分失败：'+((r2&&r2.error)||'未知错误')); }
+      })['catch'](function(){ toast2('拆分失败'); });
+    });
     var nb=document.getElementById('sh-win-new'); if(nb) nb.addEventListener('click',function(){ window.shellAPI.createProfileWindow().then(function(){ toast2('已新建'); load(); })['catch'](function(){}); });
     var rf=document.getElementById('sh-win-refresh'); if(rf) rf.addEventListener('click',function(){ load(); toast2('已刷新'); });
     load();

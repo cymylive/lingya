@@ -29,6 +29,12 @@ const api = {
   createDir: (parentDir, name) => ipcRenderer.invoke('shell-create-dir', { parentDir, name }),
   rename: (targetPath, newName) => ipcRenderer.invoke('shell-rename', { targetPath, newName }),
   writeFile: (filePath, content) => ipcRenderer.invoke('shell-write-file', { filePath, content }),
+  // ===== 窗口合并 / 拆分 =====
+  // 把本窗口合并进 targetWindowId（horizontal=左右 / vertical=上下）
+  mergeWindowTo: (targetWindowId, direction) => ipcRenderer.invoke('window-merge-to', { targetWindowId, direction }),
+  // 把合并进来的视图拆回独立窗口
+  unmergeWindow: () => ipcRenderer.invoke('window-unmerge'),
+  onSplitChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-split-changed',h); return ()=>ipcRenderer.removeListener('lingya-split-changed',h); },
   // ===== 功能面板 API（v0.6.36 迁移自覆盖层）=====
   // 跨上下文：插入文本到聊天输入框 / 新会话
   insertToChat: (text, tag, delay) => ipcRenderer.invoke('shell-insert-to-chat', { text, tag, delay }),
