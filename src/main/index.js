@@ -1317,14 +1317,12 @@ ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, dire
     windowState.addAttachedView(hostCtx.win.id, panel);
     hostCtx.splitDirection = plan.direction;
 
-    // 4) 更新来源窗口的上下文指向宿主，让工具调用能落到宿主里
+    // 4) 登记视图归属（sourceCtx 就是 owner，工具调用靠它找回 profile/session）
+    //    注意：不要覆写 sourceCtx.win / rawWin —— 那会让后续逻辑误把宿主当来源
     sourceCtx.hostCtx = hostCtx;
-    sourceCtx.win = hostCtx.win;
-    sourceCtx.rawWin = hostCtx.rawWin;
-
     windowState.rememberViewOwner(plan.view.webContents, sourceCtx);
 
-    // 5) 来源窗口已空，关闭它
+    // 5) 来源窗口已空，关闭它（先存 id，避免后续 ctx 变动）
     const sourceId = sourceCtx.win.id;
     try { sourceWin.destroy(); } catch (_) {}
     try { windowState.removeWindow(sourceId); } catch (_) {}
