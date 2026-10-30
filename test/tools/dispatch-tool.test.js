@@ -24,7 +24,7 @@ function installStubs() {
       return {
         getProfileById: (pid) => {
           const ctx = fakeWindows.get(pid);
-          return ctx ? { id: pid, name: ctx.__name, providerId: ctx.__providerId } : null;
+          return ctx ? { id: pid, name: ctx.__name, providerId: ctx.__providerId, number: ctx.__number } : null;
         },
       };
     }
@@ -52,6 +52,7 @@ function uninstallStubs() {
 
 /** 造一个假窗口 ctx */
 function makeCtx(profileId, name, providerId, opts = {}) {
+  // opts.number 可选，写入 profile-manager 的 stub 返回值
   const wc = {
     id: opts.wcId || 1,
     isDestroyed: () => false,
@@ -62,6 +63,7 @@ function makeCtx(profileId, name, providerId, opts = {}) {
     providerId,
     __name: name,
     __providerId: providerId,
+    __number: opts.number,
     view: { webContents: wc },
     sessionStore: { state: { currentSessionId: opts.sessionId || null } },
   };
@@ -156,6 +158,53 @@ test('dispatchToWindow: 目标视图不可用时拒绝', async () => {
   const r = await new DispatchToWindowTool().execute({ target: '主窗口', instruction: 'x' });
   assert.strictEqual(r.success, false);
   assert.match(r.error, /AI 视图不可用/);
+});
+
+test('listWindows: 返回 number 和 tag', async () => {
+  makeCtx('p1', '主窗口', 'deepseek', { number: 1 });
+  makeCtx('p2', '窗口2', 'deepseek', { number: 3 });
+  const { ListWindowsTool } = loadTools();
+  const r = await new ListWindowsTool().execute({});
+  const w1 = r.data.windows.find(w => w.number === 1);
+  const w3 = r.data.windows.find(w => w.number === 3);
+  assert.ok(w1 && w1.tag === '@1');
+  assert.ok(w3 && w3.tag === '@3');
+});
+
+test('dispatchToWindow: @编号 精准命中', async () => {
+  makeCtx('p1', '主窗口', 'deepseek', { number: 1 });
+  makeCtx('p3', '窗口2', 'deepseek', { number: 3 });
+  const { DispatchToWindowTool } = loadTools();
+  const r = await new DispatchToWindowTool().execute({ target: '@3', instruction: '继续任务' });
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.data.profileId, 'p3');
+  assert.strictEqual(sentMessages[0].payload.text, '继续任务');
+});
+
+test('dispatchToWindow: 纯数字按编号命中', async () => {
+  makeCtx('p1', '主窗口', 'deepseek', { number: 1 });
+  const { DispatchToWindowTool } = loadTools();
+  const r = await new DispatchToWindowTool().execute({ target: '1', instruction: 'x' });
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.data.profileId, 'p1');
+});
+
+test('dispatchToWindow: @编号不存在时报错并列出可用窗口', async () => {
+  makeCtx('p1', '主窗口', 'deepseek', { number: 1 });
+  const { DispatchToWindowTool } = loadTools();
+  const r = await new DispatchToWindowTool().execute({ target: '@99', instruction: 'x' });
+  assert.strictEqual(r.success, false);
+  assert.match(r.error, /找不到编号 99/);
+  assert.match(r.error, /@1/);
+});
+
+test('dispatchToWindow: @编号按 profileId 数字串回退匹配', async () => {
+  // profileId 里含 1791980276246，用 @1791980276246 应能命中
+  makeCtx('profile-1791980276246-u32wyv', '主窗口', 'deepseek', { number: 1 });
+  const { DispatchToWindowTool } = loadTools();
+  const r = await new DispatchToWindowTool().execute({ target: '@1791980276246', instruction: 'x' });
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.data.profileId, 'profile-1791980276246-u32wyv');
 });
 
 test('listWindows 有 prompt section', async () => {
