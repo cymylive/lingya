@@ -56,7 +56,9 @@ function addWindow(win, profileId, providerId, sessionStore, view) {
     profileId, providerId, sessionStore,
   });
   lastActiveWindowId = win.id;
+  console.log('[window] addWindow: id=' + win.id + ' profileId=' + profileId + ' providerId=' + providerId + '，当前共 ' + windows.size + ' 个');
   win.on('closed', () => {
+    console.log('[window] closed 事件触发: id=' + win.id + ' profileId=' + profileId);
     windows.delete(win.id);
     if (lastActiveWindowId === win.id) {
       const remaining = Array.from(windows.keys());
@@ -108,6 +110,7 @@ function removeAttachedView(windowId, view) {
 }
 
 function removeWindow(windowId) {
+  console.log('[window] removeWindow: id=' + windowId + '，删前 ' + windows.size + ' 个');
   windows.delete(windowId);
   if (lastActiveWindowId === windowId) {
     const remaining = Array.from(windows.keys());

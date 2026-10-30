@@ -102,9 +102,19 @@ async function handleJsToolScript(code) {
   try {
     // 幂等检查：同一份代码重复执行大概率是重试，复用上次结果，
     // 配合状态机/DOM 兜底的重试机制，让重试不会造成重复副作用。
+    //
+    // 【修复 2026-10-30】但如果代码里调用了「状态查询类」函数（listWindows /
+    // getAllTodos 这类），结果会随时间变化，绝不能复用旧缓存 ——
+    // 否则用户新开一个窗口后，listWindows 仍然返回上次的旧窗口列表。
     const jsIdemScope = state.currentProjectDir || '';
+    const VOLATILE_RE = /\b(listWindows|dispatchToWindow|getAllTodos|getTodos|userTodosList|getSplitState|getDir|memory_list|skill_list|listPlugins|mcp_list_servers|mcp_get_tools)\b/;
+    const skipJsCache = VOLATILE_RE.test(String(code || ''));
     let cachedJs = null;
-    try { cachedJs = idempotency.lookup('__js_script__', { code: code }, jsIdemScope); } catch (_) { cachedJs = null; }
+    if (!skipJsCache) {
+      try { cachedJs = idempotency.lookup('__js_script__', { code: code }, jsIdemScope); } catch (_) { cachedJs = null; }
+    } else {
+      console.log('[LingYa][幂等] 代码含状态查询函数，跳过缓存（结果可能已变化）');
+    }
 
     let result;
     if (cachedJs) {
@@ -117,7 +127,7 @@ async function handleJsToolScript(code) {
         TIMEOUTS.executeJs,
         'JS 脚本执行'
       );
-      if (result && result.success) {
+      if (result && result.success && !skipJsCache) {
         try { idempotency.record('__js_script__', { code: code }, result, jsIdemScope); } catch (_) {}
       }
     }

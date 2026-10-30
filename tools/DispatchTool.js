@@ -60,6 +60,8 @@ function collectWindows() {
   const windowState = require('../src/main/window');
   const profileManager = require('../src/main/profile-manager');
   const out = [];
+  const all = windowState.getAllContexts();
+  console.log('[listWindows] getAllContexts() 返回 ' + all.length + ' 个窗口');
   for (const ctx of windowState.getAllContexts()) {
     let name = ctx.profileId || '窗口';
     let provider = ctx.providerId || '';
@@ -73,6 +75,7 @@ function collectWindows() {
       }
     } catch (_) {}
     const st = deriveWindowStatus(ctx);
+    console.log('[listWindows] 发现窗口: profileId=' + ctx.profileId + ' number=' + number + ' name=' + name + ' status=' + st.status);
     out.push({
       profileId: ctx.profileId,
       number,                              // 窗口编号（界面可见，可改）
