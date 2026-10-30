@@ -1395,10 +1395,11 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
     if (!ctx) return { success: false, error: '找不到窗口' };
-    const list = (ctx.attachedViews || []).map(v => {
+    const panels = ctx.attachedViews || [];
+    const list = panels.map(p => {
       let title = '窗口';
-      try { title = v.webContents.getTitle() || title; } catch (_) {}
-      return { webContentsId: v.webContents.id, title };
+      try { title = p.view.webContents.getTitle() || title; } catch (_) {}
+      return { webContentsId: p.view.webContents.id, title };
     });
 
     // 滚动条信息：左右分屏且内容超出视口时才需要
@@ -1410,12 +1411,12 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
         const b = hostWin.getContentBounds();
         const sw = currentSidebarWidth(hostWin);
         const w = Math.max(0, b.width - sw);
-        const h = Math.max(0, b.height - TABBAR_HEIGHT);
-        const count = 1 + list.length;
-        const contentW = computeScrollContentWidth(
-          { x: sw, y: TABBAR_HEIGHT, width: w, height: h },
-          dir, count, SPLIT_GAP, SPLIT_MIN_WIDTH
-        );
+        let totalSidebarW = 0;
+        for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+        const count = 1 + panels.length;
+        const availW = w - totalSidebarW;
+        const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
+        const contentW = sw + viewW * count + totalSidebarW;
         if (contentW > w) {
           scroll = { viewportWidth: w, contentWidth: contentW, scrollX: ctx.scrollX || 0 };
         }
@@ -1438,12 +1439,13 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX } = {}) 
     const b = hostWin.getContentBounds();
     const sw = currentSidebarWidth(hostWin);
     const w = Math.max(0, b.width - sw);
-    const h = Math.max(0, b.height - TABBAR_HEIGHT);
-    const count = 1 + (ctx.attachedViews || []).length;
-    const contentW = computeScrollContentWidth(
-      { x: sw, y: TABBAR_HEIGHT, width: w, height: h },
-      'horizontal', count, SPLIT_GAP, SPLIT_MIN_WIDTH
-    );
+    const panels = ctx.attachedViews || [];
+    let totalSidebarW = 0;
+    for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+    const count = 1 + panels.length;
+    const availW = w - totalSidebarW;
+    const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
+    const contentW = sw + viewW * count + totalSidebarW;
     const maxScroll = Math.max(0, contentW - w);
     const x = Math.max(0, Math.min(maxScroll, Number(scrollX) || 0));
     ctx.scrollX = x;
