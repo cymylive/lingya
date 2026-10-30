@@ -1068,7 +1068,7 @@ function layoutAIView(mainWindow) {
       let totalSidebarW = 0;
       for (const p of attached) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
       const count = 1 + attached.length;
-      const availW = w - sw - totalSidebarW;
+      const availW = w - totalSidebarW;
       const viewW = Math.max(800, Math.floor(availW / count));
       const totalContentW = sw + viewW * count + totalSidebarW;
 
