@@ -389,8 +389,13 @@ async function loadPlugin(plugin) {
     const code = await dshLoader.bundlePlugin(entryPath);
     if (code) {
       const moduleObj = { exports: {} };
-      const fn = new Function('module', 'exports', 'require', code + '\n;return module.exports;');
-      mod = fn(moduleObj, moduleObj.exports, require);
+      // 注入 __dirname/__filename：new Function 执行的代码没有模块作用域，
+      // 插件里用 path.join(__dirname, ...) 会抛 "__dirname is not defined"
+      const fn = new Function(
+        'module', 'exports', 'require', '__dirname', '__filename',
+        code + '\n;return module.exports;'
+      );
+      mod = fn(moduleObj, moduleObj.exports, require, plugin.dir, entryPath);
     }
   } catch (err) {
     console.warn('[PluginHost] esbuild 打包失败，回退 require:', err.message);
