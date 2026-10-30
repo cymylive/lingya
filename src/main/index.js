@@ -333,6 +333,102 @@ async function flushAllSessions() {
  * 创建窗口（绑定指定 profile）
  * @param {object|null} profile profile 对象，null 则使用默认 profile
  */
+/**
+ * 用一个已存在的 WebContentsView 重建独立窗口（拆分合并窗口时用）。
+ * 与 createWindow 的区别：不创建新 tab，而是直接接管传入的 view，
+ * 保留它原本的 profile / sessionStore（由 ownerCtx 提供），
+ * 因此账号、会话、工具执行链完全延续，不会重新登录或丢上下文。
+ *
+ * @param {WebContentsView} view  要接管并显示的视图
+ * @param {object} ownerCtx       该视图原本所属的窗口上下文
+ * @returns {Promise<number>} 新窗口 id
+ */
+async function createRestoredWindow(view, ownerCtx) {
+  const profileData = (ownerCtx && ownerCtx.profileId)
+    ? profileManager.getProfileById(ownerCtx.profileId)
+    : null;
+  const provider = getProvider((ownerCtx && ownerCtx.providerId) || 'deepseek') || getProvider('deepseek');
+  const prof = profileData || profileManager.getDefaultProfile();
+  const sessionStore = (ownerCtx && ownerCtx.sessionStore) || createSessionStore(prof.id, app.getPath('userData'), windowState);
+
+  const b = view.getBounds();
+  const winOptions = {
+    width: Math.max(800, (b && b.width) || 1280),
+    height: Math.max(600, (b && b.height) || 900),
+    title: 'LingYa Pro - ' + provider.name + ' - ' + prof.name,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'shell-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      partition: prof.partition,
+      additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
+    },
+  };
+  const mainWindow = new BrowserWindow(winOptions);
+  mainWindow.__sidebarOpen = false;
+  mainWindow.on('page-title-updated', (e) => e.preventDefault());
+
+  const winProxy = new Proxy(mainWindow, {
+    get(target, prop) {
+      const ctx = windowState.getWindowContext(target.id);
+      const activeTab = ctx && ctx.tabs ? ctx.tabs.get(ctx.activeTabId) : null;
+      const activeView = activeTab ? activeTab.view : (target.__aiView || null);
+      if (prop === '__rawWindow') return target;
+      if (prop === '__aiView') return activeView;
+      if (prop === 'webContents') return activeView ? activeView.webContents : null;
+      if (prop === 'loadURL') return (url, opts) => activeView ? activeView.webContents.loadURL(url, opts) : Promise.reject(new Error('无活动标签'));
+      if (prop === 'loadFile') return (f, opts) => activeView ? activeView.webContents.loadFile(f, opts) : Promise.reject(new Error('无活动标签'));
+      const v = target[prop];
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+    set(target, prop, value) { target[prop] = value; return true; },
+  });
+
+  // 视图作为该窗口唯一 tab 接管
+  const tabId = 'tab-restored-' + Date.now();
+  const tabs = new Map([[tabId, { id: tabId, view, title: '已恢复窗口', url: '', createdAt: Date.now(), isMain: true }]]);
+
+  windowState.addWindow(winProxy, prof.id, prof.providerId || '', sessionStore, view);
+  const ctx = windowState.getWindowContext(mainWindow.id);
+  ctx.tabs = tabs;
+  ctx.activeTabId = tabId;
+  windowState.setMainWindow(winProxy);
+  mainWindow.__aiView = view;
+
+  const layout = () => {
+    try {
+      const c = windowState.getWindowContext(mainWindow.id);
+      if (!c || !c.tabs) return;
+      const cb = mainWindow.getContentBounds();
+      const sw = currentSidebarWidth(mainWindow);
+      const top = TABBAR_HEIGHT;
+      const w = Math.max(0, cb.width - sw);
+      const h = Math.max(0, cb.height - top);
+      for (const t of c.tabs.values()) {
+        try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
+      }
+    } catch (_) {}
+  };
+  ctx.relayout = layout;
+  mainWindow.on('resize', layout);
+
+  // 把视图挂进新窗口的 contentView
+  mainWindow.contentView.addChildView(view);
+  mainWindow.loadFile(path.join(__dirname, '..', 'ui', 'shell.html'));
+  layout();
+
+  mainWindow.on('resize', () => {
+    try {
+      const bb = mainWindow.getBounds();
+      const sw = currentSidebarWidth(mainWindow);
+      mainWindow.__lingyaAiWidth = Math.max(200, bb.width - sw);
+    } catch (_) {}
+  });
+
+  return mainWindow.id;
+}
+
 function createWindow(profile) {
   const profileData = profile || profileManager.getDefaultProfile();
   const provider = getProvider(profileData.providerId || 'deepseek') || getProvider('deepseek');
@@ -963,6 +1059,7 @@ try {
 // 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
 const { ipcMain: ipcMainForProfile } = require('electron');
 const { computeSplitBounds } = require('./split-layout');
+const windowMerge = require('./window-merge');
 const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
 const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
 const TABBAR_HEIGHT = 40;        // 顶部标签栏高度（壳页面绘制，AI view 从其下方开始）
@@ -1130,6 +1227,80 @@ ipcMainForProfile.handle('shell-run-action', async (event, { action } = {}) => {
 });
 
 // 侧边栏 → AI 视图：设置偏好（自动注入 / 发送延迟），写入 AI 视图 localStorage
+// ===== 窗口合并 / 拆分 =====
+// 合并：把「发起方窗口」当前显示的视图搬到 targetWindowId 窗口里并排显示。
+// 视图的原 ctx（profile / sessionStore）保持不动，因此工具调用回传不受影响。
+ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, direction } = {}) => {
+  try {
+    const sourceCtx = windowState.getContextByWebContents(event.sender);
+    if (!sourceCtx) return { success: false, error: '找不到发起窗口' };
+    const targetCtx = windowState.getWindowContext(targetWindowId);
+    if (!targetCtx) return { success: false, error: '目标窗口不存在' };
+
+    const plan = windowMerge.planMerge(sourceCtx, targetCtx, direction);
+    if (!plan.ok) return { success: false, error: plan.error };
+
+    const sourceWin = sourceCtx.rawWin;
+    const targetWin = targetCtx.rawWin;
+    if (!sourceWin || sourceWin.isDestroyed()) return { success: false, error: '发起窗口已销毁' };
+    if (!targetWin || targetWin.isDestroyed()) return { success: false, error: '目标窗口已销毁' };
+
+    // 1) 从源窗口摘下视图
+    try { sourceWin.contentView.removeChildView(plan.view); } catch (_) {}
+
+    // 2) 挂到目标窗口，并登记
+    targetWin.contentView.addChildView(plan.view);
+    windowState.addAttachedView(targetCtx.win.id, plan.view);
+    targetCtx.splitDirection = plan.direction;
+
+    // 3) 源窗口已空，关闭它
+    const sourceId = sourceCtx.win.id;
+    try { sourceWin.destroy(); } catch (_) {}
+    try { windowState.removeWindow(sourceId); } catch (_) {}
+
+    // 4) 重排目标窗口
+    layoutAIView(targetWin);
+    if (targetCtx.relayout) { try { targetCtx.relayout(); } catch (_) {} }
+    try {
+      targetWin.webContents.send('lingya-split-changed', {
+        split: plan.direction,
+        attachedTitle: (plan.view.webContents && plan.view.webContents.getTitle && plan.view.webContents.getTitle()) || '已合并窗口',
+      });
+    } catch (_) {}
+
+    return { success: true, direction: plan.direction };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 拆分：把附加视图还原成一个新的独立窗口
+ipcMainForProfile.handle('window-unmerge', async (event) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '找不到窗口' };
+    const plan = windowMerge.planUnmerge(ctx);
+    if (!plan.ok) return { success: false, error: plan.error };
+
+    const hostWin = ctx.rawWin;
+    if (!hostWin || hostWin.isDestroyed()) return { success: false, error: '窗口已销毁' };
+
+    // 找到视图真正的归属 ctx（原窗口的 profile / sessionStore）
+    const ownerCtx = windowState.getContextByWebContents(plan.view.webContents);
+
+    // 1) 从宿主摘下
+    try { hostWin.contentView.removeChildView(plan.view); } catch (_) {}
+    windowState.clearAttachedView(ctx.win.id);
+    ctx.splitDirection = null;
+
+    // 2) 建新窗口承载它
+    const restored = await createRestoredWindow(plan.view, ownerCtx);
+    layoutAIView(hostWin);
+    if (ctx.relayout) { try { ctx.relayout(); } catch (_) {} }
+    try { hostWin.webContents.send('lingya-split-changed', { split: null }); } catch (_) {}
+
+    return { success: true, windowId: restored };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
 ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
