@@ -1034,7 +1034,7 @@ try {
 // 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口
 // 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
 const { ipcMain: ipcMainForProfile } = require('electron');
-const { computeSplitBounds } = require('./split-layout');
+const { computeSplitLayout } = require('./split-layout');
 const windowMerge = require('./window-merge');
 const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
 const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
@@ -1057,22 +1057,24 @@ function layoutAIView(mainWindow) {
     const w = Math.max(0, b.width - sw);
     const h = Math.max(0, b.height - top);
 
-    // 合并模式：宿主自己的 active tab 与附加视图并排 / 上下
-    const split = ctx.splitDirection
-      ? computeSplitBounds({ x: sw, y: top, width: w, height: h }, ctx.splitDirection, SPLIT_GAP)
-      : null;
-    if (split) {
+    // 合并模式：宿主自己的 active tab 在前，其后依次是附加视图
+    const attached = ctx.attachedViews || [];
+    if (ctx.splitDirection && attached.length) {
       const activeTab = ctx.tabs.get(ctx.activeTabId);
-      if (activeTab && activeTab.view) {
-        try { activeTab.view.setBounds(split.main); } catch (_) {}
+      const views = [];
+      if (activeTab && activeTab.view) views.push(activeTab.view);
+      for (const v of attached) if (v) views.push(v);
+      const rects = computeSplitLayout({ x: sw, y: top, width: w, height: h }, ctx.splitDirection, views.length, SPLIT_GAP);
+      if (rects) {
+        views.forEach((v, i) => { try { v.setBounds(rects[i]); } catch (_) {} });
       }
-      if (ctx.attachedView) {
-        try { ctx.attachedView.setBounds(split.attached); } catch (_) {}
-      }
-      // 其余隐藏标签统一放到主区域（保持与实际显示区域一致，避免切回时闪一下）
-      for (const t of ctx.tabs.values()) {
-        if (t === activeTab) continue;
-        try { t.view.setBounds(split.main); } catch (_) {}
+      // 其余隐藏标签放在第一个格子，避免切回时闪
+      const first = rects && rects[0];
+      if (first) {
+        for (const t of ctx.tabs.values()) {
+          if (t === activeTab) continue;
+          try { t.view.setBounds(first); } catch (_) {}
+        }
       }
       return;
     }
@@ -1210,8 +1212,11 @@ ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, dire
   try {
     const sourceCtx = windowState.getContextByWebContents(event.sender);
     if (!sourceCtx) return { success: false, error: '找不到发起窗口' };
-    const targetCtx = windowState.getWindowContext(targetWindowId);
-    if (!targetCtx) return { success: false, error: '目标窗口不存在' };
+    // 壳页面传过来的是 profileId（窗口列表用的就是它），也可能直接是 BrowserWindow id，
+    // 两种都认，避免「点了没反应」。
+    const targetCtx = windowState.getWindowByProfileId(targetWindowId)
+      || windowState.getWindowContext(targetWindowId);
+    if (!targetCtx) return { success: false, error: '目标窗口不存在（可能已关闭）' };
 
     const plan = windowMerge.planMerge(sourceCtx, targetCtx, direction);
     if (!plan.ok) return { success: false, error: plan.error };
@@ -1250,31 +1255,57 @@ ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, dire
   } catch (err) { return { success: false, error: err.message }; }
 });
 
-// 拆分：把附加视图还原成一个新的独立窗口
-ipcMainForProfile.handle('window-unmerge', async (event) => {
+// 拆分：把附加视图还原成独立窗口。
+// webContentsId 为空 → 拆全部；传了 → 只拆那一个。
+ipcMainForProfile.handle('window-unmerge', async (event, { webContentsId } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
     if (!ctx) return { success: false, error: '找不到窗口' };
-    const plan = windowMerge.planUnmerge(ctx);
-    if (!plan.ok) return { success: false, error: plan.error };
 
     const hostWin = ctx.rawWin;
     if (!hostWin || hostWin.isDestroyed()) return { success: false, error: '窗口已销毁' };
 
-    // 找到视图真正的归属 ctx（原窗口的 profile / sessionStore）
-    const ownerCtx = windowState.getContextByWebContents(plan.view.webContents);
+    const plan = windowMerge.planUnmergeOne(ctx, webContentsId);
+    if (!plan.ok) return { success: false, error: plan.error };
+    const targets = plan.view ? [plan.view] : plan.views;
 
-    // 1) 从宿主摘下
-    try { hostWin.contentView.removeChildView(plan.view); } catch (_) {}
-    windowState.clearAttachedView(ctx.win.id);
-    ctx.splitDirection = null;
+    const restoredIds = [];
+    for (const view of targets) {
+      const ownerCtx = windowState.getContextByWebContents(view.webContents);
+      try { hostWin.contentView.removeChildView(view); } catch (_) {}
+      windowState.removeAttachedView(ctx.win.id, view);
+      try {
+        const id = await createRestoredWindow(view, ownerCtx);
+        restoredIds.push(id);
+      } catch (e) {
+        console.error('[LingYa] 拆分视图失败:', e && e.message);
+      }
+    }
 
-    // 2) 建新窗口承载它（内部会重新登记视图归属到新 ctx）
-    const restored = await createRestoredWindow(plan.view, ownerCtx);
+    if (!ctx.attachedViews || ctx.attachedViews.length === 0) ctx.splitDirection = null;
     layoutAIView(hostWin);
-    try { hostWin.webContents.send('lingya-split-changed', { split: null }); } catch (_) {}
+    try {
+      hostWin.webContents.send('lingya-split-changed', {
+        split: ctx.splitDirection,
+        count: (ctx.attachedViews || []).length,
+      });
+    } catch (_) {}
 
-    return { success: true, windowId: restored };
+    return { success: true, windowIds: restoredIds };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 查询当前窗口的分屏状态（供 UI 渲染拆分列表）
+ipcMainForProfile.handle('window-split-state', async (event) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '找不到窗口' };
+    const list = (ctx.attachedViews || []).map(v => {
+      let title = '窗口';
+      try { title = v.webContents.getTitle() || title; } catch (_) {}
+      return { webContentsId: v.webContents.id, title };
+    });
+    return { success: true, direction: ctx.splitDirection, views: list };
   } catch (err) { return { success: false, error: err.message }; }
 });
 

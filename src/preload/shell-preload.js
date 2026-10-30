@@ -32,8 +32,10 @@ const api = {
   // ===== 窗口合并 / 拆分 =====
   // 把本窗口合并进 targetWindowId（horizontal=左右 / vertical=上下）
   mergeWindowTo: (targetWindowId, direction) => ipcRenderer.invoke('window-merge-to', { targetWindowId, direction }),
-  // 把合并进来的视图拆回独立窗口
-  unmergeWindow: () => ipcRenderer.invoke('window-unmerge'),
+  // 把合并进来的视图拆回独立窗口（不传 id = 全部拆）
+  unmergeWindow: (webContentsId) => ipcRenderer.invoke('window-unmerge', { webContentsId }),
+  // 查询当前窗口的分屏状态
+  getSplitState: () => ipcRenderer.invoke('window-split-state'),
   onSplitChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-split-changed',h); return ()=>ipcRenderer.removeListener('lingya-split-changed',h); },
   // ===== 功能面板 API（v0.6.36 迁移自覆盖层）=====
   // 跨上下文：插入文本到聊天输入框 / 新会话

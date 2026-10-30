@@ -49,7 +49,8 @@ function addWindow(win, profileId, providerId, sessionStore, view) {
   windows.set(win.id, {
     win, rawWin,
     view: view || null,
-    attachedView: null,
+    attachedViews: [],
+    splitDirection: null,
     tabs: new Map(),
     activeTabId: null,
     profileId, providerId, sessionStore,
@@ -79,7 +80,10 @@ function setWindowView(windowId, view) {
 function addAttachedView(windowId, view) {
   const ctx = windows.get(windowId);
   if (!ctx) return null;
-  ctx.attachedView = view || null;
+  if (!ctx.attachedViews) ctx.attachedViews = [];
+  if (view && !ctx.attachedViews.includes(view)) {
+    ctx.attachedViews.push(view);
+  }
   return ctx;
 }
 
@@ -87,7 +91,18 @@ function addAttachedView(windowId, view) {
 function clearAttachedView(windowId) {
   const ctx = windows.get(windowId);
   if (!ctx) return null;
-  ctx.attachedView = null;
+  ctx.attachedViews = [];
+  ctx.splitDirection = null;
+  return ctx;
+}
+
+/** 移除单个附加视图（拆分指定窗口时调用） */
+function removeAttachedView(windowId, view) {
+  const ctx = windows.get(windowId);
+  if (!ctx || !ctx.attachedViews) return null;
+  const idx = ctx.attachedViews.indexOf(view);
+  if (idx >= 0) ctx.attachedViews.splice(idx, 1);
+  if (ctx.attachedViews.length === 0) ctx.splitDirection = null;
   return ctx;
 }
 
@@ -190,6 +205,7 @@ module.exports = {
   setWindowView,
   addAttachedView,
   clearAttachedView,
+  removeAttachedView,
   rememberViewOwner,
   forgetViewOwner,
   removeWindow,

@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { planMerge, planUnmerge, normalizeDirection } = require('../../src/main/window-merge');
+const { planMerge, planUnmerge, planUnmergeAll, planUnmergeOne, normalizeDirection } = require('../../src/main/window-merge');
 
 function mkSource(over = {}) {
   const view = { webContents: { id: 'src-wc' } };
@@ -9,7 +9,7 @@ function mkSource(over = {}) {
     id: 'source',
     tabs: new Map([['tab-1', { id: 'tab-1', view }]]),
     activeTabId: 'tab-1',
-    attachedView: null,
+    attachedViews: [],
     splitDirection: null,
   }, over);
 }
@@ -19,7 +19,7 @@ function mkTarget(over = {}) {
     id: 'target',
     tabs: new Map([['tab-2', { id: 'tab-2', view: { webContents: { id: 'tgt-wc' } } }]]),
     activeTabId: 'tab-2',
-    attachedView: null,
+    attachedViews: [],
     splitDirection: null,
   }, over);
 }
@@ -36,6 +36,7 @@ test('正常合并：返回源窗口的 active 视图与方向', () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.direction, 'horizontal');
   assert.strictEqual(r.view.webContents.id, 'src-wc');
+  assert.strictEqual(r.targetCount, 2);
 });
 
 test('合并方向非法时返回错误', () => {
@@ -57,27 +58,62 @@ test('源窗口没有 active 视图时拒绝合并', () => {
   assert.match(r.error, /没有/);
 });
 
-test('源窗口已经分屏（有 attachedView）时拒绝再合并', () => {
-  const r = planMerge(mkSource({ attachedView: {} }), mkTarget(), 'horizontal');
+test('源窗口已经分屏时拒绝再作为源合并', () => {
+  const r = planMerge(mkSource({ attachedViews: [{ webContents: { id: 'x' } }] }), mkTarget(), 'horizontal');
   assert.strictEqual(r.ok, false);
-  assert.match(r.error, /已处于分屏/);
+  assert.match(r.error, /源窗口已处于分屏/);
 });
 
-test('目标窗口已经分屏时拒绝接受新的合并', () => {
-  const r = planMerge(mkSource(), mkTarget({ attachedView: {} }), 'horizontal');
-  assert.strictEqual(r.ok, false);
-  assert.match(r.error, /已处于分屏/);
-});
-
-test('planUnmerge：宿主有 attachedView 时返回该视图', () => {
-  const tgt = mkTarget({ attachedView: { webContents: { id: 'att' } }, splitDirection: 'vertical' });
-  const r = planUnmerge(tgt);
+test('目标窗口已有分屏时，同方向可继续合并（3 个起）', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
+  const r = planMerge(mkSource(), tgt, 'horizontal');
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.view.webContents.id, 'att');
+  assert.strictEqual(r.targetCount, 3);
 });
 
-test('planUnmerge：宿主没有 attachedView 时返回错误', () => {
+test('目标窗口已有分屏但方向不同时拒绝', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
+  const r = planMerge(mkSource(), tgt, 'vertical');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /方向/);
+});
+
+test('planUnmerge 无附加视图时返回错误', () => {
   const r = planUnmerge(mkTarget());
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /没有/);
+});
+
+test('planUnmergeAll 返回全部附加视图', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }], splitDirection: 'vertical' });
+  const r = planUnmergeAll(tgt);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.views.length, 2);
+});
+
+test('planUnmergeOne 按 webContents id 挑出指定视图', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }], splitDirection: 'horizontal' });
+  const r = planUnmergeOne(tgt, 'a2');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.view.webContents.id, 'a2');
+});
+
+test('planUnmergeOne 找不到指定 id 时返回错误', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }] });
+  const r = planUnmergeOne(tgt, 'nope');
+  assert.strictEqual(r.ok, false);
+});
+
+test('planUnmerge 兼容旧调用：单个附加视图返回 view', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'only' } }] });
+  const r = planUnmerge(tgt);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.view.webContents.id, 'only');
+});
+
+test('planUnmerge 兼容旧调用：多个附加视图返回 views', () => {
+  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }] });
+  const r = planUnmerge(tgt);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.views.length, 2);
 });
