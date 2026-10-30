@@ -3316,14 +3316,26 @@
       try { thumb.style.cursor = 'grab'; } catch(_) {}
     });
 
-    // 鼠标滚轮直接上下滚动分屏内容
+    // 鼠标滚轮滚动主窗口：滚动条自身 + 侧边栏/工具栏区域都生效
+    function onWheelScroll(e){
+      if (e.shiftKey) return;
+      if (bar.style.display === 'none') return;
+      var delta = e.deltaY;
+      if (!delta) return;
+      e.preventDefault();
+      applyScroll(scrollY + delta);
+    }
+    // 滚动条自身（鼠标悬停其上时）
+    bar.addEventListener('wheel', onWheelScroll, { passive: false });
+    // 壳页面其他区域（侧边栏/顶部栏/计划面板）也响应
     window.addEventListener('wheel', function(e){
       if (e.shiftKey) return;
       if (bar.style.display === 'none') return;
       var delta = e.deltaY;
       if (!delta) return;
-      // 若事件来自 AI 网页内部，不拦截（网页自己能滚就别抢）
       var t = e.target;
+      // 滚动条自身已单独处理，避免重复
+      if (t && t.closest && t.closest('#lingya-split-vscrollbar')) return;
       if (t && t.closest && t.closest('.sh-view, #lingya-sidebar-slot, #lingya-tabbar')) {
         e.preventDefault();
         applyScroll(scrollY + delta);
