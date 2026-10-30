@@ -962,9 +962,11 @@ try {
 // 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口
 // 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
 const { ipcMain: ipcMainForProfile } = require('electron');
+const { computeSplitBounds } = require('./split-layout');
 const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
 const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
 const TABBAR_HEIGHT = 40;        // 顶部标签栏高度（壳页面绘制，AI view 从其下方开始）
+const SPLIT_GAP = 0;             // 合并分屏时两视图之间的间隙（0 = 无缝贴合）
 
 /** 当前侧栏实际占宽：展开=自定义宽，收起=46 */
 function currentSidebarWidth(w) {
@@ -981,6 +983,28 @@ function layoutAIView(mainWindow) {
     const top = TABBAR_HEIGHT;
     const w = Math.max(0, b.width - sw);
     const h = Math.max(0, b.height - top);
+
+    // 合并模式：宿主自己的 active tab 与附加视图并排 / 上下
+    const split = ctx.splitDirection
+      ? computeSplitBounds({ x: sw, y: top, width: w, height: h }, ctx.splitDirection, SPLIT_GAP)
+      : null;
+    if (split) {
+      const activeTab = ctx.tabs.get(ctx.activeTabId);
+      if (activeTab && activeTab.view) {
+        try { activeTab.view.setBounds(split.main); } catch (_) {}
+      }
+      if (ctx.attachedView) {
+        try { ctx.attachedView.setBounds(split.attached); } catch (_) {}
+      }
+      // 其余隐藏标签统一放到主区域（保持与实际显示区域一致，避免切回时闪一下）
+      for (const t of ctx.tabs.values()) {
+        if (t === activeTab) continue;
+        try { t.view.setBounds(split.main); } catch (_) {}
+      }
+      return;
+    }
+
+    // 普通模式：所有标签共享完整区域（只有 active 可见）
     for (const t of ctx.tabs.values()) {
       try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
     }
