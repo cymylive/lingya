@@ -49,6 +49,29 @@ function resolveSessionId(ctx, sender) {
   return ctx.sessionStore.state.currentSessionId || null;
 }
 
+/**
+ * 诊断辅助：init-project 拿不到窗口上下文时，打印 sender 信息和所有可用窗口，
+ * 便于排查「B 窗口点初始化却查不到 ctx」这类问题。
+ */
+function logCtxLookupFailure(sender) {
+  try {
+    const sid = sender && sender.id;
+    let url = '';
+    try { url = sender.getURL ? sender.getURL() : ''; } catch (_) {}
+    const ctxs = windowState.getAllContexts().map(c => {
+      const rawId = c.rawWin && c.rawWin.webContents ? c.rawWin.webContents.id : null;
+      const viewId = c.view && c.view.webContents ? c.view.webContents.id : null;
+      const tabIds = c.tabs ? Array.from(c.tabs.values()).map(t => t.view && t.view.webContents ? t.view.webContents.id : null) : [];
+      return c.profileId + '(raw=' + rawId + ',view=' + viewId + ',tabs=' + JSON.stringify(tabIds) + ')';
+    });
+    console.error('[LingYa] init-project 找不到 ctx: sender.id=' + sid + ' url=' + url);
+    console.error('[LingYa] 可用窗口: ' + (ctxs.join(' | ') || '(无)'));
+  } catch (e) {
+    console.error('[LingYa] logCtxLookupFailure 自身失败:', e.message);
+  }
+}
+
+// 初始化项目
 function registerIpcHandlers() {
   // 飞书同步 IPC
   registerFeishuIpc();
@@ -364,6 +387,12 @@ function registerIpcHandlers() {
   // 初始化项目
   ipcMain.handle('init-project', async (event, { skipPrompt = false, projectDir = null, isCompaction = false } = {}) => {
     const ctx = windowState.getContextByWebContents(event.sender);
+    // 【修复 2026-10-30】拿不到 ctx 时不再把 undefined 透传给 initProject，
+    // 而是先打诊断日志再返回明确错误（initProject 内部已不允许静默回退主窗口）。
+    if (!ctx) {
+      logCtxLookupFailure(event.sender);
+      return { success: false, error: '找不到当前窗口上下文（请重开该窗口后重试）' };
+    }
     return initProject(skipPrompt, ctx, projectDir, isCompaction);
   });
 
@@ -371,6 +400,10 @@ function registerIpcHandlers() {
   ipcMain.handle('shell-choose-dir', async (event) => {
     try {
       const ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx) {
+        logCtxLookupFailure(event.sender);
+        return { success: false, error: '找不到当前窗口上下文（请重开该窗口后重试）' };
+      }
       const r = await initProject(true, ctx, null, false);   // skipPrompt=true
       return r;
     } catch (err) { return { success: false, error: err.message }; }

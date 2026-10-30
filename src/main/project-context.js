@@ -71,7 +71,15 @@ function logWithFile(providerId, msg) {
  * @param {boolean} isCompaction - 是否为压缩后初始化（末尾追加"请继续你之前的工作"）
  */
 async function initProject(skipPrompt = false, windowContext = null, presetDir = null, isCompaction = false) {
-  const ctx = windowContext || windowState.getMainContext();
+  // 【修复 2026-10-30】拿不到窗口上下文时不得静默回退到主窗口。
+  // 历史 bug：B 窗口点「初始化项目」时 getContextByWebContents 返回 null，
+  // 旧逻辑 fallback 到 getMainContext()（最后激活的 A 窗口），导致对话框弹在 A 上，
+  // B 窗口看起来「毫无反应」。现在改为显式失败，让调用方/用户看到真实原因。
+  const ctx = windowContext;
+  if (!ctx) {
+    console.error('[LingYa] initProject: 找不到窗口上下文，已拒绝静默回退主窗口');
+    return { success: false, error: '找不到当前窗口上下文（请重开该窗口后重试）' };
+  }
   const mainWindow = ctx ? ctx.win : windowState.getMainWindow();
   const sessionStore = ctx ? ctx.sessionStore : null;
   // providerId 来自窗口上下文（可能为空，表示未确定平台）
