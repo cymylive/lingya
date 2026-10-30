@@ -1854,7 +1854,22 @@ ipcMain.on('lingya-report-task-state', (event, payload) => {
     //    键用 AI 视图自己的 webContents.id —— 总控台按面板视图 id 查
     try {
       const wcId = event.sender && event.sender.id;
+      const before = generationState.get(wcId);
       generationState.set(wcId, payload);
+      const after = generationState.get(wcId);
+      const bGen = !!(before && before.generating);
+      const aGen = !!(after && after.generating);
+      const bText = before ? before.text : '';
+      const aText = after ? after.text : '';
+      const changed = (bGen !== aGen) || (bGen && aGen && bText !== aText);
+      if (changed) {
+        for (const c of windowState.getAllContexts()) {
+          const raw = c.rawWin;
+          if (raw && !raw.isDestroyed() && raw.webContents) {
+            raw.webContents.send('lingya-all-todos-changed');
+          }
+        }
+      }
     } catch (_) {}
 
     // 2) 转发给壳窗口侧边栏

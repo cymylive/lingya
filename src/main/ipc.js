@@ -77,6 +77,15 @@ function registerIpcHandlers() {
         if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-todos-updated', payload);
       } catch (_) {}
     }
+    // 通知所有壳窗口「总控台数据已变化」，前端据此立即重绘
+    try {
+      for (const c of windowState.getAllContexts()) {
+        const raw2 = c.rawWin;
+        if (raw2 && !raw2.isDestroyed() && raw2.webContents) {
+          raw2.webContents.send('lingya-all-todos-changed');
+        }
+      }
+    } catch (_) {}
   });
 
   // 读取当前窗口/会话的待办列表（严格按会话隔离，返回 archived 标记）

@@ -59,6 +59,7 @@ const api = {
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
+  onAllTodosChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-all-todos-changed',h); return ()=>ipcRenderer.removeListener('lingya-all-todos-changed',h); },
   getAllTodos: () => ipcRenderer.invoke('get-all-todos'),
   focusPanel: (webContentsId) => ipcRenderer.invoke('focus-panel', { webContentsId }),
   onTodosUpdated: (cb) => { const h=(_e,t)=>cb(t); ipcRenderer.on('lingya-todos-updated',h); return ()=>ipcRenderer.removeListener('lingya-todos-updated',h); },

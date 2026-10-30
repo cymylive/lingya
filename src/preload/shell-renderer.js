@@ -620,6 +620,8 @@
     if (typeof currentViewName === 'string' && currentViewName && __viewCleanup[currentViewName]) {
       try { __viewCleanup[currentViewName](); } catch (_) {}
     }
+    // 「全部分屏」自动刷新随视图切走一起停，避免后台空转
+    if (window.__lyAllSplitCleanup) { try { window.__lyAllSplitCleanup(); } catch (_) {} }
     currentViewName = name;
 
     // 插件视图不单独占活动栏图标：高亮统一落在「插件」入口上
@@ -1206,6 +1208,29 @@
 
     draw();
     window.__lyRefreshAllSplit = draw;
+
+    // ===== 自动刷新：事件驱动为主 + 3 秒轮询兜底 =====
+    if(window.__lyAllSplitCleanup){ try{ window.__lyAllSplitCleanup(); }catch(_){} }
+    var _unsub = null;
+    var _timer = setInterval(function(){
+      var box = document.getElementById('sh-all-body');
+      if(!box || !box.isConnected){ _stop(); return; }
+      draw();
+    }, 3000);
+    function _stop(){
+      if(_timer){ clearInterval(_timer); _timer = null; }
+      if(_unsub){ try{ _unsub(); }catch(_){} _unsub = null; }
+      window.__lyAllSplitCleanup = null;
+    }
+    window.__lyAllSplitCleanup = _stop;
+    try {
+      if(window.shellAPI && window.shellAPI.onAllTodosChanged){
+        _unsub = window.shellAPI.onAllTodosChanged(function(){
+          var box = document.getElementById('sh-all-body');
+          if(box && box.isConnected) draw();
+        });
+      }
+    } catch(_) {}
   }
 
   function renderPlanView(el){
