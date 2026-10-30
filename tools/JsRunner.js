@@ -18,6 +18,7 @@ const activeProcesses = require('./active-processes');
 const { inspectCommand } = require('./readonly-guard');
 const { checkGate } = require('./plan-gate');
 const toolLifecycle = require('./tool-lifecycle');
+const activityTracker = require('../src/main/activity-tracker');
 const memoryJanitor = require('./memory-janitor');
 
 // 同步执行超时（vm timeout，覆盖无 await 的死循环）
@@ -456,6 +457,7 @@ class JsRunner {
       // ★ 为本次工具调用分配独立 ID（本模块分配，按会话隔离）
       const tlSessionKey = (profileId || 'p') + '::' + (sessionId || 's');
       const tlId = toolLifecycle.register(tlSessionKey, op);
+      try { activityTracker.start(tlSessionKey, op); } catch (_) {}
       const tlHolder = { data: null, output: null, images: null };
 
       let result;
@@ -493,6 +495,7 @@ class JsRunner {
         }
       }
       // ★ 标记完成 + 挂引用 + 只清理本会话已完成条目
+      try { activityTracker.end(tlSessionKey, !!(result && result.success)); } catch (_) {}
       toolLifecycle.attach(tlId, tlHolder);
       tlHolder.data = (result && result.data) || null;
       tlHolder.output = (result && (result.error || result.output)) || null;

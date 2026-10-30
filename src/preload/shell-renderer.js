@@ -1086,7 +1086,125 @@
   }
 
   // ---- 计划面板 ----
+  /**
+   * 全部分屏总控台：跨窗口汇总每个分屏的 todo 进度与运行状态
+   */
+  function renderAllSplitView(el){
+    el.innerHTML = panel('全部分屏',
+      '<div style="display:flex;gap:6px;margin-bottom:10px;">'+
+        '<button class="sh-btn" id="sh-all-refresh" style="flex:1;font-size:12px;">刷新</button>'+
+      '</div>'+
+      '<div id="sh-all-body" class="sh-empty">加载中…</div>');
+
+    var STATUS_META = {
+      running: { label: '运行中', color: '#3b82f6', bg: 'rgba(59,130,246,.15)' },
+      stuck:   { label: '疑似卡住', color: '#f59e0b', bg: 'rgba(245,158,11,.15)' },
+      error:   { label: '出错', color: '#ef4444', bg: 'rgba(239,68,68,.15)' },
+      done:    { label: '已完成', color: '#22c55e', bg: 'rgba(34,197,94,.15)' },
+      waiting: { label: '等待中', color: '#8b5cf6', bg: 'rgba(139,92,246,.15)' },
+      idle:    { label: '空闲', color: '#94a3b8', bg: 'rgba(148,163,184,.15)' },
+    };
+
+    function draw(){
+      var body = document.getElementById('sh-all-body');
+      if(!body) return;
+      if(!window.shellAPI || !window.shellAPI.getAllTodos){
+        body.innerHTML = '<div class="sh-empty">当前版本不支持（请重启应用）</div>';
+        return;
+      }
+      window.shellAPI.getAllTodos().then(function(r){
+        if(!r || !r.success){ body.innerHTML = '<div class="sh-empty">读取失败</div>'; return; }
+        var wins = r.windows || [];
+        if(!wins.length){ body.innerHTML = '<div class="sh-empty">暂无窗口</div>'; return; }
+
+        var h = '';
+        for(var wi = 0; wi < wins.length; wi++){
+          var w = wins[wi];
+          var panels = w.panels || [];
+          h += '<div style="margin-bottom:12px;border:1px solid var(--ck-border);border-radius:8px;overflow:hidden;">';
+          h += '<div style="padding:6px 10px;background:var(--ck-surface);font-size:11.5px;font-weight:600;color:var(--ck-title);">'
+             + esc(w.name || '窗口') + (w.provider ? '<span style="font-weight:400;color:var(--ck-text-dim);margin-left:6px;">' + esc(w.provider) + '</span>' : '')
+             + '</div>';
+          for(var pi = 0; pi < panels.length; pi++){
+            var p = panels[pi];
+            var meta = STATUS_META[p.status] || STATUS_META.idle;
+            var sum = p.summary || {};
+            var pct = sum.total ? Math.round(sum.completed / sum.total * 100) : 0;
+            var panelName = p.isHost ? '主面板' : (p.profileName || '分屏');
+
+            h += '<div class="sh-all-card" data-wcid="' + (p.webContentsId || '') + '" data-winid="' + (w.windowId || '') + '" style="padding:8px 10px;border-top:1px solid var(--ck-border);cursor:pointer;">';
+            // 标题行
+            h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
+               + '<span style="font-size:12px;font-weight:600;color:var(--ck-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(panelName) + '</span>'
+               + '<span style="font-size:10px;padding:1px 6px;border-radius:4px;color:' + meta.color + ';background:' + meta.bg + ';font-weight:600;">' + meta.label + '</span>'
+               + '</div>';
+            // 进度条
+            if(sum.total > 0){
+              h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
+                 + '<div style="flex:1;height:4px;background:var(--ck-surface);border-radius:2px;overflow:hidden;">'
+                 + '<div style="width:' + pct + '%;height:100%;background:' + meta.color + ';transition:width .3s;"></div>'
+                 + '</div>'
+                 + '<span style="font-size:10px;color:var(--ck-text-dim);">' + sum.completed + '/' + sum.total + '</span>'
+                 + '</div>';
+            }
+            // 当前工具
+            if(p.activity && p.activity.running > 0 && p.activity.lastToolName){
+              h += '<div style="font-size:10px;color:var(--ck-text-dim);">正在执行：' + esc(p.activity.lastToolName) + '</div>';
+            }
+            // todo 明细（最多 4 条）
+            var todos = p.todos || [];
+            if(todos.length){
+              h += '<div style="margin-top:4px;">';
+              var show = Math.min(4, todos.length);
+              for(var ti = 0; ti < show; ti++){
+                var t = todos[ti];
+                var icon = t.status === 'completed' ? '✓' : (t.status === 'in_progress' ? '▶' : '○');
+                var col = t.status === 'completed' ? '#22c55e' : (t.status === 'in_progress' ? '#3b82f6' : 'var(--ck-text-dim)');
+                var deco = t.status === 'completed' ? 'text-decoration:line-through;opacity:.55;' : '';
+                h += '<div style="display:flex;gap:4px;font-size:10.5px;line-height:15px;color:var(--ck-text-2);">'
+                   + '<span style="color:' + col + ';flex-shrink:0;">' + icon + '</span>'
+                   + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + deco + '">' + esc(t.content) + '</span>'
+                   + '</div>';
+              }
+              if(todos.length > show){
+                h += '<div style="font-size:10px;color:var(--ck-text-dim);padding-left:14px;">还有 ' + (todos.length - show) + ' 项…</div>';
+              }
+              h += '</div>';
+            }
+            h += '</div>';
+          }
+          h += '</div>';
+        }
+        body.innerHTML = h;
+
+        // 点击卡片：聚焦对应窗口
+        var cards = body.querySelectorAll('.sh-all-card');
+        for(var ci = 0; ci < cards.length; ci++){
+          (function(card){
+            card.addEventListener('click', function(){
+              var wcid = card.getAttribute('data-wcid');
+              if(window.shellAPI.focusPanel){
+                window.shellAPI.focusPanel(Number(wcid)).then(function(){})['catch'](function(){});
+              }
+            });
+            card.addEventListener('mouseenter', function(){ card.style.background = 'var(--ck-surface)'; });
+            card.addEventListener('mouseleave', function(){ card.style.background = ''; });
+          })(cards[ci]);
+        }
+      })['catch'](function(){ body.innerHTML = '<div class="sh-empty">读取失败</div>'; });
+    }
+
+    var rf = document.getElementById('sh-all-refresh');
+    if(rf) rf.addEventListener('click', function(){ draw(); toast2('已刷新'); });
+
+    draw();
+    window.__lyRefreshAllSplit = draw;
+  }
+
   function renderPlanView(el){
+    // tab 状态存在全局，切换视图后保留
+    if(!window.__lyPlanTab) window.__lyPlanTab = 'current';
+
     el.innerHTML = panel('任务计划',
       // ===== 任务状态条（AI 视图上报，见 ui.js 的 reportTaskState）=====
       // 侧边栏与 AI 视图是两个独立 webContents，状态真相源在 AI 视图侧，
@@ -1364,6 +1482,10 @@
         } else {
           if(typeof window.__lingyaPlanReload === 'function') window.__lingyaPlanReload();
         }
+        // 全部分屏 tab 打开时同步刷新
+        if(window.__lyPlanTab === 'all' && typeof window.__lyRefreshAllSplit === 'function'){
+          window.__lyRefreshAllSplit();
+        }
       });
     }
 
@@ -1478,6 +1600,53 @@
         if(typeof window.__lingyaTaskbarDraw === 'function') window.__lingyaTaskbarDraw(p);
       });
     }
+
+    // ===== 计划面板 tab 切换（DOM 重组，不改上面的 HTML 字符串，
+    //       以保持 sh-utodo 与 drawUserTodos 之间 esc() 的连续性——有测试按固定窗口切片）=====
+    (function setupPlanTabs(){
+      var bodyEl = el.querySelector('.sh-panel-body');
+      if(!bodyEl) return;
+      // 幂等：重复进入计划视图时，避免重复包裹
+      if(document.getElementById('sh-plan-current-wrap')) return;
+
+      var curWrap = document.createElement('div');
+      curWrap.id = 'sh-plan-current-wrap';
+      while(bodyEl.firstChild) curWrap.appendChild(bodyEl.firstChild);
+
+      var tabBar = document.createElement('div');
+      tabBar.style.cssText = 'display:flex;gap:4px;margin-bottom:10px;';
+      tabBar.innerHTML =
+        '<button class="sh-btn" id="sh-plan-tab-current" style="flex:1;padding:4px 0;font-size:12px;">当前会话</button>'+
+        '<button class="sh-btn" id="sh-plan-tab-all" style="flex:1;padding:4px 0;font-size:12px;">全部分屏</button>';
+
+      var allWrap = document.createElement('div');
+      allWrap.id = 'sh-plan-all-wrap';
+      allWrap.style.display = 'none';
+
+      bodyEl.appendChild(tabBar);
+      bodyEl.appendChild(curWrap);
+      bodyEl.appendChild(allWrap);
+
+      function applyPlanTab(){
+        var isAll = window.__lyPlanTab === 'all';
+        curWrap.style.display = isAll ? 'none' : '';
+        allWrap.style.display = isAll ? '' : 'none';
+        var bc = document.getElementById('sh-plan-tab-current');
+        var ba = document.getElementById('sh-plan-tab-all');
+        if(bc) bc.classList.toggle('primary', !isAll);
+        if(ba) ba.classList.toggle('primary', isAll);
+        if(isAll && !allWrap.getAttribute('data-rendered')){
+          allWrap.setAttribute('data-rendered', '1');
+          renderAllSplitView(allWrap);
+        }
+      }
+
+      var tabCur = document.getElementById('sh-plan-tab-current');
+      var tabAll = document.getElementById('sh-plan-tab-all');
+      if(tabCur) tabCur.addEventListener('click', function(){ window.__lyPlanTab = 'current'; applyPlanTab(); });
+      if(tabAll) tabAll.addEventListener('click', function(){ window.__lyPlanTab = 'all'; applyPlanTab(); });
+      applyPlanTab();
+    })();
   }
 
   // ---- 记忆面板 ----

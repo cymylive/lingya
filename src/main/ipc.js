@@ -88,6 +88,78 @@ function registerIpcHandlers() {
     return { success: true, todos: r.todos, archived: r.archived, sessionId };
   });
 
+  // ===== 跨窗口任务总控台：汇总所有窗口的 todo + 活动状态 =====
+  ipcMain.handle('get-all-todos', async () => {
+    const { deriveStatus, summarizeTodos } = require('./task-status');
+    const activityTracker = require('./activity-tracker');
+    const now = Date.now();
+    const out = [];
+
+    for (const ctx of windowState.getAllContexts()) {
+      // 窗口名 / 平台
+      let name = ctx.profileId || '窗口';
+      let provider = ctx.providerId || '';
+      try {
+        const pm = require('./profile-manager');
+        const p = pm.getProfileById(ctx.profileId);
+        if (p) { name = p.name || name; if (p.providerId) provider = p.providerId; }
+      } catch (_) {}
+
+      // 每个窗口可能有多个分屏面板，逐面板统计
+      const panels = [];
+      // 宿主面板
+      const hostSession = resolveSessionId(ctx, ctx.rawWin ? ctx.rawWin.webContents : null);
+      const hostKey = (ctx.profileId || 'p') + '::' + (hostSession || 's');
+      const hostTodos = getTodos(hostSession, ctx.profileId);
+      panels.push({
+        webContentsId: ctx.view ? ctx.view.webContents.id : null,
+        profileId: ctx.profileId,
+        sessionId: hostSession,
+        isHost: true,
+        todos: hostTodos.todos,
+        archived: hostTodos.archived,
+        summary: summarizeTodos(hostTodos.todos),
+        status: deriveStatus({ todos: hostTodos.todos, activity: activityTracker.get(hostKey), now }),
+        activity: activityTracker.get(hostKey),
+      });
+
+      // 附加面板
+      const owners = [];
+      for (const p of (ctx.attachedViews || [])) {
+        if (!p.view || !p.view.webContents) continue;
+        const oCtx = windowState.getContextByWebContents(p.view.webContents);
+        if (oCtx) owners.push({ panel: p, ctx: oCtx });
+      }
+      for (const { panel, ctx: oCtx } of owners) {
+        let oName = oCtx.profileId || '窗口';
+        try {
+          const pm = require('./profile-manager');
+          const pr = pm.getProfileById(oCtx.profileId);
+          if (pr && pr.name) oName = pr.name;
+        } catch (_) {}
+        const sid = resolveSessionId(oCtx, null);
+        const key = (oCtx.profileId || 'p') + '::' + (sid || 's');
+        const t = getTodos(sid, oCtx.profileId);
+        panels.push({
+          webContentsId: panel.view.webContents.id,
+          profileId: oCtx.profileId,
+          profileName: oName,
+          sessionId: sid,
+          isHost: false,
+          todos: t.todos,
+          archived: t.archived,
+          summary: summarizeTodos(t.todos),
+          status: deriveStatus({ todos: t.todos, activity: activityTracker.get(key), now }),
+          activity: activityTracker.get(key),
+        });
+      }
+
+      out.push({ windowId: ctx.win && ctx.win.id, name, provider, panels });
+    }
+
+    return { success: true, windows: out, now };
+  });
+
   // 清空当前会话待办（AI 明确说完成时 / 手动清）
   ipcMain.handle('clear-todos', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);

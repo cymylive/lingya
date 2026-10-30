@@ -1520,6 +1520,37 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX, scrollY
   } catch (err) { return { success: false, error: err.message }; }
 });
 
+// 聚焦到某个分屏面板（总控台点击卡片时调用）
+ipcMainForProfile.handle('focus-panel', async (event, { webContentsId } = {}) => {
+  try {
+    const id = Number(webContentsId);
+    if (!id) return { success: false, error: '缺少 webContentsId' };
+
+    // 找到这个视图所属的宿主窗口
+    for (const ctx of windowState.getAllContexts()) {
+      const hostWin = ctx.rawWin;
+      if (!hostWin || hostWin.isDestroyed()) continue;
+
+      // 宿主自己的 active tab？
+      const activeTab = ctx.tabs ? ctx.tabs.get(ctx.activeTabId) : null;
+      if (activeTab && activeTab.view && activeTab.view.webContents.id === id) {
+        hostWin.focus();
+        if (typeof hostWin.restore === 'function') try { hostWin.restore(); } catch (_) {}
+        return { success: true };
+      }
+      // 附加面板？
+      for (const p of (ctx.attachedViews || [])) {
+        if (p.view && p.view.webContents.id === id) {
+          hostWin.focus();
+          if (typeof hostWin.restore === 'function') try { hostWin.restore(); } catch (_) {}
+          return { success: true };
+        }
+      }
+    }
+    return { success: false, error: '找不到对应面板（窗口可能已关闭）' };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
 ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
