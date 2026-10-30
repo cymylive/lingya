@@ -90,7 +90,13 @@ function seedBundledPlugins() {
     if (!ent.isDirectory()) continue;
     const src = path.join(srcDir, ent.name);
     const dst = path.join(PLUGINS_DIR, ent.name);
-    if (fs.existsSync(dst)) continue; // 已存在，尊重用户
+    if (fs.existsSync(dst)) {
+      // 目录已存在：只补齐缺失文件（老用户升级场景），不覆盖用户改动
+      try { mergeDirRecursive(src, dst); } catch (err) {
+        console.error('[PluginHost] 补齐插件文件失败 (' + ent.name + '):', err.message);
+      }
+      continue;
+    }
     try {
       copyDirRecursive(src, dst);
       console.log('[PluginHost] 已播种插件:', ent.name);
@@ -107,6 +113,25 @@ function copyDirRecursive(src, dst) {
     const d = path.join(dst, ent.name);
     if (ent.isDirectory()) copyDirRecursive(s, d);
     else fs.copyFileSync(s, d);
+  }
+}
+
+/**
+ * 合并式复制：只补齐目标目录里**缺失**的文件，绝不覆盖已有文件。
+ * 场景：老用户升级到新版，插件目录已存在，但新版插件新增了文件
+ * （如 preload.js），需要补上；同时用户改过的文件必须保持原样。
+ */
+function mergeDirRecursive(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, ent.name);
+    const d = path.join(dst, ent.name);
+    if (ent.isDirectory()) {
+      mergeDirRecursive(s, d);
+    } else if (!fs.existsSync(d)) {
+      fs.copyFileSync(s, d);
+      console.log('[PluginHost] 补齐插件缺失文件:', d);
+    }
   }
 }
 

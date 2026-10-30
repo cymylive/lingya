@@ -94,3 +94,39 @@ test('生命周期：加载、保存配置、重载、删除', async () => {
   host.deletePlugin('test-lifecycle');
   assert.strictEqual(fs.existsSync(testPluginDir), false, '删除后目录应消失');
 });
+
+test('播种：已存在的插件目录只补齐缺失文件，不覆盖用户改动', async () => {
+  const host = require('../../src/main/plugin-host');
+  const seedRoot = path.join(tmpBase, 'seed-test');
+  if (fs.existsSync(seedRoot)) fs.rmSync(seedRoot, { recursive: true, force: true });
+  host.init(seedRoot);
+
+  const pluginsDir = path.join(seedRoot, 'plugins');
+  const target = 'refusal-rewriter';
+  const dstDir = path.join(pluginsDir, target);
+  assert.ok(fs.existsSync(dstDir), '自带插件应被首次播种');
+
+  const preloadPath = path.join(dstDir, 'preload.js');
+  const indexPath = path.join(dstDir, 'index.js');
+  assert.ok(fs.existsSync(preloadPath), 'preload.js 应随插件播种');
+
+  // 模拟老用户升级：缺 preload.js（新版才有），且 index.js 被用户改过
+  fs.unlinkSync(preloadPath);
+  const marker = '// USER-MODIFIED-DO-NOT-OVERWRITE' + String.fromCharCode(10);
+  fs.writeFileSync(indexPath, marker, 'utf8');
+
+  // 再次播种
+  host.seedBundledPlugins();
+
+  // 缺失文件被补齐
+  assert.ok(fs.existsSync(preloadPath), '缺失的 preload.js 应被补齐');
+  assert.ok(
+    fs.readFileSync(preloadPath, 'utf8').length > 100,
+    '补齐的 preload.js 内容应完整'
+  );
+  // 用户改过的文件不被覆盖
+  assert.ok(
+    fs.readFileSync(indexPath, 'utf8').startsWith(marker),
+    '用户修改过的 index.js 不得被覆盖'
+  );
+});
