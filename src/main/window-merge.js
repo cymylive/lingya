@@ -53,12 +53,12 @@ function planMerge(hostCtx, sourceCtx, direction) {
   return { ok: true, view, direction: dir, targetCount: existing + 2 };
 }
 
-/** 规划拆分全部附加视图 */
+/** 规划拆分全部附加视图（返回裸 WebContentsView 数组） */
 function planUnmergeAll(ctx) {
   if (!ctx) return { ok: false, error: '窗口不存在' };
   const list = ctx.attachedViews || [];
   if (!list.length) return { ok: false, error: '当前窗口没有可拆分的视图' };
-  return { ok: true, views: list.slice() };
+  return { ok: true, views: list.map(p => p.view).filter(Boolean) };
 }
 
 /** 规划拆分指定视图（webContentsId 为空 = 拆全部） */
@@ -67,9 +67,9 @@ function planUnmergeOne(ctx, webContentsId) {
   const list = ctx.attachedViews || [];
   if (!list.length) return { ok: false, error: '当前窗口没有可拆分的视图' };
   if (webContentsId == null) return planUnmergeAll(ctx);
-  const idx = list.findIndex(v => v.webContents && v.webContents.id === webContentsId);
+  const idx = list.findIndex(p => p.view && p.view.webContents && p.view.webContents.id === webContentsId);
   if (idx < 0) return { ok: false, error: '找不到指定的分屏视图' };
-  return { ok: true, view: list[idx] };
+  return { ok: true, view: list[idx].view };
 }
 
 /** 兼容旧签名：只有一个附加视图时返回 view，多个时返回 views */

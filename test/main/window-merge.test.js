@@ -85,34 +85,34 @@ test('planUnmerge 无附加视图时返回错误', () => {
 });
 
 test('planUnmergeAll 返回全部附加视图', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }], splitDirection: 'vertical' });
+  const tgt = mkTarget({ attachedViews: [{ view: { webContents: { id: 'a1' } } }, { view: { webContents: { id: 'a2' } } }], splitDirection: 'vertical' });
   const r = planUnmergeAll(tgt);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.views.length, 2);
 });
 
 test('planUnmergeOne 按 webContents id 挑出指定视图', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }], splitDirection: 'horizontal' });
+  const tgt = mkTarget({ attachedViews: [{ view: { webContents: { id: 'a1' } } }, { view: { webContents: { id: 'a2' } } }], splitDirection: 'horizontal' });
   const r = planUnmergeOne(tgt, 'a2');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.view.webContents.id, 'a2');
 });
 
 test('planUnmergeOne 找不到指定 id 时返回错误', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }] });
+  const tgt = mkTarget({ attachedViews: [{ view: { webContents: { id: 'a1' } } }] });
   const r = planUnmergeOne(tgt, 'nope');
   assert.strictEqual(r.ok, false);
 });
 
 test('planUnmerge 兼容旧调用：单个附加视图返回 view', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'only' } }] });
+  const tgt = mkTarget({ attachedViews: [{ view: { webContents: { id: 'only' } } }] });
   const r = planUnmerge(tgt);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.view.webContents.id, 'only');
 });
 
 test('planUnmerge 兼容旧调用：多个附加视图返回 views', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }, { webContents: { id: 'a2' } }] });
+  const tgt = mkTarget({ attachedViews: [{ view: { webContents: { id: 'a1' } } }, { view: { webContents: { id: 'a2' } } }] });
   const r = planUnmerge(tgt);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.views.length, 2);
