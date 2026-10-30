@@ -1,13 +1,15 @@
 /**
  * 插件加载回归测试
  *
- * 覆盖两类已修复的 bug：
- * 1. refusal-rewriter 的 PRELOAD_SCRIPT 内联脚本必须能被解析成合法 JS
+ * 覆盖三类已修复/已加固的问题：
+ * 1. 插件 preload 脚本必须能被解析成合法 JS
  *    （曾因正则 [\\s\\S] 写成 [sS]、字符串内裸换行未转义而抛 SyntaxError，
  *      导致整个 preload 注入失败，插件静默失效）
  * 2. plugin-host 用 new Function 执行打包后的插件代码时必须注入
  *    __dirname / __filename（曾导致插件内 path.join(__dirname, ...) 抛
  *    "__dirname is not defined"）
+ * 3. 上述脚本已从"内联字符串常量"外置为独立 .js 文件，由 index.js 运行时读取，
+ *    保证 lint / 语法检查能直接覆盖（本文件即为该契约的守卫）
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,48 +18,48 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..', '..');
-const BS = String.fromCharCode(92); // 反斜杠，避免测试文件里堆转义
 
-function readPreloadSourceLine() {
-  const src = fs.readFileSync(
-    path.join(ROOT, 'plugins', 'refusal-rewriter', 'index.js'),
+// 插件目录名 → 外置脚本文件名
+const PRELOAD_FILES = [
+  ['refusal-rewriter', 'preload.js'],
+  ['task-watcher', 'preload.js'],
+  ['deepseek-archive', 'archive.js'],
+];
+
+for (const [plugin, file] of PRELOAD_FILES) {
+  test(plugin + ': ' + file + ' 必须是可解析的合法 JS', () => {
+    const p = path.join(ROOT, 'plugins', plugin, file);
+    assert.ok(fs.existsSync(p), '缺少外置脚本文件: ' + file);
+    const code = fs.readFileSync(p, 'utf8');
+    assert.ok(code.length > 100, '脚本内容过短，疑似异常');
+    assert.doesNotThrow(() => new vm.Script(code), file + ' 存在语法错误');
+  });
+
+  test(plugin + ': index.js 必须从独立文件读取脚本', () => {
+    const src = fs.readFileSync(
+      path.join(ROOT, 'plugins', plugin, 'index.js'),
+      'utf8'
+    );
+    assert.ok(
+      src.includes(JSON.stringify(file)) || src.includes("'" + file + "'"),
+      'index.js 未引用 ' + file
+    );
+    assert.match(src, /readFileSync/, 'index.js 未使用 readFileSync 读取脚本');
+    // 防回归：不得再出现超长的内联脚本字符串常量
+    const longInline = src.split(/\r?\n/).some((l) => l.length > 5000);
+    assert.ok(!longInline, 'index.js 仍有超长内联字符串，应外置为独立文件');
+  });
+}
+
+test('refusal-rewriter: preload.js 的正则必须是 [\\s\\S] 而非退化的 [sS]', () => {
+  const code = fs.readFileSync(
+    path.join(ROOT, 'plugins', 'refusal-rewriter', 'preload.js'),
     'utf8'
   );
-  const line = src.split(/\r?\n/).find((l) => l.startsWith('const PRELOAD_SCRIPT = '));
-  assert.ok(line, '未找到 PRELOAD_SCRIPT 定义');
-  return line;
-}
-
-function decodePreload() {
-  const line = readPreloadSourceLine();
-  const m = line.match(/^const PRELOAD_SCRIPT = (".*");?$/s);
-  assert.ok(m, 'PRELOAD_SCRIPT 不是合法的 JSON 字符串字面量');
-  return JSON.parse(m[1]);
-}
-
-test('refusal-rewriter: PRELOAD_SCRIPT 必须是可解析的合法 JS', () => {
-  const code = decodePreload();
-  assert.ok(code.length > 100, 'PRELOAD_SCRIPT 内容过短，疑似解析异常');
-
-  // 关键断言：能被 vm 编译（语法错误会在这里抛出）
-  assert.doesNotThrow(() => new vm.Script(code), 'PRELOAD_SCRIPT 存在语法错误');
-});
-
-test('refusal-rewriter: 正则必须是 [\\s\\S] 而非退化的 [sS]', () => {
-  const code = decodePreload();
-  const good = '[' + BS + 's' + BS + 'S]'; // 解码后应为 [\s\S]
+  const BS = String.fromCharCode(92);
+  const good = '[' + BS + 's' + BS + 'S]';
   assert.ok(code.includes(good), '缺少 [\\s\\S] 正则（曾被误写为 [sS]）');
   assert.ok(!code.includes('[sS]'), '仍存在退化的 [sS] 正则');
-});
-
-test('refusal-rewriter: 提示文案的换行必须是转义序列而非裸换行', () => {
-  const line = readPreloadSourceLine();
-  // 源码层：JSON 字符串里换行必须写成两个反斜杠 + n（JSON.parse 后得到 \n）
-  const escaped = BS + BS + 'n' + BS + BS + 'n';
-  assert.ok(
-    line.includes('不要解释。' + escaped),
-    '改写提示文案的换行必须写成转义序列，否则解码后是裸换行 → SyntaxError'
-  );
 });
 
 test('plugin-host: 打包执行时注入 __dirname / __filename', () => {

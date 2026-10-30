@@ -21,6 +21,12 @@ function readSrc() {
   return fs.readFileSync(ENTRY, 'utf-8');
 }
 
+// preload 注入脚本已从 index.js 内联字符串外置为独立文件
+const PRELOAD = path.join(PLUGIN_DIR, 'preload.js');
+function readPreload() {
+  return fs.readFileSync(PRELOAD, 'utf-8');
+}
+
 test('manifest 完整且指向存在的入口文件', () => {
   const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf-8'));
   assert.strictEqual(m.id, 'task-watcher');
@@ -49,7 +55,7 @@ test('必须暴露 getConfig / saveConfig 两个 IPC 通道', () => {
 });
 
 test('注入脚本必须包含全部防误催闸门', () => {
-  const src = readSrc();
+  const src = readPreload();
   // 四个前置条件：停止 / 等用户 / 分批发送 / 已声明完成
   assert.ok(src.includes('st.stopped'), '缺少 stopped 闸门');
   assert.ok(src.includes('st.awaitingUserInput'), '缺少 awaitingUserInput 闸门');
@@ -58,7 +64,7 @@ test('注入脚本必须包含全部防误催闸门', () => {
 });
 
 test('注入脚本必须走 pluginAPI 发送，不得自行操作 DOM 输入框', () => {
-  const src = readSrc();
+  const src = readPreload();
   assert.ok(src.includes('__lingyaPluginAPI'), '必须使用注入的插件 API');
   assert.ok(src.includes('api.sendMessage('), '必须通过 api.sendMessage 发送');
   assert.ok(!src.includes('dispatchEvent(new KeyboardEvent'), '不得自行合成按键事件');
@@ -119,7 +125,7 @@ test('saveConfig 不得覆盖 nudgeCounts（用户改配置不能清计数）', 
 });
 
 test('preload 脚本不再持有内存计数，改由主进程裁决', () => {
-  const src = readSrc();
+  const src = readPreload();
   assert.ok(src.includes('bumpNudgeCount'), 'preload 必须调用 bumpNudgeCount');
   assert.ok(src.includes('br.data.allowed'), '必须依据主进程返回的 allowed 决定是否催促');
   assert.ok(!/var\s+counts\s*=\s*\{\}/.test(src), '不应再持有本地 counts 对象');
