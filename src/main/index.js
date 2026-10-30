@@ -1102,6 +1102,44 @@ function layoutAIView(mainWindow) {
       return;
     }
 
+    // 上下分屏
+    if (ctx.splitDirection === 'vertical' && attached.length) {
+      const activeTab = ctx.tabs.get(ctx.activeTabId);
+      const count = 1 + attached.length;
+      const eachBaseH = Math.floor(h / count);
+      let currentY = top;
+      let idx = 0;
+      const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) : eachBaseH);
+
+      // 1) 宿主面板
+      if (activeTab && activeTab.view) {
+        activeTab.view.setBounds({ x: sw, y: currentY, width: w, height: getH() });
+      }
+      currentY += getH();
+      idx++;
+
+      // 2) 附加面板
+      for (const panel of attached) {
+        const sw2 = panel.sidebarOpen ? (panel.sidebarWidth || 320) : 46;
+        const hh = getH();
+        if (panel.sidebarView) {
+          try { panel.sidebarView.setBounds({ x: sw, y: currentY, width: sw2, height: hh }); } catch (_) {}
+        }
+        if (panel.view) {
+          try { panel.view.setBounds({ x: sw + sw2, y: currentY, width: w - sw2, height: hh }); } catch (_) {}
+        }
+        currentY += hh;
+        idx++;
+      }
+
+      // 3) 其余隐藏标签
+      for (const t of ctx.tabs.values()) {
+        if (t === activeTab) continue;
+        try { t.view.setBounds({ x: sw, y: top, width: w, height: getH() }); } catch (_) {}
+      }
+      return;
+    }
+
     // 普通模式：所有标签共享完整区域（只有 active 可见）
     for (const t of ctx.tabs.values()) {
       try { t.view.setBounds({ x: sw, y: top, width: w, height: h }); } catch (_) {}
