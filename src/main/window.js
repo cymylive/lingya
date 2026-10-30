@@ -27,6 +27,7 @@ function addWindow(win, profileId, providerId, sessionStore, view) {
   windows.set(win.id, {
     win, rawWin,
     view: view || null,
+    attachedView: null,
     tabs: new Map(),
     activeTabId: null,
     profileId, providerId, sessionStore,
@@ -45,6 +46,27 @@ function addWindow(win, profileId, providerId, sessionStore, view) {
 function setWindowView(windowId, view) {
   const ctx = windows.get(windowId);
   if (ctx) ctx.view = view || null;
+}
+
+/**
+ * 挂载来自其它窗口的视图（窗口合并场景）
+ * 视图本身仍属于它原来的 profile/sessionStore（由其原始 ctx 维护），
+ * 这里只登记“它现在显示在这个窗口里”，供 IPC 反查用。
+ * @returns {object|null} 挂载成功返回 ctx，窗口不存在返回 null
+ */
+function addAttachedView(windowId, view) {
+  const ctx = windows.get(windowId);
+  if (!ctx) return null;
+  ctx.attachedView = view || null;
+  return ctx;
+}
+
+/** 解除附加视图挂载（拆分或窗口关闭时调用） */
+function clearAttachedView(windowId) {
+  const ctx = windows.get(windowId);
+  if (!ctx) return null;
+  ctx.attachedView = null;
+  return ctx;
 }
 
 function removeWindow(windowId) {
@@ -75,6 +97,7 @@ function getContextByWebContents(webContents) {
         if (t.view && t.view.webContents === webContents) return ctx;
       }
     }
+
   }
   return null;
 }
@@ -140,6 +163,8 @@ function getWindowByProfileId(profileId) {
 module.exports = {
   addWindow,
   setWindowView,
+  addAttachedView,
+  clearAttachedView,
   removeWindow,
   getWindowContext,
   getContextByWebContents,
