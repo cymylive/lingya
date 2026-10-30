@@ -1,9 +1,10 @@
 /**
  * 窗口合并的业务规则（纯逻辑，不依赖 Electron）
  *
- * 合并语义：把源窗口当前显示的视图「搬」到目标窗口里并排显示。
+ * 合并语义：点击合并的窗口是【宿主】，被点击的窗口是【来源】。
+ * 来源窗口当前显示的视图被搬进宿主窗口并排显示，来源窗口随后关闭。
  * 视图本身的原窗口上下文（profileId / sessionStore）保持不变，
- * 由 window.js 继续登记在源窗口 ctx 上 —— 因此工具调用回传不受影响。
+ * 由 window.js 的视图归属表继续维护 —— 因此工具调用回传不受影响。
  */
 
 const DIRS = ['horizontal', 'vertical'];
@@ -22,33 +23,36 @@ function activeViewOf(ctx) {
 
 /**
  * 校验并规划一次合并
- * @returns {{ok:true, view, direction} | {ok:false, error:string}}
+ * @param {object} hostCtx   宿主窗口（发起合并的那个，会保留）
+ * @param {object} sourceCtx 来源窗口（被合并进来的那个，视图搬走后关闭）
+ * @param {'horizontal'|'vertical'} direction
+ * @returns {{ok:true, view, direction, targetCount} | {ok:false, error:string}}
  */
-function planMerge(sourceCtx, targetCtx, direction) {
+function planMerge(hostCtx, sourceCtx, direction) {
   const dir = normalizeDirection(direction);
   if (!dir) return { ok: false, error: '合并方向非法，只支持 horizontal / vertical' };
-  if (!sourceCtx || !targetCtx) return { ok: false, error: '窗口不存在' };
-  if (sourceCtx === targetCtx) return { ok: false, error: '不能把窗口合并到自己' };
+  if (!hostCtx || !sourceCtx) return { ok: false, error: '窗口不存在' };
+  if (hostCtx === sourceCtx) return { ok: false, error: '不能把窗口合并到自己' };
+
+  // 来源窗口不能已分屏（它的多视图结构搬不过来）
   if (sourceCtx.attachedViews && sourceCtx.attachedViews.length) {
-    return { ok: false, error: '源窗口已处于分屏状态，请先拆分' };
+    return { ok: false, error: '被合并的窗口已处于分屏状态，请先拆分它' };
   }
-  // 目标窗口可以接受多次合并；但如果方向不一致，会让布局混乱，要求方向一致
-  const targetDir = targetCtx.splitDirection;
-  const existing = (targetCtx.attachedViews || []).length;
-  if (existing > 0 && targetDir && targetDir !== dir) {
-    return { ok: false, error: '目标窗口已按「' + (targetDir === 'horizontal' ? '左右' : '上下') + '」分屏，请选择相同方向' };
+  // 宿主已分屏时，方向必须与现有分屏一致，否则布局会乱
+  const existing = (hostCtx.attachedViews || []).length;
+  if (existing > 0 && hostCtx.splitDirection && hostCtx.splitDirection !== dir) {
+    return {
+      ok: false,
+      error: '当前窗口已按「' + (hostCtx.splitDirection === 'horizontal' ? '左右' : '上下') + '」分屏，请选择相同方向',
+    };
   }
 
   const view = activeViewOf(sourceCtx);
-  if (!view) return { ok: false, error: '源窗口没有可合并的视图' };
+  if (!view) return { ok: false, error: '被合并的窗口没有可合并的视图' };
 
   return { ok: true, view, direction: dir, targetCount: existing + 2 };
 }
 
-/**
- * 校验并规划一次拆分
- * @returns {{ok:true, view} | {ok:false, error:string}}
- */
 /** 规划拆分全部附加视图 */
 function planUnmergeAll(ctx) {
   if (!ctx) return { ok: false, error: '窗口不存在' };
@@ -57,7 +61,7 @@ function planUnmergeAll(ctx) {
   return { ok: true, views: list.slice() };
 }
 
-/** 规划拆分指定视图 */
+/** 规划拆分指定视图（webContentsId 为空 = 拆全部） */
 function planUnmergeOne(ctx, webContentsId) {
   if (!ctx) return { ok: false, error: '窗口不存在' };
   const list = ctx.attachedViews || [];

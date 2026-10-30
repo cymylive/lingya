@@ -31,8 +31,8 @@ test('normalizeDirection 只接受 horizontal / vertical', () => {
   assert.strictEqual(normalizeDirection(undefined), null);
 });
 
-test('正常合并：返回源窗口的 active 视图与方向', () => {
-  const r = planMerge(mkSource(), mkTarget(), 'horizontal');
+test('正常合并：host 保留，返回 source 的 active 视图', () => {
+  const r = planMerge(mkTarget(), mkSource(), 'horizontal');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.direction, 'horizontal');
   assert.strictEqual(r.view.webContents.id, 'src-wc');
@@ -40,7 +40,7 @@ test('正常合并：返回源窗口的 active 视图与方向', () => {
 });
 
 test('合并方向非法时返回错误', () => {
-  const r = planMerge(mkSource(), mkTarget(), 'diagonal');
+  const r = planMerge(mkTarget(), mkSource(), 'diagonal');
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /方向/);
 });
@@ -52,28 +52,28 @@ test('不能把窗口合并到自己', () => {
   assert.match(r.error, /自己/);
 });
 
-test('源窗口没有 active 视图时拒绝合并', () => {
-  const r = planMerge(mkSource({ activeTabId: null }), mkTarget(), 'horizontal');
+test('来源窗口没有 active 视图时拒绝合并', () => {
+  const r = planMerge(mkTarget(), mkSource({ activeTabId: null }), 'horizontal');
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /没有/);
 });
 
-test('源窗口已经分屏时拒绝再作为源合并', () => {
-  const r = planMerge(mkSource({ attachedViews: [{ webContents: { id: 'x' } }] }), mkTarget(), 'horizontal');
+test('来源窗口已经分屏时拒绝被合并', () => {
+  const r = planMerge(mkTarget(), mkSource({ attachedViews: [{ webContents: { id: 'x' } }] }), 'horizontal');
   assert.strictEqual(r.ok, false);
-  assert.match(r.error, /源窗口已处于分屏/);
+  assert.match(r.error, /被合并的窗口已处于分屏/);
 });
 
-test('目标窗口已有分屏时，同方向可继续合并（3 个起）', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
-  const r = planMerge(mkSource(), tgt, 'horizontal');
+test('宿主已有分屏时，同方向可继续拉入（3 个起）', () => {
+  const host = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
+  const r = planMerge(host, mkSource(), 'horizontal');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.targetCount, 3);
 });
 
-test('目标窗口已有分屏但方向不同时拒绝', () => {
-  const tgt = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
-  const r = planMerge(mkSource(), tgt, 'vertical');
+test('宿主已有分屏但方向不同时拒绝', () => {
+  const host = mkTarget({ attachedViews: [{ webContents: { id: 'a1' } }], splitDirection: 'horizontal' });
+  const r = planMerge(host, mkSource(), 'vertical');
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /方向/);
 });

@@ -1210,44 +1210,44 @@ ipcMainForProfile.handle('shell-run-action', async (event, { action } = {}) => {
 // 视图的原 ctx（profile / sessionStore）保持不动，因此工具调用回传不受影响。
 ipcMainForProfile.handle('window-merge-to', async (event, { targetWindowId, direction } = {}) => {
   try {
-    const sourceCtx = windowState.getContextByWebContents(event.sender);
-    if (!sourceCtx) return { success: false, error: '找不到发起窗口' };
-    // 壳页面传过来的是 profileId（窗口列表用的就是它），也可能直接是 BrowserWindow id，
-    // 两种都认，避免「点了没反应」。
-    const targetCtx = windowState.getWindowByProfileId(targetWindowId)
+    // 语义：谁点「合并」，谁就是宿主，被点的那一方视图搬进来、窗口关闭
+    const hostCtx = windowState.getContextByWebContents(event.sender);
+    if (!hostCtx) return { success: false, error: '找不到发起窗口' };
+    // 壳页面传过来的是 profileId（窗口列表用的就是它），也可能直接是 BrowserWindow id
+    const sourceCtx = windowState.getWindowByProfileId(targetWindowId)
       || windowState.getWindowContext(targetWindowId);
-    if (!targetCtx) return { success: false, error: '目标窗口不存在（可能已关闭）' };
+    if (!sourceCtx) return { success: false, error: '目标窗口不存在（可能已关闭）' };
 
-    const plan = windowMerge.planMerge(sourceCtx, targetCtx, direction);
+    const plan = windowMerge.planMerge(hostCtx, sourceCtx, direction);
     if (!plan.ok) return { success: false, error: plan.error };
 
+    const hostWin = hostCtx.rawWin;
     const sourceWin = sourceCtx.rawWin;
-    const targetWin = targetCtx.rawWin;
-    if (!sourceWin || sourceWin.isDestroyed()) return { success: false, error: '发起窗口已销毁' };
-    if (!targetWin || targetWin.isDestroyed()) return { success: false, error: '目标窗口已销毁' };
+    if (!hostWin || hostWin.isDestroyed()) return { success: false, error: '发起窗口已销毁' };
+    if (!sourceWin || sourceWin.isDestroyed()) return { success: false, error: '目标窗口已销毁' };
 
-    // 1) 从源窗口摘下视图
+    // 1) 从来源窗口摘下视图
     try { sourceWin.contentView.removeChildView(plan.view); } catch (_) {}
 
-    // 2) 挂到目标窗口，并登记
-    targetWin.contentView.addChildView(plan.view);
-    windowState.addAttachedView(targetCtx.win.id, plan.view);
-    targetCtx.splitDirection = plan.direction;
+    // 2) 挂到宿主窗口，并登记
+    hostWin.contentView.addChildView(plan.view);
+    windowState.addAttachedView(hostCtx.win.id, plan.view);
+    hostCtx.splitDirection = plan.direction;
 
-    // 3) 登记视图归属 —— 源窗口马上销毁，只能靠这张表找回 profile/session
+    // 3) 登记视图归属 —— 来源窗口马上销毁，只能靠这张表找回 profile/session
     windowState.rememberViewOwner(plan.view.webContents, sourceCtx);
 
-    // 4) 源窗口已空，关闭它
+    // 4) 来源窗口已空，关闭它
     const sourceId = sourceCtx.win.id;
     try { sourceWin.destroy(); } catch (_) {}
     try { windowState.removeWindow(sourceId); } catch (_) {}
 
-    // 5) 重排目标窗口
-    layoutAIView(targetWin);
+    // 5) 重排宿主窗口
+    layoutAIView(hostWin);
     try {
-      targetWin.webContents.send('lingya-split-changed', {
+      hostWin.webContents.send('lingya-split-changed', {
         split: plan.direction,
-        attachedTitle: (plan.view.webContents && plan.view.webContents.getTitle && plan.view.webContents.getTitle()) || '已合并窗口',
+        count: (hostCtx.attachedViews || []).length,
       });
     } catch (_) {}
 
