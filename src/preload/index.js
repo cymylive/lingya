@@ -92,6 +92,42 @@ function init() {
     return;
   }
 
+  // ===== 全局轻量滚动条样式注入 =====
+  // 解决分屏时网页原生滚动条过宽、视觉突兀的问题
+  try {
+    const style = document.createElement('style');
+    style.textContent = `
+      /* 强制隐藏横向滚动条，防止微小的横向溢出导致滚动条出现 */
+      ::-webkit-scrollbar:horizontal {
+        display: none !important;
+        height: 0 !important;
+      }
+      /* 纵向滚动条变细、半透明 */
+      ::-webkit-scrollbar {
+        width: 6px !important;
+        height: 6px !important;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent !important;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(150, 150, 150, 0.3) !important;
+        border-radius: 4px !important;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(150, 150, 150, 0.6) !important;
+      }
+      /* 兼容 Firefox 等 */
+      * {
+        scrollbar-width: thin !important;
+        scrollbar-color: rgba(150, 150, 150, 0.3) transparent !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  } catch (e) {
+    console.warn('[LingYa] 注入全局滚动条样式失败:', e.message);
+  }
+
   // ===== 第 1 层：核心执行链路（必须先于一切 UI）=====
   // 【架构不变量】拦截器是 Agent 循环的心脏，必须最先启动，且与 UI 初始化完全解耦。
   //
