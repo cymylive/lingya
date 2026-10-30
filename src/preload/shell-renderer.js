@@ -3074,6 +3074,101 @@
       if (t && t.closest && t.closest('.sh-ab-item[data-view="windows"]')) setTimeout(refresh, 200);
     });
     setTimeout(refresh, 300);
+    window.__lyRefreshHScrollbar = refresh;
+  })();
+
+  // ===== 分屏纵向滚动条 =====
+  (function initSplitVScrollbar() {
+    var bar = document.getElementById('lingya-split-vscrollbar');
+    var thumb = document.getElementById('lingya-split-vscrollbar-thumb');
+    if (!bar || !thumb || !window.shellAPI) return;
+
+    var viewportH = 0, contentH = 0, scrollY = 0;
+    var dragging = false;
+
+    function maxScroll() { return Math.max(0, contentH - viewportH); }
+
+    function render() {
+      if (!contentH || contentH <= viewportH) { bar.style.display = 'none'; return; }
+      bar.style.display = 'block';
+      var trackH = bar.clientHeight;
+      var thumbH = Math.max(40, Math.round(trackH * viewportH / contentH));
+      var range = Math.max(1, trackH - thumbH);
+      var top = Math.round(range * (scrollY / Math.max(1, maxScroll())));
+      thumb.style.height = thumbH + 'px';
+      thumb.style.top = top + 'px';
+    }
+
+    function applyScroll(y) {
+      if (!window.shellAPI.setSplitScroll) return;
+      window.shellAPI.setSplitScroll(undefined, y).then(function(r){
+        if (r && r.success) { scrollY = r.scrollY || 0; render(); }
+      })['catch'](function(){});
+    }
+
+    function refresh() {
+      if (!window.shellAPI.getSplitState) return;
+      window.shellAPI.getSplitState().then(function(r){
+        if (!r || !r.success || !r.vscroll) {
+          bar.style.display = 'none';
+          viewportH = 0; contentH = 0; scrollY = 0;
+          return;
+        }
+        viewportH = r.vscroll.viewportHeight || 0;
+        contentH = r.vscroll.contentHeight || 0;
+        scrollY = r.vscroll.scrollY || 0;
+        render();
+      })['catch'](function(){});
+    }
+
+    thumb.addEventListener('mousedown', function(e){
+      dragging = true;
+      e.preventDefault();
+      try { thumb.style.cursor = 'grabbing'; } catch(_) {}
+    });
+    document.addEventListener('mousemove', function(e){
+      if (!dragging) return;
+      var trackH = bar.clientHeight;
+      var thumbH = thumb.offsetHeight;
+      var range = Math.max(1, trackH - thumbH);
+      var rect = bar.getBoundingClientRect();
+      var pos = e.clientY - rect.top - thumbH / 2;
+      pos = Math.max(0, Math.min(range, pos));
+      applyScroll(maxScroll() * (pos / range));
+    });
+    document.addEventListener('mouseup', function(){
+      if (!dragging) return;
+      dragging = false;
+      try { thumb.style.cursor = 'grab'; } catch(_) {}
+    });
+
+    // 鼠标滚轮直接上下滚动分屏内容
+    window.addEventListener('wheel', function(e){
+      if (e.shiftKey) return;
+      if (bar.style.display === 'none') return;
+      var delta = e.deltaY;
+      if (!delta) return;
+      // 若事件来自 AI 网页内部，不拦截（网页自己能滚就别抢）
+      var t = e.target;
+      if (t && t.closest && t.closest('.sh-view, #lingya-sidebar-slot, #lingya-tabbar')) {
+        e.preventDefault();
+        applyScroll(scrollY + delta);
+      }
+    }, { passive: false });
+
+    window.addEventListener('resize', function(){ refresh(); });
+    if (window.shellAPI.onSplitChanged) {
+      try { window.shellAPI.onSplitChanged(function(){ setTimeout(refresh, 100); }); } catch(_) {}
+    }
+    document.addEventListener('click', function(e){
+      var t = e.target;
+      if (t && t.closest && t.closest('.sh-ab-item[data-view="windows"]')) {
+        setTimeout(refresh, 200);
+        if (window.__lyRefreshHScrollbar) setTimeout(window.__lyRefreshHScrollbar, 200);
+      }
+    });
+    setTimeout(refresh, 350);
+    window.__lyRefreshVScrollbar = refresh;
   })();
 
 })();

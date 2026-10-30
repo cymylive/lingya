@@ -1102,45 +1102,45 @@ function layoutAIView(mainWindow) {
       return;
     }
 
-    // 上下分屏
+    // 上下分屏（无缝相连 + 最小高度 + 纵向滚动）
     if (ctx.splitDirection === 'vertical' && attached.length) {
       const activeTab = ctx.tabs.get(ctx.activeTabId);
       const count = 1 + attached.length;
-      const GAP = 4; // 上下视图间隙
-      const eachBaseH = Math.floor((h - GAP * (count - 1)) / count);
-      let currentY = top;
-      let idx = 0;
-      const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) - GAP * (count - 1) : eachBaseH);
+      const GAP = 0;
+      const MIN_HEIGHT = 600;
 
-      // 防溢出安全宽度，避免右下角网页出现横向滚动条
-      const safeW = Math.max(0, w - 1);
+      const availableH = h - GAP * (count - 1);
+      const viewH = Math.max(MIN_HEIGHT, Math.floor(availableH / count));
+      const totalContentH = viewH * count + GAP * (count - 1);
+
+      // 内容溢出时右侧预留滚动条宽度
+      let safeW = Math.max(0, w - 1);
+      if (totalContentH > h) safeW = Math.max(0, w - SPLIT_SCROLLBAR_H - 1);
+
+      const scrollY = ctx.scrollY || 0;
+      let currentY = top - scrollY;
 
       // 1) 宿主面板
       if (activeTab && activeTab.view) {
-        activeTab.view.setBounds({ x: sw, y: currentY, width: safeW, height: getH() });
+        try { activeTab.view.setBounds({ x: sw, y: currentY, width: safeW, height: viewH }); } catch (_) {}
       }
-      currentY += getH() + GAP;
-      idx++;
+      currentY += viewH + GAP;
 
       // 2) 附加面板
       for (const panel of attached) {
-        const hh = getH();
-        // 下方侧边栏贴在最左侧 x=0，与上方视觉融合
         if (panel.sidebarView) {
-          try { panel.sidebarView.setBounds({ x: 0, y: currentY, width: sw, height: hh }); } catch (_) {}
+          try { panel.sidebarView.setBounds({ x: 0, y: currentY, width: sw, height: viewH }); } catch (_) {}
         }
-        // 下方网页与上方左对齐，宽度使用 safeW 防溢出
         if (panel.view) {
-          try { panel.view.setBounds({ x: sw, y: currentY, width: safeW, height: hh }); } catch (_) {}
+          try { panel.view.setBounds({ x: sw, y: currentY, width: safeW, height: viewH }); } catch (_) {}
         }
-        currentY += hh + GAP;
-        idx++;
+        currentY += viewH + GAP;
       }
 
       // 3) 其余隐藏标签
       for (const t of ctx.tabs.values()) {
         if (t === activeTab) continue;
-        try { t.view.setBounds({ x: sw, y: top, width: safeW, height: getH() }); } catch (_) {}
+        try { t.view.setBounds({ x: sw, y: top - scrollY, width: safeW, height: viewH }); } catch (_) {}
       }
       return;
     }
@@ -1443,37 +1443,45 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
       return { webContentsId: p.view.webContents.id, title };
     });
 
-    // 滚动条信息：左右分屏且内容超出视口时才需要
-    let scroll = null;
+    // 滚动信息
+    let scroll = null, vscroll = null;
     const dir = ctx.splitDirection;
-    if (dir === 'horizontal') {
-      const hostWin = ctx.rawWin;
-      if (hostWin && !hostWin.isDestroyed()) {
-        const b = hostWin.getContentBounds();
-        const sw = currentSidebarWidth(hostWin);
-        const w = Math.max(0, b.width - sw);
-        let totalSidebarW = 0;
-        for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
-        const count = 1 + panels.length;
-        const availW = w - totalSidebarW;
-        const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
-        const contentW = sw + viewW * count + totalSidebarW;
-        if (contentW > w) {
-          scroll = { viewportWidth: w, contentWidth: contentW, scrollX: ctx.scrollX || 0 };
-        }
+    const hostWin = ctx.rawWin;
+
+    if (dir === 'horizontal' && hostWin && !hostWin.isDestroyed()) {
+      const b = hostWin.getContentBounds();
+      const sw = currentSidebarWidth(hostWin);
+      const w = Math.max(0, b.width - sw);
+      let totalSidebarW = 0;
+      for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+      const count = 1 + panels.length;
+      const availW = w - totalSidebarW;
+      const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
+      const contentW = sw + viewW * count + totalSidebarW;
+      if (contentW > w) {
+        scroll = { viewportWidth: w, contentWidth: contentW, scrollX: ctx.scrollX || 0 };
+      }
+    } else if (dir === 'vertical' && hostWin && !hostWin.isDestroyed()) {
+      const b = hostWin.getContentBounds();
+      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const count = 1 + panels.length;
+      const MIN_HEIGHT = 600;
+      const viewH = Math.max(MIN_HEIGHT, Math.floor(h / count));
+      const contentH = viewH * count;
+      if (contentH > h) {
+        vscroll = { viewportHeight: h, contentHeight: contentH, scrollY: ctx.scrollY || 0 };
       }
     }
 
-    return { success: true, direction: dir, views: list, scroll };
+    return { success: true, direction: dir, views: list, scroll, vscroll };
   } catch (err) { return { success: false, error: err.message }; }
 });
 
-// 设置横向滚动偏移（壳页面滚动条 / Shift+滚轮 触发）
-ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX } = {}) => {
+// 设置分屏滚动偏移（横向 / 纵向）
+ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX, scrollY } = {}) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
     if (!ctx) return { success: false, error: '找不到窗口' };
-    if (ctx.splitDirection !== 'horizontal') return { success: false, error: '当前不是左右分屏' };
     const hostWin = ctx.rawWin;
     if (!hostWin || hostWin.isDestroyed()) return { success: false };
 
@@ -1481,17 +1489,34 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX } = {}) 
     const sw = currentSidebarWidth(hostWin);
     const w = Math.max(0, b.width - sw);
     const panels = ctx.attachedViews || [];
-    let totalSidebarW = 0;
-    for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
     const count = 1 + panels.length;
-    const availW = w - totalSidebarW;
-    const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
-    const contentW = sw + viewW * count + totalSidebarW;
-    const maxScroll = Math.max(0, contentW - w);
-    const x = Math.max(0, Math.min(maxScroll, Number(scrollX) || 0));
-    ctx.scrollX = x;
-    layoutAIView(hostWin);
-    return { success: true, scrollX: x, maxScroll };
+
+    if (ctx.splitDirection === 'horizontal') {
+      let totalSidebarW = 0;
+      for (const p of panels) totalSidebarW += (p.sidebarOpen ? (p.sidebarWidth || 320) : 46);
+      const availW = w - totalSidebarW;
+      const viewW = Math.max(SPLIT_MIN_WIDTH, Math.floor(availW / count));
+      const contentW = sw + viewW * count + totalSidebarW;
+      const maxScroll = Math.max(0, contentW - w);
+      const x = Math.max(0, Math.min(maxScroll, Number(scrollX) || 0));
+      ctx.scrollX = x;
+      layoutAIView(hostWin);
+      return { success: true, scrollX: x, maxScrollX: maxScroll };
+    }
+
+    if (ctx.splitDirection === 'vertical') {
+      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const MIN_HEIGHT = 600;
+      const viewH = Math.max(MIN_HEIGHT, Math.floor(h / count));
+      const contentH = viewH * count;
+      const maxScroll = Math.max(0, contentH - h);
+      const y = Math.max(0, Math.min(maxScroll, Number(scrollY) || 0));
+      ctx.scrollY = y;
+      layoutAIView(hostWin);
+      return { success: true, scrollY: y, maxScrollY: maxScroll };
+    }
+
+    return { success: false, error: '当前没有分屏' };
   } catch (err) { return { success: false, error: err.message }; }
 });
 
