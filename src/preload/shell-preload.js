@@ -36,6 +36,8 @@ const api = {
   unmergeWindow: (webContentsId) => ipcRenderer.invoke('window-unmerge', { webContentsId }),
   // 查询当前窗口的分屏状态
   getSplitState: () => ipcRenderer.invoke('window-split-state'),
+  // 设置分屏横向滚动偏移
+  setSplitScroll: (scrollX) => ipcRenderer.invoke('window-split-scroll', { scrollX }),
   onSplitChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-split-changed',h); return ()=>ipcRenderer.removeListener('lingya-split-changed',h); },
   // ===== 功能面板 API（v0.6.36 迁移自覆盖层）=====
   // 跨上下文：插入文本到聊天输入框 / 新会话

@@ -2986,4 +2986,94 @@
     window.__lyRenderTabsDropdown = renderTabsDropdown;
   })();
 
+  // ===== 分屏横向滚动条 =====
+  (function initSplitScrollbar() {
+    var bar = document.getElementById('lingya-split-scrollbar');
+    var thumb = document.getElementById('lingya-split-scrollbar-thumb');
+    if (!bar || !thumb || !window.shellAPI) return;
+
+    var viewportW = 0, contentW = 0, scrollX = 0;
+    var dragging = false;
+
+    function maxScroll() { return Math.max(0, contentW - viewportW); }
+
+    function render() {
+      if (!contentW || contentW <= viewportW) { bar.style.display = 'none'; return; }
+      bar.style.display = 'flex';
+      var trackW = bar.clientWidth;
+      var thumbW = Math.max(40, Math.round(trackW * viewportW / contentW));
+      var range = Math.max(1, trackW - thumbW);
+      var left = Math.round(range * (scrollX / Math.max(1, maxScroll())));
+      thumb.style.width = thumbW + 'px';
+      thumb.style.left = left + 'px';
+    }
+
+    function applyScroll(x) {
+      if (!window.shellAPI.setSplitScroll) return;
+      window.shellAPI.setSplitScroll(x).then(function(r){
+        if (r && r.success) { scrollX = r.scrollX; render(); }
+      })['catch'](function(){});
+    }
+
+    function refresh() {
+      if (!window.shellAPI.getSplitState) return;
+      window.shellAPI.getSplitState().then(function(r){
+        if (!r || !r.success) { bar.style.display = 'none'; return; }
+        if (!r.scroll) {
+          bar.style.display = 'none';
+          viewportW = 0; contentW = 0; scrollX = 0;
+          return;
+        }
+        viewportW = r.scroll.viewportWidth || 0;
+        contentW = r.scroll.contentWidth || 0;
+        scrollX = r.scroll.scrollX || 0;
+        render();
+      })['catch'](function(){});
+    }
+
+    thumb.addEventListener('mousedown', function(e){
+      dragging = true;
+      e.preventDefault();
+      try { thumb.style.cursor = 'grabbing'; } catch(_) {}
+    });
+    document.addEventListener('mousemove', function(e){
+      if (!dragging) return;
+      var trackW = bar.clientWidth;
+      var thumbW = thumb.offsetWidth;
+      var range = Math.max(1, trackW - thumbW);
+      var rect = bar.getBoundingClientRect();
+      var pos = e.clientX - rect.left - thumbW / 2;
+      pos = Math.max(0, Math.min(range, pos));
+      var target = maxScroll() * (pos / range);
+      applyScroll(target);
+    });
+    document.addEventListener('mouseup', function(){
+      if (!dragging) return;
+      dragging = false;
+      try { thumb.style.cursor = 'grab'; } catch(_) {}
+    });
+
+    // Shift + 滚轮 横向滚动
+    window.addEventListener('wheel', function(e){
+      if (!e.shiftKey) return;
+      if (bar.style.display === 'none') return;
+      var delta = e.deltaY || e.deltaX;
+      if (!delta) return;
+      e.preventDefault();
+      applyScroll(scrollX + delta);
+    }, { passive: false });
+
+    // 窗口尺寸变化 / 分屏状态变化 → 刷新
+    window.addEventListener('resize', function(){ refresh(); });
+    if (window.shellAPI.onSplitChanged) {
+      try { window.shellAPI.onSplitChanged(function(){ setTimeout(refresh, 60); }); } catch(_) {}
+    }
+    // 进入窗口面板时也刷一次（合并/拆分后状态会变）
+    document.addEventListener('click', function(e){
+      var t = e.target;
+      if (t && t.closest && t.closest('.sh-ab-item[data-view="windows"]')) setTimeout(refresh, 200);
+    });
+    setTimeout(refresh, 300);
+  })();
+
 })();

@@ -1034,12 +1034,14 @@ try {
 // 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口
 // 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
 const { ipcMain: ipcMainForProfile } = require('electron');
-const { computeSplitLayout } = require('./split-layout');
+const { computeSplitLayout, computeScrollContentWidth } = require('./split-layout');
 const windowMerge = require('./window-merge');
 const SIDEBAR_MIN = 240, SIDEBAR_MAX = 640, SIDEBAR_DEFAULT = 320;
 const SIDEBAR_COLLAPSED = 46;   // 收起态：仅显示 activitybar 图标条
 const TABBAR_HEIGHT = 40;        // 顶部标签栏高度（壳页面绘制，AI view 从其下方开始）
 const SPLIT_GAP = 0;             // 合并分屏时两视图之间的间隙（0 = 无缝贴合）
+const SPLIT_MIN_WIDTH = 800;     // 左右分屏时每个视图的最小宽度，超出走主窗口横向滚动
+const SPLIT_SCROLLBAR_H = 14;    // 底部横向滚动条高度
 
 /** 当前侧栏实际占宽：展开=自定义宽，收起=46 */
 function currentSidebarWidth(w) {
@@ -1055,16 +1057,28 @@ function layoutAIView(mainWindow) {
     const sw = currentSidebarWidth(mainWindow);
     const top = TABBAR_HEIGHT;
     const w = Math.max(0, b.width - sw);
-    const h = Math.max(0, b.height - top);
+    let h = Math.max(0, b.height - top);
 
     // 合并模式：宿主自己的 active tab 在前，其后依次是附加视图
     const attached = ctx.attachedViews || [];
     if (ctx.splitDirection && attached.length) {
+      // 左右分屏且内容超出视口时，底部留出滚动条的高度
+      if (ctx.splitDirection === 'horizontal') {
+        const count = 1 + attached.length;
+        const contentW = computeScrollContentWidth(
+          { x: sw, y: top, width: w, height: h }, 'horizontal', count, SPLIT_GAP, SPLIT_MIN_WIDTH
+        );
+        if (contentW > w) h = Math.max(0, h - SPLIT_SCROLLBAR_H);
+      }
       const activeTab = ctx.tabs.get(ctx.activeTabId);
       const views = [];
       if (activeTab && activeTab.view) views.push(activeTab.view);
       for (const v of attached) if (v) views.push(v);
-      const rects = computeSplitLayout({ x: sw, y: top, width: w, height: h }, ctx.splitDirection, views.length, SPLIT_GAP);
+      const rects = computeSplitLayout(
+        { x: sw, y: top, width: w, height: h },
+        ctx.splitDirection, views.length, SPLIT_GAP,
+        SPLIT_MIN_WIDTH, ctx.scrollX || 0
+      );
       if (rects) {
         views.forEach((v, i) => { try { v.setBounds(rects[i]); } catch (_) {} });
       }
@@ -1295,7 +1309,7 @@ ipcMainForProfile.handle('window-unmerge', async (event, { webContentsId } = {})
   } catch (err) { return { success: false, error: err.message }; }
 });
 
-// 查询当前窗口的分屏状态（供 UI 渲染拆分列表）
+// 查询当前窗口的分屏状态（供 UI 渲染拆分列表 + 滚动条）
 ipcMainForProfile.handle('window-split-state', async (event) => {
   try {
     const ctx = windowState.getContextByWebContents(event.sender);
@@ -1305,7 +1319,55 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
       try { title = v.webContents.getTitle() || title; } catch (_) {}
       return { webContentsId: v.webContents.id, title };
     });
-    return { success: true, direction: ctx.splitDirection, views: list };
+
+    // 滚动条信息：左右分屏且内容超出视口时才需要
+    let scroll = null;
+    const dir = ctx.splitDirection;
+    if (dir === 'horizontal') {
+      const hostWin = ctx.rawWin;
+      if (hostWin && !hostWin.isDestroyed()) {
+        const b = hostWin.getContentBounds();
+        const sw = currentSidebarWidth(hostWin);
+        const w = Math.max(0, b.width - sw);
+        const h = Math.max(0, b.height - TABBAR_HEIGHT);
+        const count = 1 + list.length;
+        const contentW = computeScrollContentWidth(
+          { x: sw, y: TABBAR_HEIGHT, width: w, height: h },
+          dir, count, SPLIT_GAP, SPLIT_MIN_WIDTH
+        );
+        if (contentW > w) {
+          scroll = { viewportWidth: w, contentWidth: contentW, scrollX: ctx.scrollX || 0 };
+        }
+      }
+    }
+
+    return { success: true, direction: dir, views: list, scroll };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
+// 设置横向滚动偏移（壳页面滚动条 / Shift+滚轮 触发）
+ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX } = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '找不到窗口' };
+    if (ctx.splitDirection !== 'horizontal') return { success: false, error: '当前不是左右分屏' };
+    const hostWin = ctx.rawWin;
+    if (!hostWin || hostWin.isDestroyed()) return { success: false };
+
+    const b = hostWin.getContentBounds();
+    const sw = currentSidebarWidth(hostWin);
+    const w = Math.max(0, b.width - sw);
+    const h = Math.max(0, b.height - TABBAR_HEIGHT);
+    const count = 1 + (ctx.attachedViews || []).length;
+    const contentW = computeScrollContentWidth(
+      { x: sw, y: TABBAR_HEIGHT, width: w, height: h },
+      'horizontal', count, SPLIT_GAP, SPLIT_MIN_WIDTH
+    );
+    const maxScroll = Math.max(0, contentW - w);
+    const x = Math.max(0, Math.min(maxScroll, Number(scrollX) || 0));
+    ctx.scrollX = x;
+    layoutAIView(hostWin);
+    return { success: true, scrollX: x, maxScroll };
   } catch (err) { return { success: false, error: err.message }; }
 });
 
