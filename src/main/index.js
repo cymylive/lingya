@@ -1106,16 +1106,17 @@ function layoutAIView(mainWindow) {
     if (ctx.splitDirection === 'vertical' && attached.length) {
       const activeTab = ctx.tabs.get(ctx.activeTabId);
       const count = 1 + attached.length;
-      const eachBaseH = Math.floor(h / count);
+      const GAP = 4; // 上下视图间隙
+      const eachBaseH = Math.floor((h - GAP * (count - 1)) / count);
       let currentY = top;
       let idx = 0;
-      const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) : eachBaseH);
+      const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) - GAP * (count - 1) : eachBaseH);
 
       // 1) 宿主面板
       if (activeTab && activeTab.view) {
         activeTab.view.setBounds({ x: sw, y: currentY, width: w, height: getH() });
       }
-      currentY += getH();
+      currentY += getH() + GAP;
       idx++;
 
       // 2) 附加面板
@@ -1128,7 +1129,7 @@ function layoutAIView(mainWindow) {
         if (panel.view) {
           try { panel.view.setBounds({ x: sw + sw2, y: currentY, width: w - sw2, height: hh }); } catch (_) {}
         }
-        currentY += hh;
+        currentY += hh + GAP;
         idx++;
       }
 
