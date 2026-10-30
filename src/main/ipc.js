@@ -92,7 +92,9 @@ function registerIpcHandlers() {
   ipcMain.handle('get-all-todos', async () => {
     const { deriveStatus, summarizeTodos } = require('./task-status');
     const activityTracker = require('./activity-tracker');
+    const generationState = require('./generation-state');
     const now = Date.now();
+    generationState.prune(now);   // 清掉已关闭视图的残记录
     const out = [];
 
     for (const ctx of windowState.getAllContexts()) {
@@ -111,16 +113,24 @@ function registerIpcHandlers() {
       const hostSession = resolveSessionId(ctx, ctx.rawWin ? ctx.rawWin.webContents : null);
       const hostKey = (ctx.profileId || 'p') + '::' + (hostSession || 's');
       const hostTodos = getTodos(hostSession, ctx.profileId);
+      const hostWcId = ctx.view ? ctx.view.webContents.id : null;
+      const hostGen = generationState.get(hostWcId, now);
       panels.push({
-        webContentsId: ctx.view ? ctx.view.webContents.id : null,
+        webContentsId: hostWcId,
         profileId: ctx.profileId,
         sessionId: hostSession,
         isHost: true,
         todos: hostTodos.todos,
         archived: hostTodos.archived,
         summary: summarizeTodos(hostTodos.todos),
-        status: deriveStatus({ todos: hostTodos.todos, activity: activityTracker.get(hostKey), now }),
+        status: deriveStatus({
+          todos: hostTodos.todos,
+          activity: activityTracker.get(hostKey),
+          generating: !!(hostGen && hostGen.generating),
+          now,
+        }),
         activity: activityTracker.get(hostKey),
+        generating: hostGen,
       });
 
       // 附加面板
@@ -140,8 +150,10 @@ function registerIpcHandlers() {
         const sid = resolveSessionId(oCtx, null);
         const key = (oCtx.profileId || 'p') + '::' + (sid || 's');
         const t = getTodos(sid, oCtx.profileId);
+        const attWcId = panel.view.webContents.id;
+        const attGen = generationState.get(attWcId, now);
         panels.push({
-          webContentsId: panel.view.webContents.id,
+          webContentsId: attWcId,
           profileId: oCtx.profileId,
           profileName: oName,
           sessionId: sid,
@@ -149,8 +161,14 @@ function registerIpcHandlers() {
           todos: t.todos,
           archived: t.archived,
           summary: summarizeTodos(t.todos),
-          status: deriveStatus({ todos: t.todos, activity: activityTracker.get(key), now }),
+          status: deriveStatus({
+            todos: t.todos,
+            activity: activityTracker.get(key),
+            generating: !!(attGen && attGen.generating),
+            now,
+          }),
           activity: activityTracker.get(key),
+          generating: attGen,
         });
       }
 

@@ -1147,9 +1147,11 @@
                  + '<span style="font-size:10px;color:var(--ck-text-dim);">' + sum.completed + '/' + sum.total + '</span>'
                  + '</div>';
             }
-            // 当前工具
+            // 当前工具 / 生成状态
             if(p.activity && p.activity.running > 0 && p.activity.lastToolName){
               h += '<div style="font-size:10px;color:var(--ck-text-dim);">正在执行：' + esc(p.activity.lastToolName) + '</div>';
+            } else if(p.generating && p.generating.text){
+              h += '<div style="font-size:10px;color:var(--ck-text-dim);">' + esc(p.generating.text) + '</div>';
             }
             // todo 明细（最多 4 条）
             var todos = p.todos || [];

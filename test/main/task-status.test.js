@@ -29,6 +29,36 @@ test('summarizeTodos 非数组返回全 0', () => {
   assert.strictEqual(r.total, 0);
 });
 
+test('deriveStatus: generating=true 时即使无工具也判定为 running', () => {
+  // 回归：AI 纯文本生成时没有工具在跑、todos 可能为空，仅靠 activity 会误判 idle
+  assert.strictEqual(
+    deriveStatus({ todos: [], activity: { running: 0 }, generating: true }),
+    'running'
+  );
+});
+
+test('deriveStatus: generating 优先于 error/done/waiting', () => {
+  assert.strictEqual(
+    deriveStatus({ todos: [], activity: { running: 0, lastOk: false, lastAt: Date.now() }, generating: true }),
+    'running'
+  );
+  assert.strictEqual(
+    deriveStatus({ todos: [{ status: 'completed' }], activity: {}, generating: true }),
+    'running'
+  );
+  assert.strictEqual(
+    deriveStatus({ todos: [{ status: 'pending' }], activity: {}, generating: true }),
+    'running'
+  );
+});
+
+test('deriveStatus: generating=false 时行为不变', () => {
+  assert.strictEqual(
+    deriveStatus({ todos: [], activity: {}, generating: false }),
+    'idle'
+  );
+});
+
 test('deriveStatus: 有工具在跑 → running', () => {
   const s = deriveStatus({
     todos: [{ content: 'a', status: 'pending' }],

@@ -26,6 +26,7 @@ function summarizeTodos(todos) {
  * @param {object} p
  * @param {Array} p.todos 该窗口当前会话的 todo 列表
  * @param {object} p.activity { running:number, lastToolName:string|null, lastAt:number, lastOk:boolean|null }
+ * @param {boolean} p.generating AI 是否正在思考/生成回复（无工具执行时也会为 true）
  * @param {number} p.now 当前时间戳（便于测试注入）
  * @returns {'running'|'stuck'|'error'|'done'|'waiting'|'idle'}
  */
@@ -37,6 +38,10 @@ function deriveStatus(p) {
   const sum = summarizeTodos(todos);
   const running = Number(act.running) || 0;
   const lastAt = Number(act.lastAt) || 0;
+
+  // 0) AI 正在思考/生成 —— 即使没有工具在跑也是在干活
+  //    必须排在 idle 判定之前，否则纯文本生成会被误判为空闲
+  if (o.generating) return 'running';
 
   // 1) 有工具正在执行 —— 一定在跑
   if (running > 0) return 'running';

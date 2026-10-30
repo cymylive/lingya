@@ -1046,6 +1046,7 @@ const { ipcMain: ipcMainForProfile } = require('electron');
 const { computeSplitLayout, computeScrollContentWidth } = require('./split-layout');
 const windowMerge = require('./window-merge');
 const { createPresetStore } = require('./preset-store');
+const generationState = require('./generation-state');
 // 分屏布局预设：全局单文件，记录「方向 + 面板 profileId 序列」，重启后可按预设重建
 let presetStore = null;
 function getPresetStore() {
@@ -1849,6 +1850,14 @@ ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {})
 // backgroundTasks）在 AI 视图侧。不上报的话，侧边栏完全看不到「AI 正在跑」。
 ipcMain.on('lingya-report-task-state', (event, payload) => {
   try {
+    // 1) 记录下来，供「全部分屏」总控台判定 AI 是否在生成
+    //    键用 AI 视图自己的 webContents.id —— 总控台按面板视图 id 查
+    try {
+      const wcId = event.sender && event.sender.id;
+      generationState.set(wcId, payload);
+    } catch (_) {}
+
+    // 2) 转发给壳窗口侧边栏
     const ctx = windowState.getContextByWebContents(event.sender);
     if (!ctx) return;
     const rawWin = ctx.rawWin || ctx.win;
