@@ -437,6 +437,8 @@ function checkAutoCompact() {
   (async function runMigration() {
     if (state.isMigrating) return;
     state.isMigrating = true;
+    // 增加时间戳，如果 15 秒后页面还没刷新，判定为切换失败，本次任务彻底结束
+    state.migratingAt = Date.now();
     showToast('Token 超阈值，正在自动开启新会话并全量迁移上下文...', 4000);
     
     try {
@@ -490,11 +492,16 @@ function checkAutoCompact() {
       showToast('自动迁移失败: ' + err.message, 5000);
     } finally {
       autoCompactTriggering = false;
-      // 如果10秒后还卡在 isMigrating=true（说明由于页面未刷新导致没收到回复解锁），强制解锁
+      // 如果 15 秒后还卡在 isMigrating=true（说明切换失败或页面未刷新），强制解锁，并清理迁移数据
       setTimeout(() => {
-        if (state.isMigrating) {
-          console.warn('[LingYa 迁移] 超时未收到新会话回复，强制解除防爆锁');
+        if (state.isMigrating && Date.now() - state.migratingAt >= 15000) {
+          console.warn('[LingYa 迁移] 超时未收到新会话回复，迁移失败，强制解除防爆锁');
           state.isMigrating = false;
+          // 如果数据还没被 auto-inject 处理完，说明失败了，直接清理，防止死循环
+          if (localStorage.getItem('lingya-pending-migration')) {
+             localStorage.removeItem('lingya-pending-migration');
+             console.log('[LingYa 迁移] 已清理超时的迁移数据');
+          }
         }
       }, 15000);
     }

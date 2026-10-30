@@ -102,30 +102,50 @@ function maybeInject() {
     }
 
     // 阶段 2：等待系统提示词发送完毕（延时），然后发出历史
-    if (data.stage === 'wait' && Date.now() - data.initAt > 8000) {
-      const input = document.querySelector('textarea[placeholder*="发送"], textarea[placeholder*="输入"], textarea');
-      if (!input) return;
+    if (data.stage === 'wait') {
+      // 超时 60 秒，如果项目初始化死锁，直接清理，防止永久卡死
+      if (Date.now() - data.initAt > 60000) {
+        localStorage.removeItem('lingya-pending-migration');
+        console.error('[LingYa 迁移] 初始化等待超时，取消迁移');
+        return;
+      }
+      
+      // 用户如果是手动点了停止，就尊重用户，不发了
+      const state = require('./state');
+      if (state.stopped) {
+        localStorage.removeItem('lingya-pending-migration');
+        console.log('[LingYa 迁移] 检测到用户已停止，取消发送历史');
+        return;
+      }
 
-      data.stage = 'sent';
-      localStorage.setItem('lingya-pending-migration', JSON.stringify(data));
+      if (Date.now() - data.initAt > 8000) {
+        const input = document.querySelector('textarea[placeholder*="发送"], textarea[placeholder*="输入"], textarea');
+        if (!input) return;
 
-      console.log('[LingYa 迁移] 延时已到，准备发送历史');
-      try {
-        const state = require('./state');
-        state.stopped = false;
-        state.stoppedAt = 0;
-        if (window.electronAPI && window.electronAPI.clearAbort) {
-          window.electronAPI.clearAbort();
+        console.log('[LingYa 迁移] 延时已到，准备发送历史');
+        try {
+          // 解除停止状态，允许发送
+          state.stopped = false;
+          state.stoppedAt = 0;
+          if (window.electronAPI && window.electronAPI.clearAbort) {
+            window.electronAPI.clearAbort();
+          }
+          state.initializationDone = true;
+          state.pendingInitialPrompt = false;
+
+          const msg = '【历史上下文承接】\n以下是上一个会话的完整历史记录，请仔细阅读并继续之前的工作。\n\n' + data.history;
+          console.log('[LingYa 迁移] 准备调用 sendMessageToChat, 长度=' + msg.length);
+          
+          // 发送成功，才标记为 sent
+          require('./chat-input').sendMessageToChat(msg, '历史迁移', { auto: true });
+          
+          data.stage = 'sent';
+          localStorage.setItem('lingya-pending-migration', JSON.stringify(data));
+          console.log('[LingYa 迁移] sendMessageToChat 调用完成，标记为已发送');
+        } catch (e) {
+          console.error('[LingYa 迁移] 发送历史异常，取消迁移:', e);
+          localStorage.removeItem('lingya-pending-migration');
         }
-        state.initializationDone = true;
-        state.pendingInitialPrompt = false;
-
-        const msg = '【历史上下文承接】\n以下是上一个会话的完整历史记录，请仔细阅读并继续之前的工作。\n\n' + data.history;
-        console.log('[LingYa 迁移] 准备调用 sendMessageToChat, 长度=' + msg.length);
-        require('./chat-input').sendMessageToChat(msg, '历史迁移', { auto: true });
-        console.log('[LingYa 迁移] sendMessageToChat 调用完成');
-      } catch (e) {
-        console.error('[LingYa 迁移] 发送历史异常:', e);
       }
       return;
     }
