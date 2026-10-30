@@ -30,6 +30,7 @@ const { NameConversationTool } = require('./NameConversationTool');
 const { SendMediaTool } = require('./SendMediaTool');
 const { ListPluginsTool } = require('./ListPluginsTool');
 const { PurgeTool } = require('./PurgeTool');
+const { ListWindowsTool, DispatchToWindowTool } = require('./DispatchTool');
 
 // 创建全局工具注册表
 const registry = new ToolRegistry();
@@ -74,6 +75,8 @@ registry.register(new NameConversationTool());
 registry.register(new ListPluginsTool());
 registry.register(new PurgeTool());
 registry.register(new SendMediaTool());
+registry.register(new ListWindowsTool());
+registry.register(new DispatchToWindowTool());
 
 // 导出
 module.exports = {
@@ -108,6 +111,8 @@ module.exports = {
   ListPluginsTool,
   PurgeTool,
   SendMediaTool,
+  ListWindowsTool,
+  DispatchToWindowTool,
   // 便捷方法
   getAllTools: () => registry,
   getToolDescriptions: () => registry.getDescriptions(),
