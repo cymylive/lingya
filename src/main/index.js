@@ -1112,22 +1112,23 @@ function layoutAIView(mainWindow) {
       let idx = 0;
       const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) - GAP * (count - 1) : eachBaseH);
 
-      // 1) 宿主面板
+      // 1) 宿主面板（不带有独立侧边栏，因为宿主侧边栏是全局的那个）
       if (activeTab && activeTab.view) {
         activeTab.view.setBounds({ x: sw, y: currentY, width: w, height: getH() });
       }
       currentY += getH() + GAP;
       idx++;
 
-      // 2) 附加面板
+      // 2) 附加面板（下方侧边栏贴在最左侧，与上方完美对齐）
       for (const panel of attached) {
-        const sw2 = panel.sidebarOpen ? (panel.sidebarWidth || 320) : 46;
         const hh = getH();
+        // 附加面板的侧边栏：放在最左侧 x=0，宽度与上方全局侧边栏齐平
         if (panel.sidebarView) {
-          try { panel.sidebarView.setBounds({ x: sw, y: currentY, width: sw2, height: hh }); } catch (_) {}
+          try { panel.sidebarView.setBounds({ x: 0, y: currentY, width: sw, height: hh }); } catch (_) {}
         }
+        // 附加面板的网页：与上方网页左对齐 (x=sw)
         if (panel.view) {
-          try { panel.view.setBounds({ x: sw + sw2, y: currentY, width: w - sw2, height: hh }); } catch (_) {}
+          try { panel.view.setBounds({ x: sw, y: currentY, width: w, height: hh }); } catch (_) {}
         }
         currentY += hh + GAP;
         idx++;
