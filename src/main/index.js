@@ -1112,23 +1112,26 @@ function layoutAIView(mainWindow) {
       let idx = 0;
       const getH = () => (idx === count - 1 ? h - eachBaseH * (count - 1) - GAP * (count - 1) : eachBaseH);
 
-      // 1) 宿主面板（不带有独立侧边栏，因为宿主侧边栏是全局的那个）
+      // 防溢出安全宽度，避免右下角网页出现横向滚动条
+      const safeW = Math.max(0, w - 1);
+
+      // 1) 宿主面板
       if (activeTab && activeTab.view) {
-        activeTab.view.setBounds({ x: sw, y: currentY, width: w, height: getH() });
+        activeTab.view.setBounds({ x: sw, y: currentY, width: safeW, height: getH() });
       }
       currentY += getH() + GAP;
       idx++;
 
-      // 2) 附加面板（下方侧边栏贴在最左侧，与上方完美对齐）
+      // 2) 附加面板
       for (const panel of attached) {
         const hh = getH();
-        // 附加面板的侧边栏：放在最左侧 x=0，宽度与上方全局侧边栏齐平
+        // 下方侧边栏贴在最左侧 x=0，与上方视觉融合
         if (panel.sidebarView) {
           try { panel.sidebarView.setBounds({ x: 0, y: currentY, width: sw, height: hh }); } catch (_) {}
         }
-        // 附加面板的网页：与上方网页左对齐 (x=sw)
+        // 下方网页与上方左对齐，宽度使用 safeW 防溢出
         if (panel.view) {
-          try { panel.view.setBounds({ x: sw, y: currentY, width: w, height: hh }); } catch (_) {}
+          try { panel.view.setBounds({ x: sw, y: currentY, width: safeW, height: hh }); } catch (_) {}
         }
         currentY += hh + GAP;
         idx++;
@@ -1137,7 +1140,7 @@ function layoutAIView(mainWindow) {
       // 3) 其余隐藏标签
       for (const t of ctx.tabs.values()) {
         if (t === activeTab) continue;
-        try { t.view.setBounds({ x: sw, y: top, width: w, height: getH() }); } catch (_) {}
+        try { t.view.setBounds({ x: sw, y: top, width: safeW, height: getH() }); } catch (_) {}
       }
       return;
     }
