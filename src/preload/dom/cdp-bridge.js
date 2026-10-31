@@ -92,6 +92,19 @@ function handleEvent(fakeWindow, payload) {
     return;
   }
 
+  if (kind === 'error') {
+    // 【2026-11-01 新增】HTTP 429 / 4xx / 限流标记 / 网络失败 → 派发 AI_ERROR
+    // 结构与 deepseek.js hook 里的 dispatchError 一致
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.AI_ERROR, {
+      at: Date.now(),
+      reason: data.reason || 'unknown',
+      httpStatus: typeof data.httpStatus === 'number' ? data.httpStatus : null,
+      bizCode: typeof data.bizCode === 'number' ? data.bizCode : null,
+      errorText: data.errorText || null,
+    }));
+    return;
+  }
+
   if (kind === 'interrupted') {
     // 中断也走 AI_RESPONSE，但 interrupted=true、finished=true
     // 这样下游统一按「一轮回复结束」处理，不会卡在等待态。

@@ -103,6 +103,24 @@ async function handleLoadingFinished(dbg, providerId, params, handler) {
     }
     return;
   }
+  // 【2026-11-01 新增】DeepSeek 有时用 HTTP 200 + body 内 biz_code=40029 / 限流文案 表达"操作频繁"
+  // 先检查 body 再决定是否走正常 SSE 解析
+  if (bodyText && typeof handler.onError === 'function') {
+    const low = String(bodyText).toLowerCase();
+    const byKeyword =
+      low.indexOf('too frequently') !== -1 || low.indexOf('rate limit') !== -1 ||
+      low.indexOf('too many requests') !== -1 || low.indexOf('too fast') !== -1 ||
+      low.indexOf('过于频繁') !== -1 || low.indexOf('频率过快') !== -1 ||
+      low.indexOf('稍后再试') !== -1 || low.indexOf('稍后再发') !== -1;
+    const byBizCode =
+      bodyText.indexOf('"code":40029') !== -1 || bodyText.indexOf('"code": 40029') !== -1 ||
+      bodyText.indexOf('"biz_code":40029') !== -1 || bodyText.indexOf('"biz_code": 40029') !== -1;
+    if (byKeyword || byBizCode) {
+      log('[cdp-capture] 检测到限流标记: keyword=' + byKeyword + ' bizCode=' + byBizCode);
+      try { handler.onError({ reason: 'rate_limit', bizCode: byBizCode ? 40029 : null }); } catch (_) {}
+      return;  // 不解析，本轮已失败
+    }
+  }
   let parsed;
   try {
     parsed = sse.parseFullBody(bodyText);
@@ -139,10 +157,18 @@ async function handleLoadingFinished(dbg, providerId, params, handler) {
 }
 
 function handleLoadingFailed(params, handler) {
-  if (!handler || typeof handler.onInterrupted !== 'function') return;
+  if (!handler) return;
   const reason = (params && params.errorText) || 'loading_failed';
-  try { handler.onInterrupted(reason); } catch (err) {
-    log('onInterrupted 回调抛异常:', err && err.message);
+  // 【2026-11-01】网络失败也算失败，触发重试引擎
+  if (typeof handler.onError === 'function') {
+    try { handler.onError({ reason: 'network', errorText: reason }); }
+    catch (err) { log('onError 回调抛异常:', err && err.message); }
+  }
+  // 同时让下游知道本轮结束
+  if (typeof handler.onInterrupted === 'function') {
+    try { handler.onInterrupted(reason); } catch (err) {
+      log('onInterrupted 回调抛异常:', err && err.message);
+    }
   }
 }
 
@@ -193,6 +219,9 @@ function attach(wc, providerId, handlers) {
   // 记录「哪些 requestId 是我们关心的」。只有 isCompletion 命中的请求才抓 body，
   // 否则每一条静态资源请求都会触发 getResponseBody，白白拖慢页面。
   const watched = new Set();
+  // 【2026-11-01 新增】HTTP 状态记录：requestId -> { status, mimeType }
+  // 用于识别 429 / 4xx / 5xx 等失败响应，派发 onError 触发重试引擎
+  const responseStatus = new Map();
   // 【对齐 Cuckoo 2026-11-01】流式字节累计：用于 TPS 测速（fetch 流）
   // requestId -> 已接收字节数（从 dataReceived 累计）
   const streamBytes = new Map();
@@ -230,6 +259,17 @@ function attach(wc, providerId, handlers) {
             try { handler.onUserMessage(userText); } catch (e) { log('onUserMessage 抛异常:', e && e.message); }
           }
         }
+        return;
+      }
+
+      // 【2026-11-01 新增】记录 HTTP 状态码，用于后续识别 429/4xx/5xx
+      if (method === 'Network.responseReceived') {
+        if (!watched.has(params.requestId)) return;
+        const r = params.response || {};
+        responseStatus.set(params.requestId, {
+          status: typeof r.status === 'number' ? r.status : 0,
+          mimeType: r.mimeType || '',
+        });
         return;
       }
 
@@ -274,6 +314,21 @@ function attach(wc, providerId, handlers) {
           try { handler.onStream({ bytes: totalBytes, requestId: params.requestId, finished: true }); }
           catch (e) { log('onStream(final) 抛异常:', e && e.message); }
         }
+        // 【2026-11-01 新增】优先检查 HTTP 状态，失败时派发 onError
+        const st = responseStatus.get(params.requestId) || {};
+        responseStatus.delete(params.requestId);
+        const httpStatus = st.status || 0;
+        if (typeof handler.onError === 'function') {
+          if (httpStatus === 429) {
+            try { handler.onError({ reason: 'rate_limit', httpStatus: 429 }); } catch (e) { log('onError 抛异常:', e && e.message); }
+            return;
+          }
+          if (httpStatus >= 400) {
+            try { handler.onError({ reason: 'http', httpStatus: httpStatus }); } catch (e) { log('onError 抛异常:', e && e.message); }
+            return;
+          }
+        }
+        // 正常响应：走 SSE 解析
         handleLoadingFinished(wc.debugger, providerId, params, handler);
         return;
       }

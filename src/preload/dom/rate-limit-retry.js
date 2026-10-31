@@ -175,6 +175,11 @@ function handleAiError(detail) {
 /** 成功回复后重置 */
 function onSuccessResponse(detail) {
   if (!detail || !detail.finished) return;
+  // 【2026-11-01 修复】中断（interrupted=true）不是成功，不清零计数
+  if (detail.interrupted) {
+    console.log('[LingYa][重试] 收到中断回复（interrupted=true），不清零计数');
+    return;
+  }
   if (normalCount > 0 || count429 > 0) {
     console.log('[LingYa][重试] 成功回复，清零计数（原 普通=' + normalCount + ' 429=' + count429 + '）');
     normalCount = 0;

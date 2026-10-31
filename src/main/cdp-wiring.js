@@ -73,6 +73,8 @@ async function handleEnable(event, args) {
       kind: 'interrupted',
       data: { text: '', reason: reason || 'unknown' },
     }),
+    // 【2026-11-01 新增】失败事件：HTTP 429 / 4xx / body 限流标记 / 网络失败
+    onError: (detail) => send({ kind: 'error', data: detail || {} }),
   };
 
   const r = capture.attach(sender, providerId, handlers);
