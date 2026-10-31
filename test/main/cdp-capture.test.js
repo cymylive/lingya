@@ -110,3 +110,53 @@ test('ensureAttached 对已 attach 的直接返回，不重复 attach', () => {
 test('ensureAttached 对非法 wc 抛异常', () => {
   assert.throws(() => capture.ensureAttached(null), /webContents/);
 });
+
+test('trackLifecycle 在 destroyed 时自动 detach', () => {
+  const listeners = {};
+  let attached = true;
+  const fake = {
+    id: 7001,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => attached,
+      attach: () => { attached = true; },
+      detach: () => { attached = false; },
+      sendCommand: async () => ({}),
+      on: () => {},
+      removeListener: () => {},
+    },
+    on: (ev, cb) => { listeners[ev] = cb; },
+    once: (ev, cb) => { listeners[ev] = cb; },
+  };
+  capture.__test.trackLifecycle(fake, {}, 'deepseek');
+  assert.strictEqual(typeof listeners['destroyed'], 'function', '必须监听 destroyed');
+  listeners['destroyed']();
+  assert.strictEqual(capture.isAttached(fake), false);
+});
+
+test('trackLifecycle 在 did-navigate 时重新 attach', () => {
+  const listeners = {};
+  let attached = true;
+  let attachCount = 0;
+  const fake = {
+    id: 7002,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => attached,
+      attach: () => { attached = true; attachCount++; },
+      detach: () => { attached = false; },
+      sendCommand: async () => ({}),
+      on: () => {},
+      removeListener: () => {},
+    },
+    on: (ev, cb) => { listeners[ev] = cb; },
+    once: (ev, cb) => { listeners[ev] = cb; },
+  };
+  capture.__test.trackLifecycle(fake, {}, 'deepseek');
+  assert.strictEqual(typeof listeners['did-navigate'], 'function', '必须监听 did-navigate');
+  // 模拟导航：debugger 被浏览器自动断开
+  attached = false;
+  listeners['did-navigate']();
+  assert.strictEqual(attachCount >= 1, true, '导航后必须重新 attach');
+  assert.strictEqual(capture.isAttached(fake), true);
+});

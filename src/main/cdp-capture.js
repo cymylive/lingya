@@ -232,17 +232,51 @@ function attach(wc, providerId, handlers) {
   tracked.set(key, { handler: h, listener, providerId });
   log('attach 成功, webContents.id=' + key + ' provider=' + providerId);
 
-  // 生命周期兜底（Task 7 会补完整逻辑，这里先挂最小清理）
-  try {
-    if (typeof wc.on === 'function') {
-      const onDestroyed = () => {
-        try { detach(wc); } catch (_) {}
-      };
-      wc.once && wc.once('destroyed', onDestroyed);
-    }
-  } catch (_) {}
+  trackLifecycle(wc, h, providerId);
 
   return { ok: true };
+}
+
+/**
+ * 注册 webContents 生命周期兜底：
+ *  - destroyed：页面没了，debugger 必须清掉，否则 tracked 里留死引用
+ *  - did-navigate：页面导航后浏览器会断开 debugger 连接（Electron 行为），
+ *    需要重新 attach 并重装事件监听，否则新页面的回复收不到
+ *
+ * handler 与 providerId 显式传入（不从 tracked 反查），
+ * 这样单测可以直接传 fake，不需要先走完整 attach 流程。
+ */
+function trackLifecycle(wc, handler, providerId) {
+  if (!wc || typeof wc.on !== 'function') return;
+
+  const onDestroyed = () => {
+    try { detach(wc); } catch (err) {
+      log('destroyed 清理失败:', err && err.message);
+    }
+  };
+
+  const onNavigate = () => {
+    log('页面导航，重建 debugger 连接, webContents.id=' + wc.id);
+    try { detach(wc); } catch (_) {}
+    // 重新 attach。失败只记日志：页面可能正在加载中，debugger 暂时不可用；
+    // 下一次导航或用户重试时会再走这条路径。
+    try {
+      const r = attach(wc, providerId, handler || {});
+      if (!r.ok) log('导航后重新 attach 失败:', r.error);
+    } catch (err) {
+      log('导航后重新 attach 抛异常:', err && err.message);
+    }
+  };
+
+  try {
+    // 用 once 挂 destroyed：销毁只发生一次，on 会留悬挂监听
+    if (typeof wc.once === 'function') wc.once('destroyed', onDestroyed);
+    else wc.on('destroyed', onDestroyed);
+  } catch (_) {}
+  try {
+    // did-navigate 可能多次（每次导航都要重建），必须用 on
+    wc.on('did-navigate', onNavigate);
+  } catch (_) {}
 }
 
 function detach(wc) {
@@ -295,5 +329,6 @@ module.exports = {
     handleLoadingFailed,
     decodeBody,
     extractUserMessage,
+    trackLifecycle,
   },
 };
