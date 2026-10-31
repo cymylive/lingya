@@ -1,0 +1,210 @@
+/**
+ * 跨窗口 Token 轮转 · 核心模块（主进程）
+ *
+ * 职责：
+ *   1. 配置持久化（<storeDir>/token-rotation.json）
+ *   2. 从窗口池中选出下一个目标窗口（纯函数 selectNextIndex）
+ *   3. 迁移中继：submit 派发 → ack 回执 → 超时看门狗
+ *   4. 候选窗口列表构建（buildCandidates）
+ *
+ * 不做的事：
+ *   - 不直接操作目标窗口的 localStorage
+ *   - 不直接删除任何会话（删旧会话永远由源窗口在 ack 成功后执行）
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+/** 默认配置 */
+const DEFAULT_CONFIG = {
+  // 是否启用跨窗口轮转。关闭时行为与今天完全一致（走原地迁移）。
+  enabled: false,
+  // 阈值，单位「万 token」。10 表示 10 万 token。
+  // 注意：与既有的 lingya-auto-compact-threshold（80 万）互不干扰，
+  // 轮转启用时用本阈值判定，未启用时用原阈值。
+  thresholdWan: 10,
+  // 窗口池：[{ profileId, accountTag, enabled }]
+  pool: [],
+  // 环形游标：下一次从 pool[cursor] 之后开始找目标
+  cursor: 0,
+  // 连续轮转次数上限，防止死循环
+  maxRotations: 5,
+  // 单会话时长上限（小时）
+  maxSessionHours: 4,
+  // 是否优先选择不同账号的窗口
+  preferDifferentAccount: true,
+  // 目标窗口忙时最多等待多久（毫秒）
+  targetBusyWaitMs: 60000,
+  // 迁移载荷（历史 Markdown）字节上限，默认 2MB
+  historyMaxBytes: 2097152,
+};
+
+/** 数值字段的归一化配置：{ 最小值 } */
+const NUMERIC_FIELDS = {
+  thresholdWan: { min: 1 },
+  cursor: { min: 0 },
+  maxRotations: { min: 1 },
+  maxSessionHours: { min: 1 },
+  targetBusyWaitMs: { min: 1 },
+  historyMaxBytes: { min: 1 },
+};
+
+const BOOLEAN_FIELDS = ['enabled', 'preferDifferentAccount'];
+
+let STORE_FILE = null;
+let cache = null;
+
+/**
+ * 初始化存储位置。
+ * @param {string} storeDir 数据目录
+ */
+function init(storeDir) {
+  STORE_FILE = path.join(storeDir, 'token-rotation.json');
+  cache = null;
+  console.log('[Rotation] 存储文件:', STORE_FILE);
+}
+
+function getStoreFile() {
+  return STORE_FILE;
+}
+
+/**
+ * 归一化数值字段：非有限数或小于下限 → 回落默认值。
+ */
+function normalizeNumeric(value, fallback, min) {
+  if (value === '' || value === null || value === undefined) return fallback;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return n;
+}
+
+/**
+ * 归一化窗口池：必须是数组；元素缺 profileId 的丢弃；
+ * accountTag 转字符串（缺省空串）；enabled 严格布尔（缺省 true）。
+ */
+function normalizePool(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const profileId = item.profileId == null ? '' : String(item.profileId);
+    if (!profileId) continue;
+    out.push({
+      profileId,
+      accountTag: item.accountTag == null ? '' : String(item.accountTag),
+      enabled: item.enabled !== false,
+    });
+  }
+  return out;
+}
+
+/**
+ * 把任意输入归一化成合法配置对象。以 DEFAULT_CONFIG 为底，逐字段覆盖。
+ */
+function normalizeConfig(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = { ...DEFAULT_CONFIG };
+
+  for (const [key, { min }] of Object.entries(NUMERIC_FIELDS)) {
+    out[key] = normalizeNumeric(src[key], DEFAULT_CONFIG[key], min);
+  }
+  for (const key of BOOLEAN_FIELDS) {
+    out[key] = src[key] === true;
+  }
+  out.pool = normalizePool(src.pool);
+  return out;
+}
+
+function readRaw() {
+  if (cache) return cache;
+  try {
+    if (STORE_FILE && fs.existsSync(STORE_FILE)) {
+      const text = fs.readFileSync(STORE_FILE, 'utf-8');
+      const parsed = JSON.parse(text);
+      cache = normalizeConfig(parsed);
+      return cache;
+    }
+  } catch (err) {
+    console.error('[Rotation] 读取失败:', err.message);
+  }
+  cache = { ...DEFAULT_CONFIG, pool: [] };
+  return cache;
+}
+
+/**
+ * 原子写入：先写临时文件再 rename，避免写一半崩溃留下损坏 JSON。
+ */
+function writeRaw(data) {
+  cache = data;
+  try {
+    if (STORE_FILE) {
+      fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
+      const tmp = STORE_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tmp, STORE_FILE);
+    }
+  } catch (err) {
+    console.error('[Rotation] 写入失败:', err.message);
+  }
+}
+
+/**
+ * 读取配置（返回深拷贝，调用方随便改不影响内部缓存）。
+ */
+function getConfig() {
+  return JSON.parse(JSON.stringify(readRaw()));
+}
+
+/**
+ * 局部更新配置。归一化后落盘，返回新配置的深拷贝。
+ * @param {object} patch 要更新的字段（未传的保留原值）
+ */
+function updateConfig(patch) {
+  if (!patch || typeof patch !== 'object') {
+    throw new Error('配置更新必须是对象');
+  }
+  const current = readRaw();
+  const merged = { ...current };
+  for (const key of Object.keys(DEFAULT_CONFIG)) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      merged[key] = patch[key];
+    }
+  }
+  const next = normalizeConfig(merged);
+  writeRaw(next);
+  console.log('[Rotation] 配置已更新');
+  return getConfig();
+}
+
+/**
+ * 重置轮转运行状态：cursor 归零、轮转计数器清零。配置项（阈值/池等）保留。
+ */
+function resetState() {
+  const current = readRaw();
+  const next = normalizeConfig({ ...current, cursor: 0 });
+  writeRaw(next);
+  rotationCount = 0;
+  sessionStartedAt = null;
+  console.log('[Rotation] 状态已重置');
+  return getConfig();
+}
+
+// ===== 运行时状态（不进配置文件）=====
+let rotationCount = 0;
+let sessionStartedAt = null;
+
+function _resetForTest() {
+  rotationCount = 0;
+  sessionStartedAt = null;
+}
+
+module.exports = {
+  DEFAULT_CONFIG,
+  init,
+  getStoreFile,
+  getConfig,
+  updateConfig,
+  resetState,
+  _resetForTest,
+};
