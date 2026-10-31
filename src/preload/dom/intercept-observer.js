@@ -11,6 +11,37 @@ const { setFabState, getFabState, setStopped, markTaskDone } = require('../overl
 const { hasTool, toolNamesList } = require('../tool-names');
 const state = require('./state');
 const taskState = require('./task-state');
+
+// ===== token 按会话缓存的持久化（localStorage）=====
+// 为什么需要：state.serverTokenUsageBySession 只在内存，关闭 LingYa 后丢失，
+// 重新打开同一对话时悬浮球显示 0（用户实测反馈）。
+// 为什么整体序列化成一个键：写入只在收到 AI 响应时发生（每轮一次），全量序列化开销可忽略；
+// 集中一个键便于清理和排查，不用遍历 localStorage 找前缀。
+const TOKEN_CACHE_KEY = 'lingya-token-by-session';
+
+/** 从 localStorage 读取 token 缓存；脏数据一律丢弃，返回空对象 */
+function loadTokenCache() {
+  try {
+    const raw = localStorage.getItem(TOKEN_CACHE_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    const out = {};
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      // 只保留结构合法的条目，防止旧格式/手改数据污染内存
+      if (v && typeof v === 'object' && typeof v.accumulatedTokens === 'number') out[k] = v;
+    }
+    return out;
+  } catch (_) { return {}; }
+}
+
+/** 把 token 缓存写回 localStorage；配额不足/隐私模式时静默降级，绝不影响功能 */
+function saveTokenCache(map) {
+  try {
+    localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(map || {}));
+  } catch (_) { /* QuotaExceeded / 禁用存储 → 仅内存生效 */ }
+}
 const { detectXmlFormat } = require('./xml-detect');
 const { shouldPreempt, preemptPreviousRun } = require('./intercept-preempt');
 
@@ -506,6 +537,25 @@ function onInterceptedResponse(cb) {
  * 启动拦截事件监听
  */
 function startInterceptObserver() {
+  // 【token 持久化】启动时把上次会话的 token 缓存读回内存，
+  // 这样打开历史对话就能直接显示上次的数字，不必等新响应。
+  try {
+    const cached = loadTokenCache();
+    const n = Object.keys(cached).length;
+    state.serverTokenUsageBySession = cached;
+    // 关键：启动后若页面直接停在某个会话的 URL，watchSessionForStateReset 的 check()
+    // 因 sid === lastSid 不会触发，serverTokenUsage 会一直是 null，悬浮球显示 0。
+    // 这里主动按当前 URL 搬运一次，保证「重开即显示上次的数字」。
+    try {
+      const { getProviderByUrl } = require('../../providers');
+      const _p0 = getProviderByUrl(window.location.href);
+      const _sid0 = (_p0 && typeof _p0.extractSessionId === 'function'
+        ? _p0.extractSessionId(window.location.href)
+        : null) || '__home__';
+      state.serverTokenUsage = cached[_sid0] || null;
+    } catch (_) {}
+    if (n > 0) console.log('[LingYa][Token] 已从 localStorage 恢复 ' + n + ' 个会话的 token 缓存');
+  } catch (_) { /* 恢复失败不影响启动 */ }
   // 从 localStorage 恢复上次的状态机快照（页面刷新 / 渲染进程崩溃重载后走这里）。
   // 不恢复的话，状态机会归零回 IDLE，supervisor 就不知道「上次停在 AWAITING」，
   // 崩溃后无法接着判断该不该兜底。
@@ -720,6 +770,20 @@ function startInterceptObserver() {
       // 保存服务端权威 token 统计（供面板显示）
       if (detail.tokenUsage) {
         state.serverTokenUsage = detail.tokenUsage;
+        // 【token 按会话隔离】同时写入按会话缓存。
+        // 为什么从 URL 直接解析 sid 而不用 state.currentSessionId：
+        // 后者由 800ms 轮询更新，刚发完请求就切会话时有最多 800ms 的时序窗口，
+        // 会把 A 会话的 token 误记到 B 的键上。URL 是同步可信的。
+        try {
+          const { getProviderByUrl } = require('../../providers');
+          const _p = getProviderByUrl(window.location.href);
+          const _sid = (_p && typeof _p.extractSessionId === 'function'
+            ? _p.extractSessionId(window.location.href)
+            : null) || '__home__';
+          state.serverTokenUsageBySession[_sid] = detail.tokenUsage;
+          // 同步落盘：关闭 LingYa 再打开时仍能看到该会话的 token
+          saveTokenCache(state.serverTokenUsageBySession);
+        } catch (_) { /* URL 解析失败不阻断 token 显示 */ }
       }
       // 保存最近一次回复的消息 id（压缩时定位摘要用）
       if (detail.msgIds) {
@@ -793,6 +857,15 @@ function startInterceptObserver() {
       // 【监督激活】按会话独立：只更新当前会话 ID，不清空 activatedSessions。
       // 切到别的会话时 canNudge() 查集合自然返回 false（若该会话没建过计划）。
       state.currentSessionId = sid;
+      // 【token 按会话隔离】切到目标会话时，把该会话的 token 值搬回显示字段。
+      // 没有缓存（第一次进入/刷新后未响应）→ 置 null，悬浮球显示 0，等下次响应自动填充。
+      // 不这么做的话，切会话后悬浮球会一直显示上一个会话的 token 数，界面上是错的。
+      // 显示刷新交给 events.js 的 1 秒定时器（updateConversationTokenDisplay），
+      // 这里只做状态搬运，不跨模块调用渲染函数（dom 层不应依赖 overlay 层的私有函数）。
+      try {
+        const _tokenKey = sid || '__home__';
+        state.serverTokenUsage = state.serverTokenUsageBySession[_tokenKey] || null;
+      } catch (_) {}
       // 首页暂存的激活请求：会话 ID 一出现立即补激活
       if (sid && state.pendingActivation) {
         state.pendingActivation = false;

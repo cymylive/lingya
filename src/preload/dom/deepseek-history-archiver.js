@@ -21,6 +21,37 @@ const STYLE_ID = 'lingya-archived-css';
 const HIDDEN_ATTR = 'data-lingya-archived-hidden';
 const STORAGE_KEY = 'lingya-ds-archived-sessions';
 
+// ===== 会话删除时清理 token 缓存 =====
+// 会话被真正删除后，它在 lingya-token-by-session 里的缓存条目就没有意义了，
+// 留着只会让 localStorage 无限增长。归档不算删除（可取消归档），故不清理。
+const TOKEN_CACHE_KEY = 'lingya-token-by-session';
+function clearTokenCacheForSession(sessionId) {
+  if (!sessionId) return;
+  try {
+    const st = require('./state');
+    let map = st.serverTokenUsageBySession;
+    if (!map || typeof map !== 'object') map = {};
+    let changed = false;
+    if (sessionId in map) {
+      delete map[sessionId];
+      changed = true;
+      try { localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(map)); } catch (_) {}
+      console.log('[LingYa][Token] 已清理已删除会话的缓存: ' + String(sessionId).slice(0, 8));
+    }
+    // 若删除的正是当前显示的会话，悬浮球上的数字也必须归零，
+    // 否则会保留已删会话的 token 直到下次会话切换（状态残留）。
+    // 注意：即使缓存里没有该键（例如持久化被降级），只要当前显示的是它，也要清。
+    try {
+      if (st.currentSessionId === sessionId) {
+        st.serverTokenUsage = null;
+        changed = true;
+        console.log('[LingYa][Token] 当前会话被删除，显示值已归零');
+      }
+    } catch (_) {}
+    return changed;
+  } catch (_) { /* 清理失败不影响删除流程 */ }
+}
+
 let _observer = null;
 let _timer = null;
 let _started = false;
@@ -230,6 +261,7 @@ async function deleteSessionSilent(sessionId) {
     try { applyArchivedState(); renderArchivedSection(); } catch (_) {}
 
     console.log('[LingYa 迁移] 旧会话删除成功: ' + sessionId);
+    clearTokenCacheForSession(sessionId);
     return true;
   } catch (e) {
     console.error('[LingYa 迁移] 静默删除失败:', e && e.message);
@@ -287,6 +319,7 @@ async function doDelete(sessionId, title) {
     applyArchivedState();
     renderArchivedSection();
     console.log('[LingYa Archive] 删除成功: ' + sessionId);
+    clearTokenCacheForSession(sessionId);
     try { alert('已删除对话「' + name + '」'); } catch (_) {}
   } catch (e) {
     console.error('[LingYa Archive] 删除失败:', e && e.message);

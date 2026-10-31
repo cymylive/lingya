@@ -55,7 +55,13 @@ module.exports = {
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,
   // 服务端返回的权威 token 统计（{ accumulatedTokens, insertedAt, updatedAt, modelType }）
+  // 语义：始终代表「当前会话」的值，供 events.js 直接读取，不需要感知会话。
   serverTokenUsage: null,
+  // 【token 按会话隔离】按 sessionId 缓存每个会话最后一次的 token 统计。
+  // 键：sessionId，首页/新会话用 '__home__'。写入见 intercept-observer 的 response 回调，
+  // 会话切换时由 watchSessionForStateReset 的 check() 把当前会话的值搬回 serverTokenUsage。
+  // 只在内存里（刷新后清空，各会话等下次响应恢复），不落 localStorage。
+  serverTokenUsageBySession: {},
   // 最近一次 AI 回复的消息 id（{ requestMessageId, responseMessageId }）
   lastResponseMsgIds: null,
   // 【2026-10-30 拟人延迟】最近一次 AI 回复的字符数（正文 + 思考）。
