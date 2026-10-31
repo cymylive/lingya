@@ -208,3 +208,52 @@ module.exports = {
   resetState,
   _resetForTest,
 };
+
+
+// ===== Task 2: 目标窗口选择（纯函数）=====
+
+/**
+ * 从窗口池中选出下一个目标窗口的下标。
+ *
+ * 扫描策略：
+ *   1. 从 cursor+1 开始环形扫描一圈（i 从 1 到 pool.length）
+ *   2. 跳过 enabled === false 的
+ *   3. 跳过 isAvailable 返回 false 的
+ *   4. preferDifferentAccount 为真时，第一遍只接受 accountTag !== sourceAccountTag
+ *   5. 第一遍找不到且 preferDifferentAccount 为真 → 第二遍取消账号过滤
+ *      （Review Focus 4：池里全是同账号时不能返回 -1，要降级为顺序选）
+ *
+ * @param {Array<{profileId:string, accountTag:string, enabled:boolean}>} pool
+ * @param {number} cursor 起点（不含）
+ * @param {(profileId:string)=>boolean} isAvailable 窗口是否可派发
+ * @param {{preferDifferentAccount?:boolean, sourceAccountTag?:string}} opts
+ * @returns {number} 池中下标；无可用返回 -1
+ */
+function selectNextIndex(pool, cursor, isAvailable, opts) {
+  if (!Array.isArray(pool) || pool.length === 0) return -1;
+  const options = opts && typeof opts === 'object' ? opts : {};
+  const preferDifferent = options.preferDifferentAccount === true;
+  const sourceTag = options.sourceAccountTag == null ? '' : String(options.sourceAccountTag);
+  const start = Number.isFinite(Number(cursor)) ? Math.floor(Number(cursor)) : 0;
+
+  /** 单遍扫描；accountFilter 为真时跳过同账号 */
+  const scan = (accountFilter) => {
+    for (let i = 1; i <= pool.length; i++) {
+      const idx = ((start + i) % pool.length + pool.length) % pool.length;
+      const item = pool[idx];
+      if (!item || item.enabled === false) continue;
+      if (accountFilter && String(item.accountTag || '') === sourceTag) continue;
+      if (typeof isAvailable === 'function' && !isAvailable(item.profileId)) continue;
+      return idx;
+    }
+    return -1;
+  };
+
+  const first = scan(preferDifferent);
+  if (first !== -1) return first;
+  if (!preferDifferent) return -1;
+  // 降级：取消账号过滤再扫一遍
+  return scan(false);
+}
+
+module.exports.selectNextIndex = selectNextIndex;

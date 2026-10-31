@@ -57,3 +57,53 @@ test('配置损坏时回落默认值不抛错', () => {
   rot.init(tmpDir);
   assert.equal(rot.getConfig().thresholdWan, 10);
 });
+
+
+// ===== Task 2: selectNextIndex =====
+const pool3 = [
+  { profileId: 'p1', accountTag: 'A', enabled: true },
+  { profileId: 'p2', accountTag: 'B', enabled: true },
+  { profileId: 'p3', accountTag: 'C', enabled: true },
+];
+const allAvail = () => true;
+
+test('按 cursor 顺序环形推进', () => {
+  const o = { preferDifferentAccount: false, sourceAccountTag: 'A' };
+  assert.equal(rot.selectNextIndex(pool3, 0, allAvail, o), 1);
+  assert.equal(rot.selectNextIndex(pool3, 1, allAvail, o), 2);
+  assert.equal(rot.selectNextIndex(pool3, 2, allAvail, o), 0);
+});
+
+test('跳过 disabled 与不可用窗口', () => {
+  const pool = [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'B', enabled: false },
+    { profileId: 'p3', accountTag: 'C', enabled: true },
+  ];
+  const avail = (id) => id === 'p3';
+  assert.equal(rot.selectNextIndex(pool, 0, avail, { preferDifferentAccount: false }), 2);
+});
+
+test('优先不同账号', () => {
+  const pool = [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'A', enabled: true },
+    { profileId: 'p3', accountTag: 'B', enabled: true },
+  ];
+  const idx = rot.selectNextIndex(pool, 0, allAvail, { preferDifferentAccount: true, sourceAccountTag: 'A' });
+  assert.equal(idx, 2, '跳过同账号的 p2');
+});
+
+test('全同账号时降级为顺序选，不返回 -1', () => {
+  const pool = [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'A', enabled: true },
+  ];
+  const idx = rot.selectNextIndex(pool, 0, allAvail, { preferDifferentAccount: true, sourceAccountTag: 'A' });
+  assert.equal(idx, 1, '放宽后仍能选中 p2');
+});
+
+test('无可用窗口返回 -1', () => {
+  assert.equal(rot.selectNextIndex(pool3, 0, () => false, { preferDifferentAccount: false }), -1);
+  assert.equal(rot.selectNextIndex([], 0, allAvail, { preferDifferentAccount: false }), -1);
+});
