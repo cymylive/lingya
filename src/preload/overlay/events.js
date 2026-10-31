@@ -428,8 +428,24 @@ function checkAutoCompact() {
   autoCompactTriggering = true;
   console.log('[LingYa Compact] 自动触发：当前有效 ' + current + ' >= 阈值 ' + thresholdTokens);
   
-  // 【新功能】全自动迁移会话
-  (async function runMigration() {
+  // 【分流】轮转启用 → 跨窗口轮转；否则 → 原地迁移（原逻辑一行不改）
+  (async () => {
+    let rotationOn = false;
+    try {
+      const rc = await window.electronAPI.rotationGetConfig();
+      rotationOn = !!(rc && rc.success && rc.config && rc.config.enabled);
+    } catch (_) { rotationOn = false; }
+    if (rotationOn) {
+      await runRotationMigration();
+      return;
+    }
+    await runMigration();
+  })();
+}
+
+/** 原地迁移：Token 超阈值 → 打包历史 → 新会话承接（原有逻辑，行为不变） */
+async function runMigration() {
+  {
     if (state.isMigrating) return;
     state.isMigrating = true;
     // 增加时间戳，如果 15 秒后页面还没刷新，判定为切换失败，本次任务彻底结束
@@ -505,8 +521,182 @@ function checkAutoCompact() {
         }
       }, 15000);
     }
-  })();
+  }
 }
+
+// ========== 跨窗口 Token 轮转（源窗口触发端）==========
+// 与原地迁移的区别：历史不留在本窗口，而是交给主进程转给窗口池里的下一个窗口。
+// 铁律：删旧会话只在目标窗口 ack 成功之后执行，任何失败路径都不删。
+
+/** 收尾指令：让 AI 先输出交接摘要，再切窗口（决策 D2） */
+const ROTATION_CLOSING_INSTRUCTION =
+  '请把当前工作收尾，并输出一份交接摘要：已完成什么、未完成什么、下一步该做什么。直接输出摘要。';
+
+/**
+ * 等待 AI 回复完成。超时返回 null（调用方降级为打包全量历史），不抛错。
+ * @param {number} timeoutMs
+ * @returns {Promise<string|null>}
+ */
+function waitForRotationResponse(timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    let off = () => {};
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { off(); } catch (_) {}
+      resolve(null);
+    }, timeoutMs);
+    try {
+      const { onInterceptedResponse } = require('../dom/intercept-observer');
+      off = onInterceptedResponse((text) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { off(); } catch (_) {}
+        resolve(text);
+      });
+    } catch (err) {
+      console.warn('[LingYa 轮转] 无法监听回复，直接降级:', err && err.message);
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * 跨窗口轮转的源窗口流程（spec 7.4 的 10 步）。
+ * 失败一律回落原地迁移，绝不丢任务上下文。
+ */
+async function runRotationMigration() {
+  if (state.isMigrating) return;
+  state.isMigrating = true;
+  state.migratingAt = Date.now();
+  let oldSid = state.currentSessionId;
+  try {
+    let cfg = {};
+    try {
+      const rc = await window.electronAPI.rotationGetConfig();
+      cfg = (rc && rc.success && rc.config) || {};
+    } catch (_) { cfg = {}; }
+
+    showToast('Token 超阈值，正在收尾并准备跨窗口轮转...', 4000);
+
+    // 1-3) 发收尾指令并等回复；超时降级为直接打包全量历史
+    state.stopped = true;
+    try { window.electronAPI.clearAbort(); } catch (_) {}
+    try {
+      const chatInput = require('../dom/chat-input');
+      if (typeof chatInput.sendMessageToChat === 'function') {
+        chatInput.sendMessageToChat(ROTATION_CLOSING_INSTRUCTION, '轮转收尾', { auto: true });
+        state.stopped = false;
+        await waitForRotationResponse(120000);
+      }
+    } catch (err) {
+      console.warn('[LingYa 轮转] 收尾指令发送失败，降级为直接打包全量历史:', err && err.message);
+    }
+
+    // 4) 打包历史
+    const cLog = require('../dom/conversation-log');
+    const historyEntries = cLog.getEntries ? cLog.getEntries() : [];
+    let historyMd = cLog.buildMarkdown(historyEntries, {
+      platform: 'DeepSeek',
+      projectDir: state.currentProjectDir,
+      now: Date.now(),
+    }, { includeToolBlocks: true });
+
+    // 5) 超限截断（Review Focus 5）
+    const maxBytes = (typeof cfg.historyMaxBytes === 'number' && cfg.historyMaxBytes > 0)
+      ? cfg.historyMaxBytes : 2097152;
+    if (historyMd && historyMd.length > maxBytes) {
+      historyMd = historyMd.slice(0, maxBytes) + String.fromCharCode(10,10) + '[...历史过长已截断...]';
+      console.warn('[LingYa 轮转] 历史超过 ' + maxBytes + ' 字符，已截断');
+    }
+
+    // 取旧会话 ID（URL 在切页时可能已变，优先 state）
+    if (!oldSid) {
+      try {
+        const provider = require('../../providers').getProviderByUrl(window.location.href);
+        if (provider && provider.extractSessionId) oldSid = provider.extractSessionId(window.location.href);
+      } catch (_) {}
+    }
+
+    // 6) 提交给主进程
+    const submitRes = await window.electronAPI.rotationSubmit({
+      history: historyMd,
+      projectDir: state.currentProjectDir
+        || (() => { try { return localStorage.getItem('lingya-last-project-dir') || null; } catch (_) { return null; } })(),
+      oldSessionId: oldSid || null,
+      timestamp: Date.now(),
+    });
+
+    // 7) 提交失败 → 回落原地迁移
+    if (!submitRes || !submitRes.success) {
+      const reason = (submitRes && submitRes.reason) || 'unknown';
+      console.warn('[LingYa 轮转] 提交失败 reason=' + reason + '，回落到原地迁移');
+      showToast('无可用目标窗口（' + reason + '），本窗口继续', 4000);
+      state.isMigrating = false;
+      return runMigration();
+    }
+
+    // 8) 等 ack 结果（主进程看门狗 90s，这里留足余量）
+    const result = await new Promise((resolve) => {
+      let done = false;
+      let off = () => {};
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        try { off(); } catch (_) {}
+        resolve({ ok: false, reason: 'timeout' });
+      }, 120000);
+      try {
+        off = window.electronAPI.onRotationResult((r) => {
+          if (done) return;
+          if (!r || r.requestId !== submitRes.requestId) return;
+          done = true;
+          clearTimeout(timer);
+          try { off(); } catch (_) {}
+          resolve(r);
+        });
+      } catch (_) {
+        clearTimeout(timer);
+        resolve({ ok: false, reason: 'listen-failed' });
+      }
+    });
+
+    if (result && result.ok) {
+      // 9) 承接成功：这时才删旧会话
+      try {
+        if (oldSid) {
+          const archiver = require('../dom/deepseek-history-archiver');
+          if (archiver.deleteSessionSilent) await archiver.deleteSessionSilent(oldSid);
+        }
+      } catch (err) {
+        console.error('[LingYa 轮转] 删除旧会话失败:', err && err.message);
+      }
+      try { if (cLog.clearEntries) cLog.clearEntries(); } catch (_) {}
+      showToast('已切换到窗口 ' + (result.targetProfileId || '') + '，本窗口任务结束', 5000);
+    } else {
+      // 10) 承接失败：不删，本窗口继续
+      const reason = (result && result.reason) || 'unknown';
+      console.warn('[LingYa 轮转] 承接失败 reason=' + reason);
+      showToast('切换失败：' + reason + '，本窗口继续', 5000);
+      state.isMigrating = false;
+    }
+  } catch (err) {
+    console.error('[LingYa 轮转] 异常:', err && err.message);
+    showToast('轮转异常: ' + (err && err.message), 5000);
+    state.isMigrating = false;
+  } finally {
+    autoCompactTriggering = false;
+    setTimeout(() => {
+      if (state.isMigrating && Date.now() - state.migratingAt >= 15000) {
+        state.isMigrating = false;
+      }
+    }, 15000);
+  }
+}
+
 
 /**
  * 启动对话 token 显示（每秒刷新）+ 自动压缩检查
@@ -988,3 +1178,6 @@ function bindEvents() {
 module.exports = bindEvents;
 module.exports.stopTask = stopTask;
 module.exports.clearStopped = clearStopped;
+module.exports.runRotationMigration = runRotationMigration;
+module.exports.runMigration = runMigration;
+module.exports.checkAutoCompact = checkAutoCompact;
