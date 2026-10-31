@@ -1128,6 +1128,8 @@ function bindEvents() {
   bindAgentPanelEvents();
   // 计划（todoWrite）面板
   bindPlanPanelEvents();
+  // 跨窗口 Token 轮转配置页签
+  bindRotationEvents();
 
   // 新会话自动注入开关：恢复状态 + 保存
   const autoInjectEl = document.getElementById('lingya-auto-inject');
@@ -1175,9 +1177,191 @@ function bindEvents() {
   });
 }
 
+
+// ========== 轮转配置页签 ==========
+
+/** 页面上当前编辑中的窗口池（未保存的编辑状态） */
+let rotPoolDraft = [];
+
+/** 从主进程拉配置并回填表单 */
+async function rotFillForm() {
+  try {
+    const r = await window.electronAPI.rotationGetConfig();
+    if (!r || !r.success || !r.config) return;
+    const c = r.config;
+    const el = (id) => document.getElementById(id);
+    if (el("lingya-rot-enabled")) el("lingya-rot-enabled").checked = c.enabled === true;
+    if (el("lingya-rot-threshold")) el("lingya-rot-threshold").value = c.thresholdWan;
+    if (el("lingya-rot-max-rotations")) el("lingya-rot-max-rotations").value = c.maxRotations;
+    if (el("lingya-rot-max-hours")) el("lingya-rot-max-hours").value = c.maxSessionHours;
+    if (el("lingya-rot-wait-ms")) el("lingya-rot-wait-ms").value = c.targetBusyWaitMs;
+    if (el("lingya-rot-diff-account")) el("lingya-rot-diff-account").checked = c.preferDifferentAccount === true;
+    rotPoolDraft = Array.isArray(c.pool) ? c.pool.map((x) => ({ ...x })) : [];
+  } catch (err) {
+    console.error("[LingYa 轮转] 读取配置失败:", err && err.message);
+  }
+}
+
+/** 渲染窗口池列表：候选窗口 + 已选状态 + 账号标识 + 上下移 */
+async function rotRenderPool() {
+  const box = document.getElementById("lingya-rot-pool");
+  if (!box) return;
+  let candidates = [];
+  try {
+    const r = await window.electronAPI.rotationListCandidates();
+    if (r && r.success) candidates = r.windows || [];
+  } catch (err) {
+    console.error("[LingYa 轮转] 拉候选窗口失败:", err && err.message);
+  }
+
+  // 已选中的（按 draft 顺序）先展示，再补上未选中的候选
+  const byId = new Map(candidates.map((w) => [w.profileId, w]));
+  const rows = [];
+  for (const item of rotPoolDraft) {
+    const cand = byId.get(item.profileId) || { profileId: item.profileId, name: item.profileId, exists: false, busy: false };
+    rows.push({ ...cand, accountTag: item.accountTag || "", selected: true, enabled: item.enabled !== false });
+  }
+  for (const cand of candidates) {
+    if (rotPoolDraft.some((x) => x.profileId === cand.profileId)) continue;
+    rows.push({ ...cand, accountTag: "", selected: false, enabled: true });
+  }
+
+  if (rows.length === 0) {
+    box.innerHTML = '<div class="lingya-rot-item"><span class="lingya-rot-item-name">暂无窗口</span></div>';
+    return;
+  }
+
+  box.innerHTML = "";
+  rows.forEach((row, i) => {
+    const div = document.createElement("div");
+    div.className = "lingya-rot-item";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = row.selected;
+    cb.addEventListener("change", () => rotToggle(row.profileId, cb.checked));
+    div.appendChild(cb);
+
+    const name = document.createElement("span");
+    name.className = "lingya-rot-item-name";
+    let label = row.name || row.profileId;
+    if (!row.exists) label += "（未打开）";
+    if (row.busy) label += "（忙）";
+    name.textContent = label;
+    div.appendChild(name);
+
+    const pid = document.createElement("span");
+    pid.className = "lingya-rot-item-pid";
+    pid.textContent = row.profileId;
+    div.appendChild(pid);
+
+    if (row.selected) {
+      const acc = document.createElement("input");
+      acc.className = "lingya-rot-acc";
+      acc.placeholder = "账号标识";
+      acc.value = row.accountTag;
+      acc.addEventListener("input", () => {
+        const it = rotPoolDraft.find((x) => x.profileId === row.profileId);
+        if (it) it.accountTag = acc.value;
+      });
+      div.appendChild(acc);
+
+      const up = document.createElement("button");
+      up.textContent = "↑";
+      up.title = "上移";
+      up.addEventListener("click", () => rotMove(row.profileId, -1));
+      div.appendChild(up);
+
+      const down = document.createElement("button");
+      down.textContent = "↓";
+      down.title = "下移";
+      down.addEventListener("click", () => rotMove(row.profileId, 1));
+      div.appendChild(down);
+    }
+
+    box.appendChild(div);
+  });
+}
+
+/** 勾选/取消某个窗口 */
+function rotToggle(profileId, checked) {
+  if (checked) {
+    if (!rotPoolDraft.some((x) => x.profileId === profileId)) {
+      rotPoolDraft.push({ profileId, accountTag: "", enabled: true });
+    }
+  } else {
+    rotPoolDraft = rotPoolDraft.filter((x) => x.profileId !== profileId);
+  }
+  rotRenderPool();
+}
+
+/** 池内上下移动 */
+function rotMove(profileId, delta) {
+  const i = rotPoolDraft.findIndex((x) => x.profileId === profileId);
+  if (i < 0) return;
+  const j = i + delta;
+  if (j < 0 || j >= rotPoolDraft.length) return;
+  const t = rotPoolDraft[i];
+  rotPoolDraft[i] = rotPoolDraft[j];
+  rotPoolDraft[j] = t;
+  rotRenderPool();
+}
+
+/** 收集表单并保存 */
+async function rotSave() {
+  const el = (id) => document.getElementById(id);
+  const patch = {
+    enabled: !!(el("lingya-rot-enabled") && el("lingya-rot-enabled").checked),
+    thresholdWan: Number(el("lingya-rot-threshold") ? el("lingya-rot-threshold").value : 10),
+    maxRotations: Number(el("lingya-rot-max-rotations") ? el("lingya-rot-max-rotations").value : 5),
+    maxSessionHours: Number(el("lingya-rot-max-hours") ? el("lingya-rot-max-hours").value : 4),
+    targetBusyWaitMs: Number(el("lingya-rot-wait-ms") ? el("lingya-rot-wait-ms").value : 60000),
+    preferDifferentAccount: !!(el("lingya-rot-diff-account") && el("lingya-rot-diff-account").checked),
+    pool: rotPoolDraft.map((x) => ({ profileId: x.profileId, accountTag: x.accountTag || "", enabled: x.enabled !== false })),
+  };
+  try {
+    const r = await window.electronAPI.rotationSetConfig(patch);
+    if (r && r.success) {
+      showToast("轮转配置已保存", 3000);
+      await rotFillForm();
+      await rotRenderPool();
+    } else {
+      showToast("保存失败：" + ((r && r.error) || "未知错误"), 4000);
+    }
+  } catch (err) {
+    showToast("保存失败：" + (err && err.message), 4000);
+  }
+}
+
+/** 重置轮转运行状态（cursor 归零） */
+async function rotReset() {
+  try {
+    const r = await window.electronAPI.rotationReset();
+    if (r && r.success) {
+      showToast("轮转状态已重置", 3000);
+      await rotFillForm();
+    }
+  } catch (err) {
+    showToast("重置失败：" + (err && err.message), 4000);
+  }
+}
+
+/** 绑定轮转页签的全部事件 */
+function bindRotationEvents() {
+  const save = document.getElementById("lingya-rot-save");
+  if (save) save.addEventListener("click", rotSave);
+  const reset = document.getElementById("lingya-rot-reset");
+  if (reset) reset.addEventListener("click", rotReset);
+  const refresh = document.getElementById("lingya-rot-refresh");
+  if (refresh) refresh.addEventListener("click", () => rotRenderPool());
+  // 面板首次打开时回填（不阻塞）
+  rotFillForm().then(() => rotRenderPool()).catch(() => {});
+}
+
 module.exports = bindEvents;
 module.exports.stopTask = stopTask;
 module.exports.clearStopped = clearStopped;
 module.exports.runRotationMigration = runRotationMigration;
 module.exports.runMigration = runMigration;
 module.exports.checkAutoCompact = checkAutoCompact;
+module.exports.bindRotationEvents = bindRotationEvents;

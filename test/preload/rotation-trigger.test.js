@@ -168,3 +168,11 @@ test('轮转 ack 失败时绝不删旧会话', async () => {
   await new Promise((r) => setTimeout(r, 30));
   assert.deepEqual(calls.deleteSession, [], '失败路径绝不能删会话');
 });
+
+
+test('bindRotationEvents 已导出且可调用', () => {
+  const { mod } = load();
+  assert.equal(typeof mod.bindRotationEvents, 'function');
+  // 无 DOM 元素时不能抛错
+  mod.bindRotationEvents();
+});
