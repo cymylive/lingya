@@ -15,8 +15,10 @@ test('kind=response 派发 AI_RESPONSE 且 detail 结构一致', () => {
   });
   assert.strictEqual(fired.length, 1);
   assert.strictEqual(fired[0].type, evtNames.AI_RESPONSE);
+  // 【2026-11-01 对齐 Cuckoo】detail 新增 _realTps 字段（结束时的真实 TPS，可为 null）
   assert.deepStrictEqual(fired[0].detail, {
     text: 'hi', finished: true, thinking: '', tokenUsage: null, msgIds: [], interrupted: false,
+    _realTps: null,
   });
 });
 
