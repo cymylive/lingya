@@ -53,29 +53,40 @@ test('lingya-ai-start 恢复路径也复位 stoppedAt', () => {
 });
 
 // ===================== 修复 C：isCompletion 放宽 =====================
+// 2026-10-31：isCompletion 已抽到 src/providers/sse/deepseek-parse.js，
+// 由 deepseek.js 的 getHookSource() 用 toString() 注入回页面主世界。
+// 断言目标随之迁移；行为契约不变。
 const providerSrc = fs.readFileSync(path.join(ROOT, 'src/providers/deepseek.js'), 'utf8');
+const sseSrc = fs.readFileSync(path.join(ROOT, 'src/providers/sse/deepseek-parse.js'), 'utf8');
 
 test('isCompletion 不再使用严格等值匹配', () => {
   assert.ok(
-    !/return\s+u\.pathname\s*===\s*COMPLETION_PATH\s*;/.test(providerSrc),
+    !/return\s+u\.pathname\s*===\s*COMPLETION_PATH\s*;/.test(sseSrc),
     'isCompletion 不应再依赖严格等值 —— DeepSeek 端点微调会导致事件永不派发（静默失效）'
   );
 });
 
 test('isCompletion 使用放宽的路径正则', () => {
   assert.match(
-    providerSrc,
+    sseSrc,
     /\/\^\\\/api\\\/v/,
     'isCompletion 应含放宽的 /api/v{N}/chat/ 正则'
   );
-  assert.match(providerSrc, /completion\/i\.test\(pathname\)/, '应含 completion 大小写不敏感匹配');
+  assert.match(sseSrc, /completion\/i\.test\(pathname\)/, '应含 completion 大小写不敏感匹配');
 });
 
 test('isCompletion 仍要求 POST（不过度放宽）', () => {
-  const i = providerSrc.indexOf('function isCompletion');
+  const i = sseSrc.indexOf('function isCompletion');
   assert.ok(i >= 0, '必须有 isCompletion');
-  const body = providerSrc.slice(i, i + 900);
+  const body = sseSrc.slice(i, i + 900);
   assert.match(body, /toUpperCase\(\)\s*!==\s*'POST'/, '必须仍限定 POST');
+});
+
+test('deepseek.js 的 hook 源码仍注入 isCompletion（经共享模块）', () => {
+  assert.match(providerSrc, /sse\.isCompletion\.toString\(\)/,
+    'getHookSource 必须把共享 isCompletion 序列化注入');
+  assert.match(providerSrc, /sse\.createExtractor\.toString\(\)/,
+    'getHookSource 必须把共享 createExtractor 序列化注入');
 });
 
 test('hook 注入后派发自检事件', () => {

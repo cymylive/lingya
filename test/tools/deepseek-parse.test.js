@@ -2,6 +2,50 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const sse = require('../../src/providers/sse/deepseek-parse');
 
+test('序列化后的函数在主世界沙箱中可执行且无外部依赖', () => {
+  // toString() 后注入页面主世界，模块级变量（如 COMPLETION_PATH）会丢失。
+  // 用 vm 模拟：只带函数源码本身，不带模块作用域，能跑通才算自包含。
+  const vm = require('node:vm');
+  const src = [
+    sse.isCompletion.toString(),
+    sse.createFrameDecoder.toString(),
+    sse.parseBlock.toString(),
+    sse.createExtractor.toString(),
+  ].join('\n');
+  const ctx = vm.createContext({ URL, console });
+  vm.runInContext(src, ctx);
+  assert.strictEqual(
+    vm.runInContext("isCompletion('https://chat.deepseek.com/api/v0/chat/completion','POST')", ctx),
+    true
+  );
+  const decoded = vm.runInContext("(function(){var d=createFrameDecoder();return d.push('data: a\\n\\n')})()", ctx);
+  assert.deepStrictEqual(Array.from(decoded), ['data: a']);
+});
+
+test('getHookSource 返回的源码在沙箱执行后 hook 生效且无 require', () => {
+  const vm = require('node:vm');
+  const provider = require('../../src/providers/deepseek');
+  const src = provider.getHookSource();
+  // 不得含 require —— 主世界没有模块系统
+  assert.doesNotMatch(src, /\brequire\s*\(/);
+  // 在伪浏览器环境执行，确认 hook 装上且 window.fetch 被替换
+  const fakeWindow = { dispatchEvent: () => true, fetch: function(){ return Promise.resolve({}); } };
+  const ctx = vm.createContext({ window: fakeWindow, URL, console, CustomEvent: function(){}, TextDecoder, setTimeout, clearTimeout, XMLHttpRequest: function(){ XMLHttpRequest.prototype.open=function(){}; XMLHttpRequest.prototype.send=function(){}; XMLHttpRequest.prototype.setRequestHeader=function(){}; } });
+  ctx.XMLHttpRequest.prototype = { open(){}, send(){}, setRequestHeader(){} };
+  vm.runInContext(src, ctx);
+  assert.strictEqual(fakeWindow[Symbol.for('l.hook.ds')], true);
+  assert.strictEqual(typeof fakeWindow.fetch, 'function');
+});
+
+test('getHookSource 返回的源码包含四个解析函数', () => {
+  const provider = require('../../src/providers/deepseek');
+  const src = provider.getHookSource();
+  assert.match(src, /function createFrameDecoder/);
+  assert.match(src, /function parseBlock/);
+  assert.match(src, /function createExtractor/);
+  assert.match(src, /function isCompletion/);
+});
+
 test('isCompletion 识别 DeepSeek 补全接口', () => {
   assert.strictEqual(sse.isCompletion('https://chat.deepseek.com/api/v0/chat/completion', 'POST'), true);
   assert.strictEqual(sse.isCompletion('https://chat.deepseek.com/api/v0/users', 'GET'), false);

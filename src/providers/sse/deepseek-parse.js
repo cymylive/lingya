@@ -10,9 +10,6 @@
  * 否则 toString() 序列化后注入主世界会 ReferenceError。
  */
 
-// 主路径（已知的 DeepSeek 流式补全端点）
-var COMPLETION_PATH = '/api/v0/chat/completion';
-
 /**
  * 判断是否为「AI 回复流式请求」。
  *
@@ -21,6 +18,9 @@ var COMPLETION_PATH = '/api/v0/chat/completion';
  * 静默失效。放宽为：POST + 路径以 /api/v 开头 + 含 chat + 含 completion。
  *
  * baseURI 在浏览器内可用；主进程调用时退化为直接解析 url。
+ *
+ * 注意：本函数会被 toString() 序列化后注入页面主世界，因此不能引用
+ * 任何模块级变量（会 ReferenceError）。端点常量必须内联在函数体内。
  */
 function isCompletion(url, method) {
   if (!url) return false;
@@ -32,7 +32,8 @@ function isCompletion(url, method) {
   } catch (e) {
     pathname = String(url).split('?')[0];
   }
-  if (pathname === COMPLETION_PATH) return true;
+  // 主路径（已知的 DeepSeek 流式补全端点），内联避免序列化后丢作用域
+  if (pathname === '/api/v0/chat/completion') return true;
   return /^\/api\/v[\d.]+\/chat\//.test(pathname) && /completion/i.test(pathname);
 }
 
