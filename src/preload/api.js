@@ -119,6 +119,9 @@ let electronAPI = {
   trustedClick: (x, y) => {
     return ipcRenderer.invoke('trusted-click', { x: x, y: y });
   },
+  trustedInsertText: (text) => {
+    return ipcRenderer.invoke('trusted-insert-text', { text: text });
+  },
   trustedKey: (key) => {
     return ipcRenderer.invoke('trusted-key', { key: key });
   },

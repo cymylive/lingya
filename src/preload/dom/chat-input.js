@@ -191,63 +191,83 @@ async function trustedPressEnter(target) {
   }
   return false;
 }
+/**
+ * 选中输入框全部内容（不删除，只建选区）。
+ *
+ * 之后调 Input.insertText 时，浏览器内核会用新文本替换选区，
+ * 且触发 isTrusted=true 的 input 事件（2026-10-31 spike 实测验证）。
+ *
+ * 返回值无意义，失败时抛异常由调用方兜底。
+ */
+function selectAllContent(input) {
+  if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+    if (typeof input.select === 'function') input.select();
+    return;
+  }
+  if (input.isContentEditable || input.getAttribute('contenteditable') === 'true') {
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return;
+  }
+}
+
+/**
+ * 把文本填入输入框。
+ *
+ * 【2026-10-31 改造】原实现用 nativeSetter + dispatchEvent(new Event('input'))
+ * （textarea 路径）和合成 ClipboardEvent（contenteditable 路径），
+ * 两者 isTrusted 恒为 false —— 这是平台识别脚本最直接的信号，
+ * 且每条消息会产生几十次假 input 事件。
+ *
+ * 现在统一走 CDP Input.insertText：先建选区覆盖原有内容，再内核级插入。
+ * 一次内核输入，input 事件 isTrusted=true。实测 textarea / contenteditable
+ * 两条路径均正确替换选区内容。
+ *
+ * 失败时返回 false 并 console.warn，**不降级**为合成事件（同 trustedClick 的处理原则）。
+ */
 async function setInputContent(input, msg) {
   try {
-    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-      input.focus();
-      const proto = input.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype;
-      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    if (!input) return false;
+    const isTextLike = (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT');
+    const isEditable = input.isContentEditable || input.getAttribute('contenteditable') === 'true';
+    if (!isTextLike && !isEditable) return false;
 
-      // 渐进填充：分段累积写入，逐段派发 input 事件，逼近真人打字的多次输入特征。
-      // 2026-10-24 DeepSeek 封号根因 ③-B1：原先一次 setter + 一次 input，
-      // 10 万字符瞬间落框，是极强的 bot 指纹。
-      // 段长随总长自适应 —— 短消息细粒度（更像人），超长消息放大段长，
-      // 避免首条 110KB 填充耗时数秒拖垮体验（实测约 1.5s 内完成）。
-      const base = Math.max(240, Math.min(3600, Math.ceil(msg.length / 26)));
-      let written = '';
-      let i = 0;
-      while (i < msg.length) {
-        const jitter = 0.7 + Math.random() * 0.6;   // 段长 ±30% 抖动，避免等长分段
-        const size = Math.max(1, Math.round(base * jitter));
-        written += msg.slice(i, i + size);
-        i += size;
-        nativeSetter.call(input, written);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        if (i < msg.length) {
-          await new Promise((resolve) => setTimeout(resolve, 24 + Math.floor(Math.random() * 70)));
-        }
+    try { input.focus(); } catch (_) { /* 聚焦失败仍继续尝试 */ }
+
+    const api = window.electronAPI;
+    if (!api || typeof api.trustedInsertText !== 'function') {
+      console.warn('[LingYa] 可信插入不可用：electronAPI.trustedInsertText 缺失');
+      return false;
+    }
+
+    // 空消息 = 清空输入框。
+    // 不走 trustedInsertText('')：主进程对空文本返回 success:false，无意义。
+    // 直接操作 DOM 清空 —— 这不是「伪造用户输入」，空输入框本就是初始状态，
+    // 紧接着的真实文本会走 CDP 内核路径写入。
+    if (!msg) {
+      if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+        const proto = input.tagName === 'TEXTAREA'
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+        setter.call(input, '');
+      } else {
+        input.textContent = '';
       }
       return true;
     }
-    if (input.isContentEditable || input.getAttribute('contenteditable') === 'true') {
-      input.focus();
-      document.execCommand('selectAll', false, null);
-      document.execCommand('delete', false, null);
 
-      // 分段 Paste：每段 ≤6000 字符，不会触发 ChatGPT 的附件行为，且每段都很快。
-      // 实测 12000 字符只需约 350ms。
-      const CHUNK_SIZE = 6000;
-      for (let i = 0; i < msg.length; i += CHUNK_SIZE) {
-        const chunk = msg.slice(i, i + CHUNK_SIZE);
-        const dt = new DataTransfer();
-        dt.setData('text/plain', chunk);
-        const pasteEvent = new ClipboardEvent('paste', {
-          bubbles: true,
-          cancelable: true,
-          clipboardData: dt,
-        });
-        input.dispatchEvent(pasteEvent);
-        if (i + CHUNK_SIZE < msg.length) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-      }
-      return true;
-    }
+    selectAllContent(input);
+    const res = await api.trustedInsertText(msg);
+    if (res && res.success) return true;
+
+    console.warn('[LingYa] 可信插入失败:', (res && res.error) || '未知原因');
     return false;
   } catch (err) {
-    console.error('[LingYa] 设置输入框内容失败:', err.message);
+    console.error('[LingYa] 设置输入框内容失败:', err && err.message);
     return false;
   }
 }

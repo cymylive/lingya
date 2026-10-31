@@ -75,3 +75,38 @@ test('attach 对不支持的 provider 返回错误', () => {
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /unsupported/);
 });
+
+test('ensureAttached 对未 attach 的 wc 裸 attach（不校验 provider）', () => {
+  let attached = false;
+  const fake = {
+    id: 99,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => attached,
+      attach: () => { attached = true; },
+      sendCommand: async () => ({}),
+    },
+  };
+  const dbg = capture.ensureAttached(fake);
+  assert.strictEqual(attached, true);
+  assert.strictEqual(dbg, fake.debugger);
+});
+
+test('ensureAttached 对已 attach 的直接返回，不重复 attach', () => {
+  let attachCalls = 0;
+  const fake = {
+    id: 98,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => true,
+      attach: () => { attachCalls++; },
+      sendCommand: async () => ({}),
+    },
+  };
+  capture.ensureAttached(fake);
+  assert.strictEqual(attachCalls, 0);
+});
+
+test('ensureAttached 对非法 wc 抛异常', () => {
+  assert.throws(() => capture.ensureAttached(null), /webContents/);
+});

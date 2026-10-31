@@ -262,16 +262,25 @@ function detach(wc) {
 
 /**
  * 确保 webContents 已 attach，返回 debugger 供 sendCommand 复用。
- * 输入层（Input.insertText）需要 debugger 但不想走完整的捕获流程。
- * 未 attach 时以空 handler attach 一次。
+ *
+ * 输入层（Input.insertText）只需要一个可用的 debugger，
+ * 不关心 provider 是否能被解析成 SSE 流 —— 因此这里不经过 attach()
+ * 的 provider 校验，直接裸 attach。这样 claude / chatgpt 页面也能用
+ * 内核级输入，即使它们仍走 hook 捕获回复。
  */
 function ensureAttached(wc) {
   if (!isValidWc(wc)) {
     throw new Error('invalid webContents (missing debugger API)');
   }
+  if (isDestroyed(wc)) {
+    throw new Error('webContents already destroyed');
+  }
   if (!isAttached(wc)) {
-    const r = attach(wc, 'deepseek', {});
-    if (!r.ok) throw new Error(r.error || 'attach failed');
+    try {
+      wc.debugger.attach('1.3');
+    } catch (err) {
+      throw new Error('debugger.attach 失败: ' + (err && err.message));
+    }
   }
   return wc.debugger;
 }

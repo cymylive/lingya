@@ -1610,6 +1610,13 @@ function registerIpcHandlers() {
     }
   });
 
+  // ========== 可信输入（CDP）==========
+  // 走 CDP Input.insertText，触发 isTrusted=true 的 input 事件。
+  // 替代 preload 里 nativeSetter + 合成 Event('input') 的做法。
+  ipcMain.handle('trusted-insert-text', async (event, args) => {
+    return handleTrustedInsertText(event, args);
+  });
+
   // ========== CDP 捕获（替代页面内 hook）==========
   // 只在 provider 声明 useCdp: true 时生效（当前仅 deepseek）。
   // 注册 lingya-cdp-enable / lingya-cdp-disable 两个 handler。
@@ -1620,4 +1627,33 @@ function registerIpcHandlers() {
   }
 }
 
-module.exports = { registerIpcHandlers };
+/**
+ * 用 CDP Input.insertText 往当前焦点元素写文本。
+ *
+ * 相比 preload 里 nativeSetter + dispatchEvent(new Event('input')) 的做法，
+ * 走 CDP 触发的是浏览器内核级输入，input 事件的 isTrusted 为 true
+ * （2026-10-31 spike 实测验证），消除最密集的合成事件指纹。
+ *
+ * @param {Event} event IPC 事件（用 event.sender 拿 webContents）
+ * @param {{ text: string }} args
+ * @param {{ ensureAttached?: Function }} deps 仅测试注入，生产不传
+ */
+async function handleTrustedInsertText(event, args, deps) {
+  const text = String((args && args.text) || '');
+  if (!text) return { success: false, error: 'empty text' };
+  const sender = event && event.sender;
+  if (!sender) return { success: false, error: 'sender unavailable' };
+  const ensure = (deps && deps.ensureAttached) || require('./cdp-capture').ensureAttached;
+  try {
+    const dbg = ensure(sender);
+    await dbg.sendCommand('Input.insertText', { text });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err && err.message };
+  }
+}
+
+module.exports = {
+  registerIpcHandlers,
+  __test: { handleTrustedInsertText },
+};
