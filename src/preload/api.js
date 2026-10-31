@@ -385,6 +385,46 @@ let electronAPI = {
     ipcRenderer.on('lingya-stop-task', handler);
     return () => ipcRenderer.removeListener('lingya-stop-task', handler);
   },
+  // ========== 跨窗口 Token 轮转 API ==========
+  // 主进程只做「选目标 + 中继 + 超时」，数据与删会话都由窗口侧负责。
+  rotationGetConfig: () => ipcRenderer.invoke('rotation-get-config'),
+  rotationSetConfig: (patch) => ipcRenderer.invoke('rotation-set-config', { patch: patch || {} }),
+  rotationListCandidates: () => ipcRenderer.invoke('rotation-list-candidates'),
+  rotationSubmit: (data) => ipcRenderer.invoke('rotation-submit', { data: data || {} }),
+  rotationAck: (payload) => {
+    const p = payload || {};
+    return ipcRenderer.invoke('rotation-ack', {
+      requestId: p.requestId,
+      ok: p.ok === true,
+      error: p.error,
+    });
+  },
+  rotationReset: () => ipcRenderer.invoke('rotation-reset'),
+  /**
+   * 监听主进程回告的轮转结果（仅源窗口关心）。
+   * @param {(result:{ok:boolean, requestId:string, targetProfileId?:string, reason?:string, error?:string})=>void} cb
+   * @returns {() => void} 取消订阅
+   */
+  onRotationResult: (cb) => {
+    const handler = (_e, payload) => {
+      try { cb(payload || {}); } catch (err) { console.error('[LingYa] onRotationResult 回调异常:', err); }
+    };
+    ipcRenderer.on('lingya-rotation-result', handler);
+    return () => ipcRenderer.removeListener('lingya-rotation-result', handler);
+  },
+  /**
+   * 监听主进程派发的迁移包（目标窗口）。收到后写入 localStorage，
+   * 由既有 auto-inject 状态机接手承接流程。
+   * @param {(data:object)=>void} cb
+   * @returns {() => void} 取消订阅
+   */
+  onReceivedMigration: (cb) => {
+    const handler = (_e, payload) => {
+      try { cb(payload || {}); } catch (err) { console.error('[LingYa] onReceivedMigration 回调异常:', err); }
+    };
+    ipcRenderer.on('lingya-received-migration', handler);
+    return () => ipcRenderer.removeListener('lingya-received-migration', handler);
+  },
   // ========== 定时任务 API ==========
   scheduleList: () => ipcRenderer.invoke('schedule-list'),
   scheduleAdd: (data) => ipcRenderer.invoke('schedule-add', data),
@@ -403,11 +443,36 @@ let electronAPI = {
   },
 };
 
+// 【安全隔离】contextBridge 暴露到主世界（页面可见）的 API 需要过滤掉高危方法。
+// 威胁模型：DeepSeek 页面若被 XSS（第三方富文本/广告注入），攻击者可直接
+//   await window.electronAPI.executeCommand('任意命令')
+//   await window.electronAPI.executeJs('任意代码')
+//   await window.electronAPI.executeTool('bash', {...})
+// 这三个方法是任意代码执行入口，绝不能镜像到主世界。
+//
+// 为什么可以安全过滤：
+//   - 162 处 window.electronAPI.xxx 调用全部在 src/preload/ 内部（isolated world），
+//     读的是下方 window.electronAPI 完整对象，不受此处过滤影响
+//   - 插件 preload 脚本经 new Function() 在 isolated world 执行，同样读 413 行
+//   - 注入主世界的插件脚本均不引用 electronAPI（grep 证实）
+//   - 主世界侧无任何已知合法消费者
+const MAIN_WORLD_BLOCKED = ['executeCommand', 'executeJs', 'executeTool'];
+
 try {
-  contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+  const mainWorldAPI = {};
+  for (const k of Object.keys(electronAPI)) {
+    if (MAIN_WORLD_BLOCKED.indexOf(k) === -1) mainWorldAPI[k] = electronAPI[k];
+  }
+  contextBridge.exposeInMainWorld('electronAPI', mainWorldAPI);
 } catch (err) {
   console.error('[LingYa] contextBridge.exposeInMainWorld 失败:', err);
 }
 
 // 无论 contextBridge 是否成功，都直接挂载到 window 作为备选
 window.electronAPI = electronAPI;
+
+// 【安全清理】0.6.30 之前的版本把含 Bearer token 的完整请求头明文写进
+// localStorage['lingya-ds-headers']（页面任意脚本可读走 token）。
+// 现版本已改为仅主世界内存 + CustomEvent 传递，不再落存储。
+// 但老用户 profile 里仍残留该键，每次 preload 启动清一次。
+try { localStorage.removeItem('lingya-ds-headers'); } catch (_) { /* 隐私模式/禁用存储 */ }
