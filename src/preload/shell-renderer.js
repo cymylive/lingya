@@ -4523,7 +4523,12 @@
   function wsRenderGroup(dir, g, currentDir, currentSessionId, archivedProjects){
     g.active.sort(wsByTimeDesc);
     g.archived.sort(wsByTimeDesc);
-    var isOpen = (dir === currentDir) || !!_wsExpandedDirs['dir:' + dir];
+    // 【2026-11-01 修复】显式状态优先于「当前项目默认展开」。
+    // 原写法 (dir === currentDir) || ... 会让当前项目恒展开，用户点击收不起来。
+    var _gkey = 'dir:' + dir;
+    var isOpen = Object.prototype.hasOwnProperty.call(_wsExpandedDirs, _gkey)
+      ? !!_wsExpandedDirs[_gkey]
+      : (dir === currentDir);
     var isArchOpen = !!_wsArchivedOpen[dir];
     var gactHtml = '<span class="ck-ws-gacts">' +
       '<span class="ck-ws-gact" data-gact="new" title="用该项目新建对话">' + WS_ICON.plus + '</span>' +
@@ -4631,7 +4636,11 @@
         var grp = el.closest('.ck-ws-group');
         var dir = grp.getAttribute('data-dir');
         var key = 'dir:' + dir;
-        if(_wsExpandedDirs[key]) delete _wsExpandedDirs[key]; else _wsExpandedDirs[key] = true;
+        // 【2026-11-01 修复】按 DOM 当前 open 状态取反，并写入显式布尔值。
+        // 原来靠 _wsExpandedDirs 的「有/无」取反，遇到当前项目（默认展开但键不存在）
+        // 永远追不上，导致「展开后再点收不起来」。
+        var wasOpen = grp.classList.contains('open');
+        _wsExpandedDirs[key] = !wasOpen;
         reload();
       });
       // 【已移除】鼠标悬停显示路径提示卡片（用户认为太丑，删除）。
