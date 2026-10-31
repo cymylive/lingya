@@ -98,6 +98,8 @@ function install() {
   if (installed) return;
   installed = true;
   const { ipcRenderer } = require('electron');
+  // 告知 intercept-observer：本轮走 CDP，不要报「未收到 hook 自检」的假警告
+  try { window.__lingyaCdpActive__ = true; } catch (_) {}
   ipcRenderer.on('lingya-cdp-event', (_event, payload) => {
     try {
       handleEvent(window, payload);

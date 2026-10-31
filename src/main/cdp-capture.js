@@ -17,6 +17,9 @@ const sse = require('../providers/sse/deepseek-parse');
 /** webContents.id -> { handler, listener, providerId } */
 const tracked = new Map();
 
+/** webContents -> { onDestroyed, onNavigate }，用于重新 attach 时摘掉旧监听器 */
+const lifecycleHandlers = new WeakMap();
+
 function log(...args) {
   try { console.log('[LingYa][cdp-capture]', ...args); } catch (_) {}
 }
@@ -147,6 +150,10 @@ function attach(wc, providerId, handlers) {
   if (tracked.has(key)) {
     tracked.get(key).handler = h;
     log('复用已 attach 的连接, webContents.id=' + key);
+    // 【重要】lifecycle 监听器的闭包持有旧 handler。若不重挂，
+    // 导航后会恢复成上一次的 handler（可能已被销毁的 sender）。
+    // trackLifecycle 内部会先摘掉旧监听器，不会累积。
+    trackLifecycle(wc, h, providerId);
     return { ok: true };
   }
 
@@ -162,8 +169,7 @@ function attach(wc, providerId, handlers) {
   // 记录「哪些 requestId 是我们关心的」。只有 isCompletion 命中的请求才抓 body，
   // 否则每一条静态资源请求都会触发 getResponseBody，白白拖慢页面。
   const watched = new Set();
-  // 请求体暂存：requestWillBeSent 先到，loadingFinished 后到
-  const pendingUserMsg = new Map();
+
 
   const listener = (event, method, params) => {
     const cur = tracked.get(key);
@@ -183,7 +189,6 @@ function attach(wc, providerId, handlers) {
         // 提取用户消息（用于对话导出）
         const userText = extractUserMessage(params.request.postData);
         if (userText) {
-          pendingUserMsg.set(params.requestId, userText);
           if (typeof handler.onUserMessage === 'function') {
             try { handler.onUserMessage(userText); } catch (e) { log('onUserMessage 抛异常:', e && e.message); }
           }
@@ -192,8 +197,11 @@ function attach(wc, providerId, handlers) {
       }
 
       if (method === 'Network.requestWillBeSentExtraInfo') {
-        // 请求头（含 authorization / x-client-*），供压缩功能直连 API 复用
-        if (params && params.headers && typeof handler.onHeaders === 'function') {
+        // 【只认补全请求】本事件对**所有**请求触发（图片、JS、CSS 都算），
+        // 无条件派发会让垃圾请求头覆盖真正的 authorization / x-client-*。
+        // 用 requestId 反查是否在 watched 里过滤掉无关请求。
+        if (!params || !watched.has(params.requestId)) return;
+        if (params.headers && typeof handler.onHeaders === 'function') {
           try { handler.onHeaders(params.headers); } catch (e) { log('onHeaders 抛异常:', e && e.message); }
         }
         return;
@@ -202,7 +210,6 @@ function attach(wc, providerId, handlers) {
       if (method === 'Network.loadingFinished') {
         if (!watched.has(params.requestId)) return;
         watched.delete(params.requestId);
-        pendingUserMsg.delete(params.requestId);
         handleLoadingFinished(wc.debugger, providerId, params, handler);
         return;
       }
@@ -210,7 +217,6 @@ function attach(wc, providerId, handlers) {
       if (method === 'Network.loadingFailed') {
         if (!watched.has(params.requestId)) return;
         watched.delete(params.requestId);
-        pendingUserMsg.delete(params.requestId);
         handleLoadingFailed(params, handler);
         return;
       }
@@ -249,7 +255,17 @@ function attach(wc, providerId, handlers) {
 function trackLifecycle(wc, handler, providerId) {
   if (!wc || typeof wc.on !== 'function') return;
 
+  // 【防累积】重新 attach 会再次调用本函数。若每次都挂新的 did-navigate，
+  // 导航 N 次后就有 N+1 个监听器，一次导航触发多次重连。
+  // 先把上一轮挂的摘掉。
+  const prev = lifecycleHandlers.get(wc);
+  if (prev) {
+    try { wc.removeListener && wc.removeListener('did-navigate', prev.onNavigate); } catch (_) {}
+    try { wc.removeListener && wc.removeListener('destroyed', prev.onDestroyed); } catch (_) {}
+  }
+
   const onDestroyed = () => {
+    lifecycleHandlers.delete(wc);
     try { detach(wc); } catch (err) {
       log('destroyed 清理失败:', err && err.message);
     }
@@ -257,9 +273,9 @@ function trackLifecycle(wc, handler, providerId) {
 
   const onNavigate = () => {
     log('页面导航，重建 debugger 连接, webContents.id=' + wc.id);
+    // detach 只摘 debugger 监听，不摘生命周期监听
     try { detach(wc); } catch (_) {}
-    // 重新 attach。失败只记日志：页面可能正在加载中，debugger 暂时不可用；
-    // 下一次导航或用户重试时会再走这条路径。
+    // 重新 attach。attach 内部会再调 trackLifecycle，那里负责摘旧监听器。
     try {
       const r = attach(wc, providerId, handler || {});
       if (!r.ok) log('导航后重新 attach 失败:', r.error);
@@ -267,6 +283,8 @@ function trackLifecycle(wc, handler, providerId) {
       log('导航后重新 attach 抛异常:', err && err.message);
     }
   };
+
+  lifecycleHandlers.set(wc, { onDestroyed, onNavigate });
 
   try {
     // 用 once 挂 destroyed：销毁只发生一次，on 会留悬挂监听

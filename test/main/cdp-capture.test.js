@@ -111,6 +111,50 @@ test('ensureAttached 对非法 wc 抛异常', () => {
   assert.throws(() => capture.ensureAttached(null), /webContents/);
 });
 
+test('requestWillBeSentExtraInfo 只对补全请求派发 headers', () => {
+  // 构造一个最小 attach 流程：fake wc + 手动投递 CDP 事件
+  const sent = [];
+  const listeners = {};
+  const fake = {
+    id: 8001,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => false,
+      attach: () => {},
+      detach: () => {},
+      sendCommand: async () => ({}),
+      on: (ev, cb) => { listeners[ev] = cb; },
+      removeListener: () => {},
+    },
+    on: () => {},
+    once: () => {},
+    removeListener: () => {},
+  };
+  const r = capture.attach(fake, 'deepseek', {
+    onHeaders: (h) => sent.push(h),
+  });
+  assert.strictEqual(r.ok, true);
+
+  // 1) 无关请求的 ExtraInfo 不得派发
+  listeners['message']({}, 'Network.requestWillBeSentExtraInfo', {
+    requestId: 'img-1',
+    headers: { 'content-type': 'image/png' },
+  });
+  assert.strictEqual(sent.length, 0, '无关请求的 headers 不得派发');
+
+  // 2) 补全请求先被 requestWillBeSent 登记，再来的 ExtraInfo 才派发
+  listeners['message']({}, 'Network.requestWillBeSent', {
+    requestId: 'chat-1',
+    request: { url: 'https://chat.deepseek.com/api/v0/chat/completion', method: 'POST', postData: '{"prompt":"hi"}' },
+  });
+  listeners['message']({}, 'Network.requestWillBeSentExtraInfo', {
+    requestId: 'chat-1',
+    headers: { authorization: 'Bearer xxx' },
+  });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].authorization, 'Bearer xxx');
+});
+
 test('trackLifecycle 在 destroyed 时自动 detach', () => {
   const listeners = {};
   let attached = true;
@@ -132,6 +176,40 @@ test('trackLifecycle 在 destroyed 时自动 detach', () => {
   assert.strictEqual(typeof listeners['destroyed'], 'function', '必须监听 destroyed');
   listeners['destroyed']();
   assert.strictEqual(capture.isAttached(fake), false);
+});
+
+test('连续导航不会累积 did-navigate 监听器', () => {
+  const listeners = { 'did-navigate': [] };
+  let attached = true;
+  const fake = {
+    id: 7003,
+    isDestroyed: () => false,
+    debugger: {
+      isAttached: () => attached,
+      attach: () => { attached = true; },
+      detach: () => { attached = false; },
+      sendCommand: async () => ({}),
+      on: () => {},
+      removeListener: () => {},
+    },
+    on: (ev, cb) => { (listeners[ev] = listeners[ev] || []).push(cb); },
+    once: (ev, cb) => { (listeners[ev] = listeners[ev] || []).push(cb); },
+    removeListener: (ev, cb) => {
+      if (listeners[ev]) listeners[ev] = listeners[ev].filter((f) => f !== cb);
+    },
+  };
+  capture.__test.trackLifecycle(fake, {}, 'deepseek');
+  const afterFirst = listeners['did-navigate'].length;
+  // 连续导航 3 次
+  for (let i = 0; i < 3; i++) {
+    attached = false;
+    listeners['did-navigate'].slice().forEach((fn) => fn());
+  }
+  assert.strictEqual(
+    listeners['did-navigate'].length,
+    afterFirst,
+    '每次导航不得新增 did-navigate 监听器，否则内存泄漏且一次导航触发多次重连'
+  );
 });
 
 test('trackLifecycle 在 did-navigate 时重新 attach', () => {

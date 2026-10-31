@@ -554,8 +554,10 @@ function startInterceptObserver() {
   // 这样打开历史对话就能直接显示上次的数字，不必等新响应。
   try {
     const cached = loadTokenCache();
-    const n = Object.keys(cached).length;
-    state.serverTokenUsageBySession = cached;
+    const n = Object.keys(cached.usage).length;
+    state.serverTokenUsageBySession = cached.usage;
+    // 同时恢复基线（迁移过的新会话靠它把承接的历史扣掉）
+    state.tokenBaselineBySession = cached.baseline;
     // 关键：启动后若页面直接停在某个会话的 URL，watchSessionForStateReset 的 check()
     // 因 sid === lastSid 不会触发，serverTokenUsage 会一直是 null，悬浮球显示 0。
     // 这里主动按当前 URL 搬运一次，保证「重开即显示上次的数字」。
@@ -565,7 +567,7 @@ function startInterceptObserver() {
       const _sid0 = (_p0 && typeof _p0.extractSessionId === 'function'
         ? _p0.extractSessionId(window.location.href)
         : null) || '__home__';
-      state.serverTokenUsage = cached[_sid0] || null;
+      state.serverTokenUsage = cached.usage[_sid0] || null;
     } catch (_) {}
     if (n > 0) console.log('[LingYa][Token] 已从 localStorage 恢复 ' + n + ' 个会话的 token 缓存');
   } catch (_) { /* 恢复失败不影响启动 */ }
@@ -913,13 +915,16 @@ function startInterceptObserver() {
 
   console.log('[LingYa][拦截] 已启动 lingya-ai-response 事件监听');
   // 5 秒后仍未收到 hook 自检 → 打印明确警告（不阻断，但要让问题可见）
+  //
+  // 【CDP 模式不检查】走 CDP 捕获时页面主世界根本没有 hook，
+  // 不会有 lingya-hook-ready 事件，此警告必然是误报。改为检查 CDP 是否已启用。
   setTimeout(() => {
-    if (!window.__lingyaHookReadySeen__) {
-      console.warn('[LingYa][拦截] ⚠️ 5 秒内未收到 hook 自检事件。' +
-        '可能原因：① hook 注入失败（见上方「主世界拦截器注入」日志）；' +
-        '② 事件通道被页面隔离；③ 平台端点已变更导致 isCompletion 不匹配。' +
-        '此时 AI 回复将不会被自动执行。');
-    }
+    if (window.__lingyaCdpActive__) return;
+    if (window.__lingyaHookReadySeen__) return;
+    console.warn('[LingYa][拦截] ⚠️ 5 秒内未收到 hook 自检事件。' +
+      '可能原因：① hook 注入失败（见上方「主世界拦截器注入」日志）；' +
+      '② 事件通道被页面隔离；③ 平台端点已变更导致 isCompletion 不匹配。' +
+      '此时 AI 回复将不会被自动执行。');
   }, 5000);
 }
 
