@@ -24,6 +24,33 @@ const EMPTY_CONFIRM_POLLS = 3;
 let emptyPollCount = 0;
 let emptyPollSessionId = null;
 
+// ===== 【跨窗口轮转】目标窗口接收端 =====
+// 主进程派发迁移包后，写入本窗口 localStorage，交给既有 stage 状态机承接。
+// 关键：oldSessionId 强制为 null —— 删旧会话由源窗口在 ack 成功后负责，
+// 目标窗口若带着源会话 ID 会试图删自己 partition 里不存在（或错误）的会话。
+try {
+  if (window.electronAPI && typeof window.electronAPI.onReceivedMigration === 'function') {
+    window.electronAPI.onReceivedMigration((data) => {
+      try {
+        const payload = data && typeof data === 'object' ? data : {};
+        localStorage.setItem('lingya-pending-migration', JSON.stringify({
+          history: payload.history || '',
+          projectDir: payload.projectDir || null,
+          oldSessionId: null,
+          rotationRequestId: payload.requestId || null,
+          stage: 'init',
+          timestamp: Date.now(),
+        }));
+        console.log('[LingYa 轮转] 收到迁移包 requestId=' + payload.requestId);
+      } catch (err) {
+        console.error('[LingYa 轮转] 写入迁移包失败:', err && err.message);
+      }
+    });
+  }
+} catch (err) {
+  console.error('[LingYa 轮转] 注册迁移接收监听失败:', err && err.message);
+}
+
 /** 是否开启自动注入 */
 function isEnabled() {
   try { return localStorage.getItem('lingya-auto-inject') === '1'; } catch (_) { return false; }
@@ -154,8 +181,22 @@ function maybeInject() {
     if (data.stage === 'sent') {
       localStorage.removeItem('lingya-pending-migration');
       console.log('[LingYa 迁移] 历史迁移流程全部结束');
-      
-      // 静默删除旧会话
+
+      // 【跨窗口轮转】目标窗口承接完成 → 回 ack 给主进程，由主进程通知源窗口删旧会话。
+      // 目标窗口自己绝不删会话（oldSessionId 恒为 null，这里的 early return 是第二道保险）。
+      if (data.rotationRequestId) {
+        console.log('[LingYa 轮转] 承接完成，回 ack requestId=' + data.rotationRequestId);
+        try {
+          if (window.electronAPI && typeof window.electronAPI.rotationAck === 'function') {
+            window.electronAPI.rotationAck({ requestId: data.rotationRequestId, ok: true });
+          }
+        } catch (err) {
+          console.error('[LingYa 轮转] 回 ack 失败:', err && err.message);
+        }
+        return;
+      }
+
+      // 静默删除旧会话（仅原地迁移路径）
       if (data.oldSessionId) {
         console.log('[LingYa 迁移] 开始执行静默删除: ' + data.oldSessionId);
         try {
