@@ -11,24 +11,29 @@ const capture = require('./cdp-capture');
 
 let providersRegistry = null;
 
+/**
+ * providers/index.js 导出的是 { providers: [...], getProvider, ... }，
+ * provider 对象在 providers 数组里，不是以 id 为键的 map。
+ */
 function getProviders() {
   if (providersRegistry) return providersRegistry;
   try {
-    providersRegistry = require('../providers');
+    const mod = require('../providers');
+    providersRegistry = Array.isArray(mod && mod.providers) ? mod.providers : [];
   } catch (_) {
-    providersRegistry = {};
+    providersRegistry = [];
   }
   return providersRegistry;
 }
 
 /**
  * 查询 provider 是否支持 CDP。
- * 规则：provider 必须存在、有 useCdp 字段且不为 false。
+ * 规则：provider 必须存在且 useCdp === true。
  * 当前只有 deepseek 声明 useCdp: true。
  */
 function isCdpSupported(providerId) {
-  const providers = getProviders();
-  const provider = providers[providerId];
+  const list = getProviders();
+  const provider = list.find((p) => p && p.id === providerId);
   if (!provider) return false;
   return provider.useCdp === true;
 }
