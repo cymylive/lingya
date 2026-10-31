@@ -402,6 +402,45 @@ function _clearPending() {
   sessionStartedAt = null;
 }
 
+/**
+ * 构建候选窗口列表（供 UI 展示与选池）。
+ *
+ * @param {Array<{id:string, name:string}>} profiles profile 列表
+ * @param {object} cfg 轮转配置（用于取 accountTag）
+ * @param {(profileId:string)=>object|null} getCtx 取窗口上下文
+ * @param {(profileId:string)=>boolean} isBusy 窗口是否在生成
+ * @returns {Array<{profileId, name, accountTag, exists, busy}>}
+ */
+function buildCandidates(profiles, cfg, getCtx, isBusy) {
+  if (!Array.isArray(profiles)) return [];
+  const pool = cfg && Array.isArray(cfg.pool) ? cfg.pool : [];
+  const tagMap = new Map();
+  for (const item of pool) {
+    if (item && item.profileId) tagMap.set(String(item.profileId), item.accountTag == null ? '' : String(item.accountTag));
+  }
+  const out = [];
+  for (const p of profiles) {
+    if (!p || !p.id) continue;
+    const profileId = String(p.id);
+    let ctx = null;
+    try { ctx = typeof getCtx === 'function' ? getCtx(profileId) : null; } catch (_) { ctx = null; }
+    const exists = !!ctx;
+    let busy = false;
+    if (exists) {
+      try { busy = typeof isBusy === 'function' ? !!isBusy(profileId) : false; } catch (_) { busy = false; }
+    }
+    out.push({
+      profileId,
+      name: p.name == null ? '' : String(p.name),
+      accountTag: tagMap.get(profileId) || '',
+      exists,
+      busy,
+    });
+  }
+  return out;
+}
+
+module.exports.buildCandidates = buildCandidates;
 module.exports.submit = submit;
 module.exports.ack = ack;
 module.exports._pendingSize = _pendingSize;

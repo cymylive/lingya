@@ -184,6 +184,13 @@ try {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }
 
+// 初始化跨窗口 Token 轮转配置存储（全局共享）
+try {
+  require('./token-rotation').init(app.getPath('userData'));
+} catch (err) {
+  console.error('[LingYa] 初始化轮转配置存储失败:', err.message);
+}
+
 // 初始化 Agent 状态存储（Plan / Build 模式，per-profile）
 try {
   require('./agent-store').init(app.getPath('userData'));
@@ -1009,6 +1016,16 @@ function setupAppMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+// ========== IPC 来源校验（审计 P0）==========
+// 必须在所有 registerXXXIpc() 之前安装，这样每个 ipcMain.handle 都会被包上来源校验。
+// 敏感通道（记忆/插件/凭证/配置等）只允许 file:// 协议（LingYa 自己页面）调用，
+// 防止 AI 网页里的脚本（XSS/注入）越权操作本地资源。
+try {
+  require('./ipc-guard').install(ipcMain);
+} catch (err) {
+  console.error('[LingYa] 安装 IPC 来源校验失败:', err && err.message);
+}
+
 // ========== IPC 处理器 ==========
 registerIpcHandlers();
 
@@ -1303,6 +1320,120 @@ ipcMainForProfile.handle('shell-new-chat', async (event) => {
     return { success: true };
   } catch (err) { return { success: false, error: err.message }; }
 });
+
+// ===== 跨窗口 Token 轮转 IPC（6 个通道）=====
+// 主进程只负责「选目标窗口 + 中继数据 + 管超时」，不碰任何 localStorage、不删任何会话。
+// 删旧会话永远由源窗口在 ack 成功后执行。
+try {
+  const rotation = require('./token-rotation');
+  const { getProviderByUrl } = require('../providers');
+
+  /** 取窗口上下文的 AI 视图 wc；不可用返回 null */
+  const rotGetWc = (ctx) => (ctx ? windowState.getViewWebContents(ctx) : null);
+
+  /** 该 profile 的窗口是否可接收派发（存在 && 不忙） */
+  function rotIsAvailable(profileId) {
+    const ctx = windowState.getWindowByProfileId(profileId);
+    const wc = rotGetWc(ctx);
+    if (!wc) return false;
+    try {
+      // 生成中视为忙：不能把迁移数据塞进正在跑的会话
+      if (generationState.get(wc.id)) return false;
+    } catch (_) {}
+    return true;
+  }
+
+  /** 把窗口导航到平台首页并等加载完成 */
+  async function rotEnsureHome(ctx, wc) {
+    let homeUrl = null;
+    try {
+      const p = getProviderByUrl(wc.getURL());
+      if (p && p.homeUrl) homeUrl = p.homeUrl;
+    } catch (_) {}
+    if (!homeUrl) return false;
+    if (String(wc.getURL() || '').startsWith(homeUrl)) return true;
+    await wc.loadURL(homeUrl);
+    return true;
+  }
+
+  ipcMainForProfile.handle('rotation-get-config', async () => {
+    try {
+      return { success: true, config: rotation.getConfig() };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  ipcMainForProfile.handle('rotation-set-config', async (event, { patch } = {}) => {
+    try {
+      return { success: true, config: rotation.updateConfig(patch) };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  ipcMainForProfile.handle('rotation-reset', async () => {
+    try {
+      return { success: true, config: rotation.resetState() };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  ipcMainForProfile.handle('rotation-list-candidates', async () => {
+    try {
+      const cfg = rotation.getConfig();
+      const profiles = profileManager.readProfiles();
+      const windows = rotation.buildCandidates(
+        profiles,
+        cfg,
+        (pid) => windowState.getWindowByProfileId(pid),
+        (pid) => !rotIsAvailable(pid),
+      );
+      return { success: true, windows };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  ipcMainForProfile.handle('rotation-submit', async (event, { data } = {}) => {
+    try {
+      const srcCtx = windowState.getContextByWebContents(event.sender);
+      if (!srcCtx) return { success: false, reason: 'no-source' };
+      const sourceProfileId = srcCtx.profileId;
+      const cfg = rotation.getConfig();
+      const poolItem = (cfg.pool || []).find((x) => x && x.profileId === sourceProfileId);
+      const sourceAccountTag = poolItem ? (poolItem.accountTag || '') : '';
+
+      const result = await rotation.submit(sourceProfileId, sourceAccountTag, data || {}, {
+        isAvailable: rotIsAvailable,
+        dispatch: async (targetProfileId, requestId, payload) => {
+          const targetCtx = windowState.getWindowByProfileId(targetProfileId);
+          const wc = rotGetWc(targetCtx);
+          if (!wc) throw new Error('目标窗口不可用');
+          const okHome = await rotEnsureHome(targetCtx, wc);
+          if (!okHome) throw new Error('无法确定目标平台首页');
+          wc.send('lingya-received-migration', { requestId, ...payload });
+        },
+        onResult: (srcProfileId, res) => {
+          // 回告源窗口：找不到窗口就静默丢弃（源窗口可能已被关闭）
+          try {
+            const ctx = windowState.getWindowByProfileId(srcProfileId);
+            const raw = ctx && ctx.rawWin;
+            if (raw && !raw.isDestroyed() && raw.webContents && !raw.webContents.isDestroyed()) {
+              raw.webContents.send('lingya-rotation-result', res);
+            }
+          } catch (err) {
+            console.error('[Rotation] 回告源窗口失败:', err.message);
+          }
+        },
+      });
+      if (!result.ok) return { success: false, reason: result.reason };
+      return { success: true, targetProfileId: result.targetProfileId, requestId: result.requestId };
+    } catch (err) { return { success: false, reason: 'error', error: err.message }; }
+  });
+
+  ipcMainForProfile.handle('rotation-ack', async (event, { requestId, ok, error } = {}) => {
+    try {
+      const hit = rotation.ack(String(requestId || ''), ok === true, error);
+      return { success: hit };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+} catch (err) {
+  console.error('[LingYa] 注册轮转 IPC 失败:', err.message);
+}
 
 // 侧边栏 → AI 视图：执行一个动作（生成文档/沉浸式/停止/压缩/手动解析/导出对话）
 ipcMainForProfile.handle('shell-run-action', async (event, { action } = {}) => {
@@ -2235,9 +2366,21 @@ app.on('window-all-closed', () => {
 // 退出前刷新所有 session 数据
 let quitFlushed = false;
 app.on('before-quit', (event) => {
+  // 【审计修复】清理 window.js 里 100ms 节流广播的定时器，防止延迟退出
+  try {
+    const ws = require('./window');
+    if (typeof ws.clearBroadcastTimer === 'function') ws.clearBroadcastTimer();
+  } catch (_) {}
   if (quitFlushed) return;
   event.preventDefault();
   quitFlushed = true;
+  // 【审计修复 P1】3 秒强制退出兜底：如果 flushAllSessions 卡住，
+  // 用户点退出必须能退出，防止主进程永久挂起。
+  const forceTimer = setTimeout(() => {
+    console.error('[LingYa] 退出清理超时，强制退出');
+    try { app.exit(0); } catch (_) {}
+  }, 3000);
+  if (forceTimer && typeof forceTimer.unref === 'function') forceTimer.unref();
   // 终止后台建图子进程，避免退出后留下孤儿进程
   try {
     require('./graphify-builder').cancel();
