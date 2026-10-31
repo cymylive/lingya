@@ -344,13 +344,29 @@ function formatTokenCount(n) {
  * 数据来源：服务端 accumulated_token_usage（含 prompt+输出）；
  * 未收到服务端数据时显示 0。
  */
+/**
+ * 获取「有效 token 数」——扣除基线偏移后的值。
+ * 迁移新建的会话在历史注入完成后会记录基线（state.tokenBaselineBySession[sid]），
+ * 之后显示和阈值判定都用 Math.max(0, accumulated - baseline)，让新会话从 0 开始算。
+ * 无数据时返回 null（调用方自行处理为显示 0）。
+ */
+function getEffectiveTokenCount() {
+  const server = state.serverTokenUsage;
+  if (!server || typeof server.accumulatedTokens !== 'number') return null;
+  // 迁移进行中：新会话尚未记录基线，先按 0 显示，避免把承接的历史算进去
+  if (state.isMigrating) return 0;
+  const sid = state.currentSessionId || '__home__';
+  const baseline = (state.tokenBaselineBySession && state.tokenBaselineBySession[sid]) || 0;
+  return Math.max(0, server.accumulatedTokens - baseline);
+}
+
 function updateConversationTokenDisplay() {
   const countEl = document.getElementById('lingya-conv-token-count');
   
-  const server = state.serverTokenUsage;
+  const effective = getEffectiveTokenCount();
   let tokenText = '0';
-  if (server && typeof server.accumulatedTokens === 'number') {
-    tokenText = formatTokenCount(server.accumulatedTokens);
+  if (effective !== null) {
+    tokenText = formatTokenCount(effective);
   }
 
   if (countEl) {
@@ -362,7 +378,8 @@ function updateConversationTokenDisplay() {
   if (!fabTokenEl) {
     fabTokenEl = document.createElement('div');
     fabTokenEl.id = 'lingya-fab-token';
-    fabTokenEl.style.cssText = 'position: fixed; transform: translate(-50%, -100%); background: rgba(12, 14, 16, 0.95); border: 1px solid #2dd4bf; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #2dd4bf; pointer-events: none; z-index: 2147483647; white-space: nowrap; display: block;';
+    // 初始位置放到屏幕外，防止在计算坐标前闪现在左上角
+    fabTokenEl.style.cssText = 'position: fixed; left: -9999px; top: -9999px; transform: translate(-50%, -100%); background: rgba(12, 14, 16, 0.95); border: 1px solid #2dd4bf; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #2dd4bf; pointer-events: none; z-index: 2147483647; white-space: nowrap; display: block;';
     document.body.appendChild(fabTokenEl);
   }
 
@@ -380,58 +397,36 @@ function updateConversationTokenDisplay() {
 }
 
 // ========== 自动压缩上下文 ==========
-// 配置：是否启用 + 阈值（单位：万 token）
-let autoCompactEnabled = false;
-let autoCompactThresholdWan = 80;
+// 配置的唯一入口是侧边栏设置（写入 localStorage），此处每秒实时读取。
+// 悬浮球面板不再提供阈值设置。
 // 防止压缩过程中重复触发
 let autoCompactTriggering = false;
-
-/** 从 localStorage 读取自动压缩配置并同步到 UI */
-function loadAutoCompactConfig() {
-  try {
-    const en = localStorage.getItem('lingya-auto-compact-enabled');
-    const th = localStorage.getItem('lingya-auto-compact-threshold');
-    autoCompactEnabled = en === '1';
-    autoCompactThresholdWan = th ? (parseFloat(th) || 80) : 80;
-  } catch (_) {}
-  const enEl = document.getElementById('lingya-auto-compact-enabled');
-  const thEl = document.getElementById('lingya-auto-compact-threshold');
-  if (enEl) enEl.checked = autoCompactEnabled;
-  if (thEl) thEl.value = autoCompactThresholdWan;
-}
-
-/** 保存自动压缩配置 */
-function saveAutoCompactConfig() {
-  const enEl = document.getElementById('lingya-auto-compact-enabled');
-  const thEl = document.getElementById('lingya-auto-compact-threshold');
-  const enabled = !!(enEl && enEl.checked);
-  let th = thEl ? parseFloat(thEl.value) : 80;
-  if (!Number.isFinite(th) || th <= 0) {
-    showToast('阈值需为正数（万）', 3000);
-    return;
-  }
-  autoCompactEnabled = enabled;
-  autoCompactThresholdWan = th;
-  try {
-    localStorage.setItem('lingya-auto-compact-enabled', enabled ? '1' : '0');
-    localStorage.setItem('lingya-auto-compact-threshold', String(th));
-  } catch (_) {}
-  showToast('自动压缩设置已保存：' + (enabled ? '开启，阈值 ' + th + ' 万' : '关闭'), 2500);
-}
 
 /**
  * 检查是否触发自动压缩
  * 数据源：state.serverTokenUsage.accumulatedTokens
  */
 function checkAutoCompact() {
-  if (!autoCompactEnabled || autoCompactTriggering) return;
+  if (autoCompactTriggering) return;
+  // 实时读 localStorage：侧边栏改完立即生效，无需刷新页面
+  let enabled = false;
+  let thresholdWan = 80;
+  try {
+    enabled = localStorage.getItem('lingya-auto-compact-enabled') === '1';
+    const th = localStorage.getItem('lingya-auto-compact-threshold');
+    thresholdWan = th ? (parseFloat(th) || 80) : 80;
+  } catch (_) { return; }
+  if (!enabled) return;
   const server = state.serverTokenUsage;
   if (!server || typeof server.accumulatedTokens !== 'number') return;
-  const thresholdTokens = autoCompactThresholdWan * 10000;
-  if (server.accumulatedTokens < thresholdTokens) return;
+  // 【修复】用扣除基线后的「有效 token 数」判定阈值，避免迁移后新会话拿原值继续触发
+  const effective = getEffectiveTokenCount();
+  const current = effective !== null ? effective : server.accumulatedTokens;
+  const thresholdTokens = thresholdWan * 10000;
+  if (current < thresholdTokens) return;
   // 触发
   autoCompactTriggering = true;
-  console.log('[LingYa Compact] 自动触发：当前 ' + server.accumulatedTokens + ' >= 阈值 ' + thresholdTokens);
+  console.log('[LingYa Compact] 自动触发：当前有效 ' + current + ' >= 阈值 ' + thresholdTokens);
   
   // 【新功能】全自动迁移会话
   (async function runMigration() {
@@ -470,7 +465,12 @@ function checkAutoCompact() {
       // 存入 localStorage，供 auto-inject 读取
       const migrationData = {
         history: historyMd,
-        projectDir: state.currentProjectDir || null,
+        // 兜底：state.currentProjectDir 只在收到 project-dir-updated 时赋值，
+        // 新开会话/页面重载后会短暂为 null。此时回退读 lingya-last-project-dir
+        // （由 project-dir.js 维护，只写有效值、不被 null 覆盖），
+        // 避免自动迁移把"项目路径为空"带到新会话。
+        projectDir: state.currentProjectDir
+          || (() => { try { return localStorage.getItem('lingya-last-project-dir') || null; } catch (_) { return null; } })(),
         oldSessionId: oldSid,
         timestamp: Date.now()
       };
@@ -543,7 +543,6 @@ function makeFabDraggable(badge) {
     // 同步更新 Token 标签位置
     const tokenEl = document.getElementById('lingya-fab-token');
     if (tokenEl) {
-      tokenEl.style.top = (top - 6) + 'px';
       tokenEl.style.left = cx + 'px';
       tokenEl.style.top = (top - 6) + 'px';
     }
@@ -947,10 +946,7 @@ function bindEvents() {
     autoInjectEl.addEventListener('change', saveAutoInjectSetting);
   }
 
-  // 自动压缩：加载配置 + 绑定保存按钮
-  loadAutoCompactConfig();
-  const autoSaveBtn = document.getElementById('lingya-auto-compact-save');
-  autoSaveBtn?.addEventListener('click', saveAutoCompactConfig);
+  // 自动压缩：配置由侧边栏唯一管理，checkAutoCompact 每秒实时读 localStorage
 
   // 启动输入框 token 估算 + 自动压缩检查
   startTokenCounter();

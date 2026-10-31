@@ -19,27 +19,40 @@ const taskState = require('./task-state');
 // 集中一个键便于清理和排查，不用遍历 localStorage 找前缀。
 const TOKEN_CACHE_KEY = 'lingya-token-by-session';
 
-/** 从 localStorage 读取 token 缓存；脏数据一律丢弃，返回空对象 */
+/** 从 localStorage 读取 token 缓存；脏数据一律丢弃。
+ *  返回 { usage: {sid: tokenUsage}, baseline: {sid: number} }。
+ *  兼容旧格式：旧版直接是 { sid: tokenUsage } 扁平对象，没有 usage 包装。 */
 function loadTokenCache() {
   try {
     const raw = localStorage.getItem(TOKEN_CACHE_KEY);
-    if (!raw) return {};
+    if (!raw) return { usage: {}, baseline: {} };
     const obj = JSON.parse(raw);
-    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
-    const out = {};
-    for (const k of Object.keys(obj)) {
-      const v = obj[k];
-      // 只保留结构合法的条目，防止旧格式/手改数据污染内存
-      if (v && typeof v === 'object' && typeof v.accumulatedTokens === 'number') out[k] = v;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { usage: {}, baseline: {} };
+    // 新版：有 usage / baseline 两个字段
+    const hasNewShape = obj.usage && typeof obj.usage === 'object';
+    const srcUsage = hasNewShape ? obj.usage : obj;   // 旧格式时整个 obj 就是 usage
+    const usage = {};
+    for (const k of Object.keys(srcUsage)) {
+      const v = srcUsage[k];
+      if (v && typeof v === 'object' && typeof v.accumulatedTokens === 'number') usage[k] = v;
     }
-    return out;
-  } catch (_) { return {}; }
+    const baseline = {};
+    if (obj.baseline && typeof obj.baseline === 'object') {
+      for (const k of Object.keys(obj.baseline)) {
+        if (typeof obj.baseline[k] === 'number' && isFinite(obj.baseline[k])) baseline[k] = obj.baseline[k];
+      }
+    }
+    return { usage, baseline };
+  } catch (_) { return { usage: {}, baseline: {} }; }
 }
 
-/** 把 token 缓存写回 localStorage；配额不足/隐私模式时静默降级，绝不影响功能 */
-function saveTokenCache(map) {
+/** 把 token 缓存写回 localStorage；配额不足/隐私模式时静默降级，绝不影响功能。
+ *  保存 { usage, baseline } 两块。旧调用方只传 usage 时也能兼容（兜底读 state）。 */
+function saveTokenCache(usageMap) {
   try {
-    localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(map || {}));
+    const usage = usageMap || state.serverTokenUsageBySession || {};
+    const baseline = state.tokenBaselineBySession || {};
+    localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify({ usage, baseline }));
   } catch (_) { /* QuotaExceeded / 禁用存储 → 仅内存生效 */ }
 }
 const { detectXmlFormat } = require('./xml-detect');
@@ -753,6 +766,24 @@ function startInterceptObserver() {
         if (state.isMigrating) {
           console.log('[LingYa 迁移] 新会话已产生第一轮回复，解除防爆锁');
           state.isMigrating = false;
+          // 【token 基线】迁移后的首轮回复：把这轮的 accumulatedTokens 记为基线，
+          // 使新会话的 token 显示与阈值判定从 0 重新计算，不把承接的历史计入。
+          // 只在首轮记录一次（已有 baseline 则不覆盖），避免后续轮次反复改写。
+          try {
+            if (detail.tokenUsage && typeof detail.tokenUsage.accumulatedTokens === 'number') {
+              const { getProviderByUrl } = require('../../providers');
+              const _p0 = getProviderByUrl(window.location.href);
+              const _sid0 = (_p0 && typeof _p0.extractSessionId === 'function'
+                ? _p0.extractSessionId(window.location.href)
+                : null) || '__home__';
+              if (_sid0 !== '__home__' && !state.tokenBaselineBySession[_sid0]) {
+                state.tokenBaselineBySession[_sid0] = detail.tokenUsage.accumulatedTokens || 0;
+                console.log('[LingYa][Token] 迁移基线已记录 ' + String(_sid0).slice(0, 8) + ' = ' + state.tokenBaselineBySession[_sid0]);
+                // 落盘（此处 serverTokenUsageBySession 稍后才写，用当前快照存一次）
+                try { saveTokenCache(state.serverTokenUsageBySession); } catch (_) {}
+              }
+            }
+          } catch (_) { /* 基线记录失败不阻断主流程 */ }
         }
 
         const ratio = Number(state.thinkRatio) || 0;

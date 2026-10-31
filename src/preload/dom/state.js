@@ -62,6 +62,10 @@ module.exports = {
   // 会话切换时由 watchSessionForStateReset 的 check() 把当前会话的值搬回 serverTokenUsage。
   // 只在内存里（刷新后清空，各会话等下次响应恢复），不落 localStorage。
   serverTokenUsageBySession: {},
+  // 【token 基线偏移】按 sessionId 记录「历史注入完成时的 token 数」，
+  // 显示和阈值判定都用 Math.max(0, accumulated - baseline)，让新会话从 0 开始算。
+  // 键：sessionId。持久化时与 serverTokenUsageBySession 一起存 TOKEN_CACHE_KEY。
+  tokenBaselineBySession: {},
   // 最近一次 AI 回复的消息 id（{ requestMessageId, responseMessageId }）
   lastResponseMsgIds: null,
   // 【2026-10-30 拟人延迟】最近一次 AI 回复的字符数（正文 + 思考）。
