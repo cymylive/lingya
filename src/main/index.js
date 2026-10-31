@@ -184,6 +184,14 @@ try {
   console.error('[LingYa] 初始化安全配置存储失败:', err.message);
 }
 
+// 【2026-11-01 新增】初始化用户提示词草稿存储
+try {
+  require('./prompt-template-store').init(app.getPath('userData'));
+  console.log('[LingYa] 提示词草稿存储已初始化');
+} catch (err) {
+  console.error('[LingYa] 初始化提示词草稿存储失败:', err.message);
+}
+
 // 初始化跨窗口 Token 轮转配置存储（全局共享）
 try {
   require('./token-rotation').init(app.getPath('userData'));

@@ -52,6 +52,11 @@ module.exports = {
   // 原 2500/9000 与历史响应时长相关，现在改为纯均匀随机后无需依赖 thinkRatio
   globalSendDelayMin: 4000,
   globalSendDelayMax: 10000,
+  // 【2026-11-01 恢复】延迟模式：'uniform'（均匀随机，默认）| 'dual'（双策略，原版）
+  sendDelayMode: 'uniform',
+  // 【2026-11-01 新增】长消息分流阈值：消息长度 > 此值 → 转 .md 附件上传；≤ 此值 → 直接输入框输入
+  // 默认 200（约 100 个汉字），可在「设置 → 发送延迟」中自定义
+  uploadThreshold: 200,
   // 【封号风险改造 2026-11-01】系统消息（工具回传/压缩/重命名/远程 IM）延迟区间。
   // 原实现大量调用方硬编码 fixedDelay=300，节拍完全固定 → 机器指纹。
   // 现统一改为 [systemMsgDelayMin, systemMsgDelayMax] 随机。

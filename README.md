@@ -236,7 +236,6 @@ lingya/
 │   │   ├── memory-store.js     # 长期记忆存储
 │   │   ├── skill-store.js      # 技能存储
 │   │   ├── security-store.js   # 安全增强配置
-│   │   ├── refusal-rewriter.js # AI 改写服务
 │   │   ├── mcp-config.js       # MCP 配置管理
 │   │   ├── mcp-client.js       # MCP SDK 客户端
 │   │   ├── tool-registry.js    # 工具注册（主进程侧）

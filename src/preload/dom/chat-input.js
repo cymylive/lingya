@@ -93,6 +93,15 @@ async function resolveInitialChunkDelay() {
       const n = parseInt(t, 10);
       if (Number.isFinite(n) && n >= 0) state.adaptiveThreshold = n;
     }
+    // 【2026-11-01 恢复】延迟模式：'uniform'（默认）| 'dual'（原版双策略）
+    const mode = localStorage.getItem('lingya-send-delay-mode');
+    if (mode === 'dual' || mode === 'uniform') state.sendDelayMode = mode;
+    // 【2026-11-01 新增】长消息分流阈值
+    const ut = localStorage.getItem('lingya-upload-threshold');
+    if (ut !== null) {
+      const n = parseInt(ut, 10);
+      if (Number.isFinite(n) && n > 0) state.uploadThreshold = n;
+    }
   } catch (_) { /* ignore */ }
 })();
 
@@ -371,31 +380,40 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     } catch (_) { /* ignore */ }
     return false;
   }
-  // ===== 全局走文件上传：把内容写成 .md 通过附件发送 =====
-  // 关键：上传后必须往输入框填一行「引导语」，否则平台会因输入框为空
-  // 拒绝发送（实测 DeepSeek 弹「没有内容」）。附件才是真正的正文。
+  // ===== 按长度分流（2026-11-01）=====
+  // 短消息（≤ uploadThreshold）→ 直接输入框输入发送（人类行为最自然）
+  // 长消息（> uploadThreshold）→ 转成 .md 附件上传 + 输入框填引导语
+  //
+  // 阈值可在「设置 → 发送延迟」中自定义（默认 200，约 100 汉字）
+  const UPLOAD_THRESHOLD = Number(state.uploadThreshold) > 0 ? Number(state.uploadThreshold) : 200;
+  const msgLen = String(msg || '').length;
+  const shouldUpload = msgLen > UPLOAD_THRESHOLD;
   let uploaded = false;
   let uploadedName = '';
-  try {
-    const fileUpload = require('./file-upload');
-    const result = await fileUpload.uploadContent(msg, input);
-    // uploadContent 返回 { ok, fileName }；兼容旧的布尔返回
-    if (result && typeof result === 'object') {
-      uploaded = !!result.ok;
-      uploadedName = result.fileName || '';
-    } else {
-      uploaded = !!result;
+  if (shouldUpload) {
+    try {
+      const fileUpload = require('./file-upload');
+      const result = await fileUpload.uploadContent(msg, input);
+      // uploadContent 返回 { ok, fileName }；兼容旧的布尔返回
+      if (result && typeof result === 'object') {
+        uploaded = !!result.ok;
+        uploadedName = result.fileName || '';
+      } else {
+        uploaded = !!result;
+      }
+      if (uploaded) {
+        console.log('[LingYa] 长消息（' + msgLen + ' 字符）→ 已上传附件 ' + uploadedName);
+      }
+    } catch (err) {
+      console.warn('[LingYa] 文件上传异常，回退文本发送:', err && err.message);
+      uploaded = false;
     }
-    if (uploaded) {
-      console.log('[LingYa] 已上传附件 ' + uploadedName + '，长度=' + msg.length);
-    }
-  } catch (err) {
-    console.warn('[LingYa] 文件上传异常，回退文本发送:', err && err.message);
-    uploaded = false;
+  } else {
+    console.log('[LingYa] 短消息（' + msgLen + ' 字符）→ 直接输入框发送');
   }
 
   if (uploaded) {
-    // 填引导语，满足平台非空校验，同时提示 AI 去读附件。
+    // 长消息：填引导语，满足平台非空校验，同时提示 AI 去读附件。
     // 文案池随机 + 带当前文件名，避免整段对话重复同一串字（机器指纹）。
     let hint;
     try {
@@ -408,15 +426,15 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
       console.warn('[LingYa] 引导语填入失败，仍尝试发送');
     }
   } else {
-    // 兜底：原有文本填入逻辑
+    // 短消息（或长消息上传失败）→ 直接填入文本
     if (!(await setInputContent(input, msg))) {
       return false;
     }
   }
-  // 【对齐 Cuckoo 2026-11-01】发送延迟统一为「均匀随机」（与历史无关）。
-  // 原实现的双策略（往返耗时 × 0.2 自适应）有强烈特征：延迟与上一次 AI 响应时长强相关，
-  // DeepSeek 可用统计方法识别（人类打字速度与 AI 思考时长无正相关）。
-  // Cuckoo 用 pickDelay(4000, 10000) 均匀随机长期不封号，现对齐此行为。
+  // 【2026-11-01 恢复原双策略 + 加模式开关】
+  // 模式（state.sendDelayMode）：
+  //  - 'uniform'（默认）：纯均匀随机（对齐 Cuckoo，反封号效果最好）
+  //  - 'dual'：双策略（原版）—— 快请求随机 + 慢请求按 AI 思考耗时自适应
   let sendDelay;
   let branch;
   if (fixedDelay !== undefined) {
@@ -431,8 +449,26 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
       sendDelay = fixedDelay;
       branch = '调用方指定 ' + fixedDelay + 'ms';
     }
+  } else if (state.sendDelayMode === 'dual') {
+    // 双策略（原版）：往返 > 阈值 → 慢请求自适应；否则 → 快请求随机
+    const thinkMs = Number(state.lastThinkMs) || 0;
+    const threshold = Number(state.adaptiveThreshold) || 20000;
+    if (thinkMs > threshold) {
+      const adaptiveDelay = computeThinkAdaptiveDelay();
+      const fallbackDelay = initialDelay();
+      sendDelay = Math.max(fallbackDelay, adaptiveDelay);
+      branch = '慢请求自适应：往返 ' + thinkMs + 'ms > 阈值 ' + threshold +
+        'ms → ' + sendDelay + 'ms（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay +
+        '，比例 ' + state.thinkRatio + '，上限 ' + state.thinkMaxDelay + '）';
+    } else {
+      const globalDelay = pickGlobalDelay();
+      sendDelay = globalDelay;
+      branch = '快请求随机：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold +
+        'ms → 区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
+        ']ms 内随机取 ' + globalDelay + 'ms';
+    }
   } else {
-    // 【对齐 Cuckoo】纯均匀随机，与历史响应时长无关
+    // 均匀随机（默认，对齐 Cuckoo）
     const globalDelay = pickGlobalDelay();
     sendDelay = globalDelay;
     branch = '均匀随机：区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
@@ -1119,7 +1155,193 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }
     else if (k === 'hide-floating') { localStorage.setItem('lingya-hide-floating', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
     else if (k === 'hide-plan-float') { localStorage.setItem('lingya-hide-plan-float', v ? '1' : '0'); try { require('../overlay/ui').applyFloatSettings(); } catch (_) {} }
+    // 【2026-11-01 对齐 Cuckoo】AI 回复拦截配置
+    else if (k === 'ai-intercept-patterns') { localStorage.setItem('lingya-ai-intercept-patterns', String(v || '')); }
+    else if (k === 'ai-intercept-prompt') { localStorage.setItem('lingya-ai-intercept-prompt', String(v || '')); }
+    // 【2026-11-01 对齐 Cuckoo】失败重试配置
+    else if (k === 'send-delay-mode') { localStorage.setItem('lingya-send-delay-mode', String(v || 'uniform')); if (v === 'dual' || v === 'uniform') state.sendDelayMode = v; console.log('[LingYa] 延迟模式已切换为: ' + v); }
+    else if (k === 'upload-threshold') { var n = parseInt(v, 10); if (Number.isFinite(n) && n > 0) { localStorage.setItem('lingya-upload-threshold', String(n)); state.uploadThreshold = n; console.log('[LingYa] 上传阈值已更新为 ' + n + ' 字符'); } }
+    else if (k === 'retry-enabled') { localStorage.setItem('lingya-retry-enabled', v ? '1' : '0'); }
+    else if (k === 'retry-delay-min') { localStorage.setItem('lingya-retry-delay-min', String(v)); }
+    else if (k === 'retry-delay-max') { localStorage.setItem('lingya-retry-delay-max', String(v)); }
+    else if (k === 'retry-count') { localStorage.setItem('lingya-retry-count', String(v)); }
+    else if (k === 'retry-429-delay') { localStorage.setItem('lingya-retry-429-delay', String(v)); }
+    else if (k === 'retry-429-count') { localStorage.setItem('lingya-retry-429-count', String(v)); }
+    else if (k === 'retry-prompt') { localStorage.setItem('lingya-retry-prompt', String(v || '')); }
+    else if (k === 'xhr-idle-timeout') { localStorage.setItem('lingya-xhr-idle-timeout', String(v)); }
+    else if (k === 'watchdog-prompt') { localStorage.setItem('lingya-watchdog-prompt', String(v || '')); }
+    else if (k === 'watchdog-count') { localStorage.setItem('lingya-watchdog-count', String(v)); }
   } catch (e) { console.error('[LingYa] set-setting 失败:', e.message); }
+});
+
+// 【2026-11-01 新增】导出指定会话为 Markdown
+// Shell 侧点击「导出」→ 主进程转发到这个 handler → 本端读 IndexedDB 全量消息 → 生成 md → 调保存
+ipcRenderer.on('lingya-export-session-md', async (_event, { sessionId, title }) => {
+  try {
+    if (!sessionId) return;
+    // 从 IndexedDB 读取该会话消息
+    const msgs = await new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open('deepseek-chat'); } catch (e) { resolve([]); return; }
+      req.onerror = () => resolve([]);
+      req.onsuccess = () => {
+        const db = req.result;
+        try {
+          const tx = db.transaction('history-message', 'readonly');
+          const store = tx.objectStore('history-message');
+          const g = store.get(sessionId);
+          g.onsuccess = () => {
+            db.close();
+            const val = g.result;
+            const cm = val && val.data && val.data.chat_messages;
+            resolve(Array.isArray(cm) ? cm : []);
+          };
+          g.onerror = () => { db.close(); resolve([]); };
+        } catch (_) { db.close(); resolve([]); }
+      };
+    });
+
+    if (!msgs.length) {
+      console.warn('[LingYa][export] IndexedDB 中无该会话消息, sessionId=' + sessionId);
+      try {
+        const { showToast } = require('../overlay/ui');
+        if (showToast) showToast('该会话在 IndexedDB 中无历史消息（可能从没在 DeepSeek 里打开过）', 5000);
+      } catch (_) {}
+      return;
+    }
+    // 【临时诊断】记录第一条消息的真实结构，便于修正 extractText
+    try {
+      console.log('[LingYa][export] 找到 ' + msgs.length + ' 条消息');
+      console.log('[LingYa][export] 第一条消息结构: ' + JSON.stringify(msgs[0], null, 2).slice(0, 2000));
+    } catch (_) {}
+
+    // 排序并过滤
+    const sorted = msgs
+      .filter(m => m && typeof m.message_id === 'number')
+      .sort((a, b) => a.message_id - b.message_id);
+
+    // 提取文本（宽容版：覆盖 DeepSeek 各种可能的消息结构）
+    function extractText(m) {
+      if (!m) return '';
+      // 尝试从任意对象里递归找文本字段
+      function findText(obj, depth) {
+        if (depth > 5 || !obj) return '';
+        if (typeof obj === 'string') return obj;
+        if (Array.isArray(obj)) {
+          // 数组：拼接所有字符串元素 / 递归
+          const parts = [];
+          for (const item of obj) {
+            if (typeof item === 'string') parts.push(item);
+            else if (item && typeof item === 'object') {
+              const t = findText(item, depth + 1);
+              if (t) parts.push(t);
+            }
+          }
+          return parts.join('');
+        }
+        if (typeof obj === 'object') {
+          // 优先尝试常见文本字段
+          const keys = ['content', 'text', 'markdown', 'value', 'parts', 'fragments', 'message', 'data'];
+          for (const k of keys) {
+            if (k in obj) {
+              const v = obj[k];
+              if (typeof v === 'string' && v) return v;
+              if (v && typeof v === 'object') {
+                const t = findText(v, depth + 1);
+                if (t) return t;
+              }
+            }
+          }
+          // 兜底：遍历所有字段
+          for (const k of Object.keys(obj)) {
+            const v = obj[k];
+            if (typeof v === 'string' && v.length > 0) return v;
+            if (v && typeof v === 'object') {
+              const t = findText(v, depth + 1);
+              if (t) return t;
+            }
+          }
+        }
+        return '';
+      }
+      // 如果 content 是 JSON 字符串，尝试 parse
+      let c = m.content;
+      if (typeof c === 'string') {
+        // 判断是否像 JSON
+        const trimmed = c.trim();
+        if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length > 2) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            const t = findText(parsed, 0);
+            if (t) return t;
+          } catch (_) { /* 不是 JSON，当纯文本 */ }
+        }
+        return c;
+      }
+      // content 是对象 → 递归找
+      if (c && typeof c === 'object') {
+        const t = findText(c, 0);
+        if (t) return t;
+      }
+      // 兜底：整个 message 递归
+      return findText(m, 0);
+    }
+
+    // 构建 Markdown
+    const pad = n => String(n).padStart(2, '0');
+    const now = new Date();
+    const fmtTime = ts => {
+      if (!ts) return '';
+      const d = new Date(typeof ts === 'number' ? (ts > 1e12 ? ts : ts * 1000) : ts);
+      if (!isFinite(d.getTime())) return '';
+      return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    };
+    const lines = [];
+    lines.push('# ' + (title || sessionId));
+    lines.push('');
+    lines.push('- 会话 ID：' + sessionId);
+    lines.push('- 导出时间：' + fmtTime(Date.now()));
+    lines.push('- 消息数：' + sorted.length);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    for (const m of sorted) {
+      const role = String(m.role || '').toUpperCase();
+      const label = role === 'USER' ? '用户' : (role === 'ASSISTANT' ? 'AI' : role || '未知');
+      const ts = m.inserted_at || m.updated_at || null;
+      lines.push('## ' + label + (ts ? ' · ' + fmtTime(ts) : ''));
+      lines.push('');
+      const txt = extractText(m);
+      lines.push(txt || '（空）');
+      lines.push('');
+    }
+    const md = lines.join('\n');
+
+    // 文件名：<标题>_<YYYYMMDD-HHmm>.md
+    function sanitize(s) {
+      let out = String(s || '');
+      out = out.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
+      out = out.replace(/[. ]+$/g, '');
+      if (out.length > 80) out = out.slice(0, 80).trim();
+      return out;
+    }
+    const stamp = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) + '-' + pad(now.getHours()) + pad(now.getMinutes());
+    const cleanTitle = sanitize(title || sessionId).replace(/ - DeepSeek$/, '');
+    const fileName = cleanTitle + '_' + stamp + '.md';
+
+    // 调用主进程保存
+    const r = await ipcRenderer.invoke('conversation-export-md', { markdown: md, suggestedName: fileName });
+    try {
+      const { showToast } = require('../overlay/ui');
+      if (showToast) {
+        if (r && r.success) showToast('已导出：' + (r.path || fileName), 4000);
+        else if (r && r.canceled) { /* 用户取消 */ }
+        else showToast('导出失败：' + ((r && r.error) || '未知错误'), 5000);
+      }
+    } catch (_) {}
+  } catch (err) {
+    console.error('[LingYa] 导出会话失败:', err && err.message);
+  }
 });
 
 ipcRenderer.on('lingya-run-action', async (_event, payload) => {

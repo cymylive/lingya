@@ -280,8 +280,34 @@ async function executeJsBlocksWithRetry(blocks) {
  * @param {string} raw 本轮 AI 回复全文
  * @returns {boolean} true 表示已处理（发了纠错提示或已达上限），调用方应 return
  */
+// 【2026-11-01 对齐 Cuckoo】XML 拦截正则/提示语可从设置面板配置
+const INTERCEPT_PATTERNS_KEY = 'lingya-ai-intercept-patterns';
+const INTERCEPT_PROMPT_KEY = 'lingya-ai-intercept-prompt';
+const { compileCustomPatterns } = require('./xml-detect');
+
+const DEFAULT_INTERCEPT_PROMPT = '请使用 lingya 代码块进行工具调用，不要使用 XML invoke 格式。';
+
+/** 读用户配置的拦截正则（已编译）。空配置 → 只走内置正则。 */
+function getCustomInterceptPatterns() {
+  try {
+    const raw = localStorage.getItem(INTERCEPT_PATTERNS_KEY) || '';
+    if (!raw.trim()) return [];
+    const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    return compileCustomPatterns(lines);
+  } catch (_) { return []; }
+}
+
+/** 读用户配置的拦截提示语（空 → 用默认） */
+function getInterceptPrompt() {
+  try {
+    const p = localStorage.getItem(INTERCEPT_PROMPT_KEY);
+    return (p && p.trim()) ? p.trim() : DEFAULT_INTERCEPT_PROMPT;
+  } catch (_) { return DEFAULT_INTERCEPT_PROMPT; }
+}
+
 function checkXmlFormatAndCorrect(raw) {
-  if (!detectXmlFormat(raw)) return false;
+  const customPatterns = getCustomInterceptPatterns();
+  if (!detectXmlFormat(raw, customPatterns)) return false;
 
   if (xmlHintCount >= XML_HINT_MAX) {
     console.log('[LingYa][拦截] 已连续提示 ' + xmlHintCount + ' 次 XML 格式，停止发送');
@@ -292,18 +318,25 @@ function checkXmlFormatAndCorrect(raw) {
     return true;
   }
   xmlHintCount++;
-  console.log('[LingYa][拦截] 检测到 XML/DSML 格式工具调用（第 ' + xmlHintCount + ' 次提示）');
-  const nl = String.fromCharCode(10);
-  sendMessageToChat(
-    '格式写错了，用 ' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 包起来，不要用 XML。' + nl + nl +
-    '像这样：' + nl +
-    BT + BT + BT + 'lingya' + nl +
-    'const out = await bashOutput("TASK_ID", { wait: 60000 });' + nl +
-    'log(out);' + nl +
-    BT + BT + BT,
-    'XML工具调用提示',
-    { auto: true }
-  );
+  console.log('[LingYa][拦截] 检测到 XML/DSML 格式工具调用（第 ' + xmlHintCount + ' 次提示，自定义正则 ' + customPatterns.length + ' 条）');
+
+  // 用用户配置的提示语；如果用户没配，用默认（Cuckoo 风格简短提示）
+  const customPrompt = getInterceptPrompt();
+  const useDefaultDemo = !localStorage.getItem(INTERCEPT_PROMPT_KEY) || !localStorage.getItem(INTERCEPT_PROMPT_KEY).trim();
+  let prompt;
+  if (useDefaultDemo) {
+    // 默认提示：带示例
+    const nl = String.fromCharCode(10);
+    prompt = '格式写错了，用 ' + BT + BT + BT + 'lingya' + BT + BT + BT + ' 包起来，不要用 XML。' + nl + nl +
+      '像这样：' + nl +
+      BT + BT + BT + 'lingya' + nl +
+      'const out = await bashOutput("TASK_ID", { wait: 60000 });' + nl +
+      'log(out);' + nl +
+      BT + BT + BT;
+  } else {
+    prompt = customPrompt;
+  }
+  sendMessageToChat(prompt, 'XML工具调用提示', { auto: true });
   return true;
 }
 

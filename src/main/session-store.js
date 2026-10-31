@@ -297,6 +297,44 @@ function createSessionStore(profileId, storeDir, windowState) {
   }
 
   /**
+   * 删除会话（从存储中彻底移除）。
+   * @param {string} sessionId
+   * @returns {{success:boolean, error?:string}}
+   */
+  function deleteSession(sessionId) {
+    if (!sessionId) return { success: false, error: '缺少 sessionId' };
+    const store = readSessionStore();
+    if (!(sessionId in store)) return { success: false, error: '会话不存在' };
+    delete store[sessionId];
+    writeSessionStore(store);
+    return { success: true };
+  }
+
+  /**
+   * 删除项目：移除该项目目录下所有会话 + 清除项目归档状态。
+   * @param {string} dir 项目目录
+   * @returns {{success:boolean, deletedCount?:number, error?:string}}
+   */
+  function deleteProject(dir) {
+    if (!dir || typeof dir !== 'string') return { success: false, error: '缺少目录路径' };
+    const store = readSessionStore();
+    const norm = typeof normalizeEntry === 'function' ? normalizeEntry : (e) => (e && typeof e === 'object' ? e : null);
+    const toDelete = [];
+    for (const id of Object.keys(store)) {
+      if (id === '__project_archived__') continue;
+      const e = norm(store[id]);
+      if (e && e.projectDir === dir) toDelete.push(id);
+    }
+    for (const id of toDelete) delete store[id];
+    // 清除项目归档状态
+    if (store.__project_archived__ && store.__project_archived__[dir]) {
+      delete store.__project_archived__[dir];
+    }
+    writeSessionStore(store);
+    return { success: true, deletedCount: toDelete.length };
+  }
+
+  /**
    * 归档 / 取消归档某个会话。
    * @param {string} sessionId
    * @param {boolean} archived true = 归档，false = 取消归档
@@ -456,6 +494,8 @@ function createSessionStore(profileId, storeDir, windowState) {
     setSessionArchived,
     setProjectArchived,
     readProjectArchived,
+    deleteSession,
+    deleteProject,
     listAllSessions,
     getSessionTitleById,
     syncMainTabTitle,

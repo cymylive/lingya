@@ -372,29 +372,7 @@ function updateConversationTokenDisplay() {
   if (countEl) {
     countEl.textContent = tokenText;
   }
-
-  // 完全动态创建，不依赖任何模板 HTML
-  let fabTokenEl = document.getElementById('lingya-fab-token');
-  if (!fabTokenEl) {
-    fabTokenEl = document.createElement('div');
-    // 【封号风险改造 2026-11-01】动态 id 也走前缀替换
-    fabTokenEl.id = require('./dom-prefix').mapId('lingya-fab-token');
-    // 初始位置放到屏幕外，防止在计算坐标前闪现在左上角
-    fabTokenEl.style.cssText = 'position: fixed; left: -9999px; top: -9999px; transform: translate(-50%, -100%); background: rgba(12, 14, 16, 0.95); border: 1px solid #2dd4bf; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #2dd4bf; pointer-events: none; z-index: 2147483647; white-space: nowrap; display: block;';
-    document.body.appendChild(fabTokenEl);
-  }
-
-  fabTokenEl.textContent = tokenText;
-
-  // 同步位置
-  const badgeEl = document.getElementById('lingya-status-badge');
-  if (badgeEl) {
-    const rect = badgeEl.getBoundingClientRect();
-    if (rect.width > 0) {
-      fabTokenEl.style.left = (rect.left + rect.width / 2) + 'px';
-      fabTokenEl.style.top = (rect.top - 6) + 'px';
-    }
-  }
+  // 【2026-11-01】移除悬浮球上方的 token 标签（用户要求）；状态栏已显示「对话上下文」，无需重复
 }
 
 // ========== 自动压缩上下文 ==========
@@ -710,6 +688,11 @@ async function runRotationMigration() {
  * 启动对话 token 显示（每秒刷新）+ 自动压缩检查
  */
 function startTokenCounter() {
+  // 【2026-11-01】清理历史版本残留的悬浮球 token 标签（老用户刷新后可能还留着）
+  try {
+    const stale = document.getElementById('lingya-fab-token');
+    if (stale) stale.remove();
+  } catch (_) {}
   setInterval(() => {
     updateConversationTokenDisplay();
     checkAutoCompact();
@@ -738,15 +721,6 @@ function makeFabDraggable(badge) {
     badge.style.top = top + 'px';
     badge.style.right = 'auto';
 
-    // 同步更新 Token 标签位置
-    // 【BUG 修复 2026-11-01】原代码引用未定义变量 cx（ReferenceError）。
-    // Token 标签应居中显示在悬浮球正上方，与 updateConversationTokenDisplay() 逻辑一致。
-    const tokenEl = document.getElementById('lingya-fab-token');
-    if (tokenEl) {
-      const tokenCx = left + w / 2;
-      tokenEl.style.left = tokenCx + 'px';
-      tokenEl.style.top = (top - 6) + 'px';
-    }
     badge.style.bottom = 'auto';
   }
 

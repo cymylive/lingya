@@ -171,7 +171,8 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   }
 
   // 初始化项目时读取对应平台模板并替换占位符
-  // 模板选择优先级：
+  // 模板选择优先级（2026-11-01 新增第 0 项）：
+  // 0. 用户在「设置 → 提示词管理」中激活的自定义草稿
   // 1. provider.getPromptTemplate() 返回的非空字符串
   // 2. src/prompt/{providerId}.md
   // 3. src/prompt/default.md
@@ -179,7 +180,20 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   let templateContent = '';
   let templatePath = '';
 
-  if (provider && typeof provider.getPromptTemplate === 'function') {
+  // 【优先级 0】用户激活的自定义草稿
+  try {
+    const promptStore = require('./prompt-template-store');
+    const active = promptStore.getActiveTemplate();
+    if (active && active.content && active.content.trim()) {
+      templateContent = active.content;
+      templatePath = '(user-custom: ' + active.name + ')';
+      console.log('[LingYa] 使用用户激活的提示词草稿：' + active.name + '（' + active.content.length + ' 字符）');
+    }
+  } catch (err) {
+    console.warn('[LingYa] 读取用户提示词草稿失败:', err && err.message);
+  }
+
+  if (!templateContent && provider && typeof provider.getPromptTemplate === 'function') {
     try {
       const fromMethod = provider.getPromptTemplate();
       if (fromMethod && typeof fromMethod === 'string' && fromMethod.trim()) {

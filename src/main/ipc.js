@@ -683,6 +683,44 @@ function registerIpcHandlers() {
     return store.setSessionArchived(sessionId, !!archived);
   });
 
+  // 删除会话（从存储彻底移除）
+  ipcMain.handle('delete-session', async (event, { sessionId } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.deleteSession !== 'function') {
+      return { success: false, error: '会话存储未就绪' };
+    }
+    return store.deleteSession(sessionId);
+  });
+
+  // 删除项目（移除该项目下所有会话 + 清除归档状态）
+  ipcMain.handle('delete-project', async (event, { dir } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.deleteProject !== 'function') {
+      return { success: false, error: '会话存储未就绪' };
+    }
+    return store.deleteProject(dir);
+  });
+
+  // 导出指定会话为 Markdown（转发给 AI 视图从 IndexedDB 读全文）
+  ipcMain.handle('export-session-md', async (event, { sessionId, title } = {}) => {
+    if (!sessionId) return { success: false, error: '缺少 sessionId' };
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '窗口上下文不存在' };
+    const view = ctx.view;
+    if (!view || !view.webContents || view.webContents.isDestroyed()) {
+      return { success: false, error: 'AI 视图不可用' };
+    }
+    // 转发给 AI 视图：AI 视图会读 IndexedDB、构建 markdown、调 conversation-export-md
+    try {
+      view.webContents.send('lingya-export-session-md', { sessionId, title: title || '' });
+      return { success: true, forwarded: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 导航到会话
   ipcMain.handle('navigate-session', async (event, { sessionId }) => {
     if (!sessionId) return { success: false, error: '缺少会话ID' };
@@ -705,6 +743,37 @@ function registerIpcHandlers() {
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // ========== 提示词草稿管理（2026-11-01 新增）==========
+  const promptStore = require('./prompt-template-store');
+  ipcMain.handle('prompt-tpl-list', async () => {
+    try { return promptStore.listAll(); }
+    catch (err) { return { success: false, error: err.message, templates: [] }; }
+  });
+  ipcMain.handle('prompt-tpl-create', async (_event, { name, content, fromId } = {}) => {
+    try { return promptStore.createTemplate({ name, content, fromId }); }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('prompt-tpl-update', async (_event, { id, name, content } = {}) => {
+    try { return promptStore.updateTemplate({ id, name, content }); }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('prompt-tpl-delete', async (_event, { id } = {}) => {
+    try { return promptStore.deleteTemplate({ id }); }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('prompt-tpl-set-active', async (_event, { id } = {}) => {
+    try { return promptStore.setActive({ id }); }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('prompt-tpl-duplicate', async (_event, { id, newName } = {}) => {
+    try { return promptStore.duplicateTemplate({ id, newName }); }
+    catch (err) { return { success: false, error: err.message }; }
+  });
+  ipcMain.handle('prompt-tpl-reset-builtin', async (_event, { id } = {}) => {
+    try { return promptStore.resetBuiltin({ id }); }
+    catch (err) { return { success: false, error: err.message }; }
   });
 
   // ========== 底部状态栏数据（对齐 Cuckoo-Code）==========

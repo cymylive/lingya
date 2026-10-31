@@ -7,7 +7,43 @@
   // 通过 window.__lyShellUtils 访问，此处不再重复定义。
 
   var MIN_W = 240, MAX_W = 640, DEFAULT_W = 320, COLLAPSED = 46;
-  var WIDTH_KEY = 'lingya-sidebar-width', OPEN_KEY = 'lingya-sidebar-open';
+  // 【2026-11-01】宽度按视图独立持久化：lingya-sidebar-width:<view>
+  // 每个视图（文件/计划/插件/设置...）各自记住自己的宽度，切换时自动恢复
+  var WIDTH_KEY_PREFIX = 'lingya-sidebar-width:';
+  var OPEN_KEY = 'lingya-sidebar-open';
+
+  /** 视图 → 宽度存储 key 的分类名（插件视图统一归到 __plugin__，避免每个插件视图一套） */
+  function getViewKey(name){
+    if(!name) return 'files';
+    if(String(name).indexOf(':') !== -1) return '__plugin__';  // pluginId:viewId
+    return String(name);
+  }
+  /** 读指定视图的宽度（未保存过 → 默认 320） */
+  function loadViewWidth(name){
+    try{
+      var v = Number(localStorage.getItem(WIDTH_KEY_PREFIX + getViewKey(name)));
+      if(isFinite(v) && v >= MIN_W && v <= MAX_W) return Math.round(v);
+    }catch(_){}
+    return DEFAULT_W;
+  }
+  /** 保存指定视图的宽度 */
+  function saveViewWidth(name, w){
+    try{ localStorage.setItem(WIDTH_KEY_PREFIX + getViewKey(name), String(w)); }catch(_){}
+  }
+  // 【迁移】老版本用单键 'lingya-sidebar-width'，迁到「files」视图的 key
+  try {
+    var oldW = localStorage.getItem('lingya-sidebar-width');
+    if (oldW !== null) {
+      var n = Number(oldW);
+      if (isFinite(n) && n >= MIN_W && n <= MAX_W) {
+        // 只在「files」还没单独保存过时才迁移
+        if (localStorage.getItem(WIDTH_KEY_PREFIX + 'files') === null) {
+          localStorage.setItem(WIDTH_KEY_PREFIX + 'files', String(Math.round(n)));
+        }
+      }
+      localStorage.removeItem('lingya-sidebar-width');
+    }
+  } catch (_e) {}
 
   var slot = document.getElementById('lingya-sidebar-slot');
   var resizer = document.getElementById('lingya-sidebar-resizer');
@@ -20,7 +56,10 @@
   var currentFile = null;   // 当前预览/编辑的文件路径
   var editing = false;      // 是否处于编辑模式
 
-  var width = (function () { try { var v=Number(localStorage.getItem(WIDTH_KEY)); if(isFinite(v)&&v>=MIN_W&&v<=MAX_W) return Math.round(v);}catch(_){} return DEFAULT_W; })();
+  // 当前视图名（用于拖拽时写对应 key）
+  var currentView = (function(){ try { return localStorage.getItem('lingya-shell-view') || 'files'; }catch(_){ return 'files'; } })();
+  // 初始宽度：读「当前视图」的宽度（默认文件视图）
+  var width = loadViewWidth(currentView);
 
   // 纯函数从 shell-utils.js 复用（审计后提取，已有 29 个单测覆盖）
   // 该模块经 <script src> 先行加载，挂到 window.__lyShellUtils
@@ -64,7 +103,7 @@
     document.addEventListener('mousemove', function(e){
       if(!sd) return;
       width=Math.max(MIN_W,Math.min(MAX_W,Math.round(e.clientX)));
-      try{localStorage.setItem(WIDTH_KEY,String(width));}catch(_){}
+      saveViewWidth(currentView, width);   // 【2026-11-01】保存到当前视图 key
       slot.style.width=width+'px';
       if(window.shellAPI&&window.shellAPI.resizeSidebar) window.shellAPI.resizeSidebar(width)['catch'](function(){});
     });
@@ -667,6 +706,19 @@
       }
     }
     try { localStorage.setItem('lingya-shell-view', name); } catch(_e){}
+
+    // 【2026-11-01】切换视图时恢复该视图独立保存的宽度
+    try {
+      var newW = loadViewWidth(name);
+      currentView = name;
+      if (newW !== width) {
+        width = newW;
+        if (open) slot.style.width = width + 'px';
+        if (window.shellAPI && window.shellAPI.resizeSidebar) {
+          window.shellAPI.resizeSidebar(width)['catch'](function(){});
+        }
+      }
+    } catch (_e) {}
   }
   function panel(title, bodyHtml){
     return '<div class="sh-panel-head"><span class="sh-panel-title">'+title+'</span></div>'+'<div class="sh-panel-body">'+(bodyHtml||'')+'</div>';
@@ -2400,17 +2452,194 @@
   // ---- 设置面板 ----
 
   function renderSettingsView(el){
-    el.innerHTML = panel('设置', 
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">主题</div><button class="sh-btn" id="sh-set-theme">切换深色/浅色</button></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">Agent 模式</div><div id="sh-set-agent"><button class="sh-btn" data-agent="build">🔨 Build</button> <button class="sh-btn" data-agent="plan">📋 Plan</button></div></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">项目</div><button class="sh-btn" id="sh-set-init">初始化项目</button> <button class="sh-btn" id="sh-set-choose">选择目录</button> <button class="sh-btn" id="sh-set-gendoc">生成说明文档</button></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">窗口</div><button class="sh-btn" id="sh-set-newwin">新建窗口</button></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">对话</div><button class="sh-btn" id="sh-set-compact">压缩上下文</button> <button class="sh-btn" id="sh-set-export">导出对话(.md)</button> <button class="sh-btn" id="sh-set-immersive">沉浸式交流</button> <button class="sh-btn" id="sh-set-parse">手动解析</button> <button class="sh-btn" id="sh-set-stop">停止任务</button></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">悬浮元素</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hidefloat" /> 隐藏悬浮球与覆盖层面板</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 0;"><input type="checkbox" id="sh-set-hideplan" /> 隐藏计划悬浮卡</label></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动注入</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-autoinject" /> 新会话自动注入记忆与技能</label><label style="display:flex;gap:6px;align-items:center;font-size:12px;padding-top:4px;"><input type="checkbox" id="sh-set-autorename" /> 初始化项目后自动 AI 重命名</label></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">自动压缩</div><label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" id="sh-set-acen" /> 开启自动压缩</label><div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:12px;"><span style="color:var(--ck-text-dim);">超过</span><input id="sh-set-acth" type="number" value="80" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">万 tokens</span><button class="sh-btn" id="sh-set-acsave">保存</button></div></div>'+
-      '<div class="sh-card" style="margin-bottom:8px;"><div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:6px;">AI 回复后的发送延迟</div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">判定阈值</span><input id="sh-set-dual-th" type="number" step="1000" min="0" value="20000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms（上一次 AI 回复耗时）</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;margin-bottom:4px;"><span style="color:var(--ck-text-dim);">≤ 阈值 → 随机等</span><input id="sh-set-dual-delay-min" type="number" step="500" min="0" value="3000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">~</span><input id="sh-set-dual-delay-max" type="number" step="500" min="0" value="3000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span></div><div style="display:flex;gap:4px;align-items:center;font-size:12px;"><span style="color:var(--ck-text-dim);">> 阈值 → 等「耗时 ×</span><input id="sh-set-think-ratio" type="number" step="0.05" min="0" max="5" value="0.2" style="width:60px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">」，最多</span><input id="sh-set-think-max" type="number" step="1000" min="0" value="60000" style="width:70px;background:var(--ck-surface);border:1px solid var(--ck-border);border-radius:6px;padding:4px;color:var(--ck-text);font-size:12px;" /><span style="color:var(--ck-text-dim);">ms</span><button class="sh-btn" id="sh-set-think-save">保存</button></div></div>'+
-      '');
+    var NAV = [
+      {id:'appearance', label:'外观'},
+      {id:'retry', label:'失败自动重试'},
+      {id:'send', label:'发送延迟'},
+      {id:'attach', label:'附件上传间隔'},
+      {id:'security', label:'网络安全'},
+      {id:'ai-intercept', label:'AI 回复拦截'},
+      {id:'prompt-tpl', label:'提示词管理'},
+      {id:'logs', label:'日志'}
+    ];
+    var active = 'appearance';
+    try { active = localStorage.getItem('lingya-settings-active') || 'appearance'; } catch(_e){}
+    if (!NAV.some(function(n){return n.id===active;})) active = 'appearance';
+
+    var navHtml = NAV.map(function(n){
+      return '<button class="ly-settings-nav-item' + (n.id===active?' active':'') + '" data-cat="'+n.id+'">'+esc(n.label)+'</button>';
+    }).join('');
+
+    var contentHtml = '' +
+      // 外观
+      '<div class="ly-set-cat'+(active==='appearance'?' active':'')+'" data-cat="appearance">' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">主题</div><div class="ly-set-desc">切换深色 / 浅色主题</div><button class="sh-btn" id="sh-set-theme" style="margin-top:6px;align-self:flex-start;">切换深色/浅色</button></div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">Agent 模式</div><div class="ly-set-desc">切换 Agent 权限：Build（可读写）/ Plan（只读）</div><div id="sh-set-agent" class="ly-set-row"><button class="sh-btn" data-agent="build">🔨 Build</button> <button class="sh-btn" data-agent="plan">📋 Plan</button></div></div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">项目</div><div class="ly-set-desc">选择目录 / 初始化项目 / 生成说明文档</div><div class="ly-set-row"><button class="sh-btn" id="sh-set-init">初始化项目</button><button class="sh-btn" id="sh-set-choose">选择目录</button><button class="sh-btn" id="sh-set-gendoc">生成说明文档</button></div></div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">窗口</div><div class="ly-set-desc">新建独立窗口（独立 profile）</div><div class="ly-set-row"><button class="sh-btn" id="sh-set-newwin">新建窗口</button></div></div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">对话</div><div class="ly-set-desc">压缩 / 导出 / 沉浸式 / 手动解析 / 停止任务</div><div class="ly-set-row"><button class="sh-btn" id="sh-set-compact">压缩上下文</button><button class="sh-btn" id="sh-set-export">导出对话(.md)</button><button class="sh-btn" id="sh-set-immersive">沉浸式交流</button><button class="sh-btn" id="sh-set-parse">手动解析</button><button class="sh-btn" id="sh-set-stop">停止任务</button></div></div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">悬浮元素</div><div class="ly-set-desc">控制悬浮球与计划卡显示</div>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-hidefloat" /><span>隐藏悬浮球与覆盖层面板</span></label>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-hideplan" /><span>隐藏计划悬浮卡</span></label>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">自动注入</div><div class="ly-set-desc">新会话的自动记忆/技能/命名行为</div>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-autoinject" /><span>新会话自动注入记忆与技能</span></label>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-autorename" /><span>初始化项目后自动 AI 重命名</span></label>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">自动压缩</div><div class="ly-set-desc">超过阈值自动压缩上下文</div>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-acen" /><span>开启自动压缩</span></label>' +
+          '<div class="ly-set-row"><span style="color:var(--ck-text-dim);font-size:12px;">超过</span><input id="sh-set-acth" type="number" value="80" class="ly-set-input ly-set-input-sm" /><span style="color:var(--ck-text-dim);font-size:12px;">万 tokens</span><button class="sh-btn" id="sh-set-acsave">保存</button></div>' +
+        '</div></div>' +
+      '</div>' +
+      // 失败自动重试
+      '<div class="ly-set-cat'+(active==='retry'?' active':'')+'" data-cat="retry">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-retry-enabled" /><span style="font-weight:600;">启用自动重试</span></label>' +
+          '<div class="ly-set-desc">AI 回复失败时自动重试（按下方次数与间隔）</div>' +
+        '</div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">普通失败间隔（秒）</div><div class="ly-set-desc">两次重试之间的等待时间（随机区间）</div><div class="ly-set-row"><input id="sh-set-retry-delay-min" type="number" min="0" step="0.5" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">至</span> <input id="sh-set-retry-delay-max" type="number" min="0" step="0.5" class="ly-set-input ly-set-input-sm" /></div></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">普通失败重试次数</div><div class="ly-set-desc">负数 = 无限重试</div><input id="sh-set-retry-count" type="number" step="1" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" /></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">操作频繁重试间隔（秒）</div><div class="ly-set-desc">遇到“操作频繁”时的等待时间</div><input id="sh-set-retry-429-delay" type="number" min="0" step="1" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" /></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">操作频繁重试次数</div><div class="ly-set-desc">负数 = 无限重试</div><input id="sh-set-retry-429-count" type="number" step="1" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" /></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">重试提示词</div><div class="ly-set-desc">每次自动重试时发给 AI 的提示文本</div><textarea id="sh-set-retry-prompt" rows="3" class="ly-set-textarea" style="margin-top:4px;"></textarea></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">AI 回复超时后重试（秒）</div><div class="ly-set-desc">AI 回复静默超过该时长则重试</div><input id="sh-set-xhr-idle-timeout" type="number" min="0" step="1" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" /></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">超时重试提示词</div><div class="ly-set-desc">超时后发给 AI 的提示词</div><textarea id="sh-set-watchdog-prompt" rows="3" class="ly-set-textarea" style="margin-top:4px;"></textarea></div>' +
+        '<div class="ly-set-field"><div class="ly-set-label">超时重试次数</div><div class="ly-set-desc">负数 = 无限重试</div><input id="sh-set-watchdog-count" type="number" step="1" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" /></div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-retry-save">保存</button></div>' +
+        '</div>' +
+      '</div>' +
+      // 发送延迟（对齐 Cuckoo 的双策略，原 LingYa 配置完整恢复）
+      '<div class="ly-set-cat'+(active==='send'?' active':'')+'" data-cat="send">' +
+        // 【2026-11-01 新增】长消息上传阈值
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">长消息上传阈值（字符数）</div>' +
+          '<div class="ly-set-desc">消息长度 <strong>超过此值</strong> → 转成 .md 附件上传；<strong>≤ 此值</strong> → 直接输入框发送。默认 200（约 100 汉字）。</div>' +
+          '<div class="ly-set-row"><input id="sh-set-upload-threshold" type="number" min="1" step="50" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">字符</span></div>' +
+        '</div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-upload-threshold-save">保存阈值</button></div>' +
+        '</div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">延迟模式</div>' +
+          '<div class="ly-set-desc">' +
+            '<strong>均匀随机</strong>：每条消息独立随机（对齐 Cuckoo，反封号效果最好）<br>' +
+            '<strong>双策略</strong>：快请求随机 + 慢请求按 AI 思考耗时自适应（原 LingYa 行为）' +
+          '</div>' +
+          '<div class="ly-set-row" style="margin-top:6px;">' +
+            '<label class="ly-set-toggle" style="padding:0;"><input type="radio" name="sh-set-delay-mode" value="uniform" id="sh-set-mode-uniform" /><span>均匀随机（推荐）</span></label>' +
+            '<label class="ly-set-toggle" style="padding:0;"><input type="radio" name="sh-set-delay-mode" value="dual" id="sh-set-mode-dual" /><span>双策略（原版）</span></label>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ly-set-field" id="sh-set-send-uniform-field">' +
+          '<div class="ly-set-label">发送延迟区间（毫秒）</div><div class="ly-set-desc">每条消息发出前的随机延迟</div>' +
+          '<div class="ly-set-row"><input id="sh-set-send-delay-min" type="number" min="0" step="500" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">至</span> <input id="sh-set-send-delay-max" type="number" min="0" step="500" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">ms</span></div>' +
+        '</div>' +
+        '<div class="ly-set-field" id="sh-set-send-dual-field">' +
+          '<div class="ly-set-label">判定阈值（毫秒）</div><div class="ly-set-desc">上一次 AI 回复耗时 ≤ 阈值 → 走快请求；> 阈值 → 走慢请求自适应</div>' +
+          '<input id="sh-set-dual-th" type="number" min="0" step="1000" class="ly-set-input ly-set-input-sm" style="margin-top:4px;align-self:flex-start;" />' +
+        '</div>' +
+        '<div class="ly-set-field" id="sh-set-send-dual-field2">' +
+          '<div class="ly-set-label">快请求随机区间（毫秒）</div><div class="ly-set-desc">上次往返 ≤ 阈值时，在该区间随机取</div>' +
+          '<div class="ly-set-row"><input id="sh-set-dual-delay-min" type="number" min="0" step="500" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">至</span> <input id="sh-set-dual-delay-max" type="number" min="0" step="500" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">ms</span></div>' +
+        '</div>' +
+        '<div class="ly-set-field" id="sh-set-send-dual-field3">' +
+          '<div class="ly-set-label">慢请求自适应比例</div><div class="ly-set-desc">上次往返 > 阈值时，等待「往返耗时 × 比例」，最多不超过上限</div>' +
+          '<div class="ly-set-row"><span class="ly-set-sep">耗时 ×</span><input id="sh-set-think-ratio" type="number" min="0" max="5" step="0.05" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">，最多</span><input id="sh-set-think-max" type="number" min="0" step="1000" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">ms</span></div>' +
+        '</div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-send-save">保存</button></div>' +
+        '</div>' +
+      '</div>' +
+      // 附件上传间隔
+      '<div class="ly-set-cat'+(active==='attach'?' active':'')+'" data-cat="attach">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">上传后检测等待（毫秒）</div><div class="ly-set-desc">附件上传后等待检测的时长（随机区间）</div>' +
+          '<div class="ly-set-row"><input id="sh-set-attach-delay-min" type="number" min="0" step="100" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">至</span> <input id="sh-set-attach-delay-max" type="number" min="0" step="100" class="ly-set-input ly-set-input-sm" /> <span class="ly-set-sep">ms</span></div>' +
+        '</div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-attach-save">保存</button></div>' +
+        '</div>' +
+      '</div>' +
+      // 网络安全
+      '<div class="ly-set-cat'+(active==='security'?' active':'')+'" data-cat="security">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="sh-set-ssrf-guard" /><span style="font-weight:600;">拒绝 webFetch 访问内网/本地地址</span></label>' +
+          '<div class="ly-set-desc">开启后 webFetch 拒绝内网、回环、保留地址（防 SSRF）。默认关闭（可访问本地项目）。</div>' +
+        '</div></div>' +
+      '</div>' +
+      // AI 回复拦截
+      '<div class="ly-set-cat'+(active==='ai-intercept'?' active':'')+'" data-cat="ai-intercept">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">拦截正则（每行一条）</div>' +
+          '<div class="ly-set-desc">任意一条命中即视为 XML 工具调用，会提示 AI 改用 lingya 代码块。支持正则表达式，不区分大小写。</div>' +
+          '<textarea id="sh-set-intercept-patterns" rows="8" class="ly-set-textarea" style="margin-top:4px;"></textarea>' +
+        '</div>' +
+        '<div class="ly-set-field">' +
+          '<div class="ly-set-label">拦截提示语</div>' +
+          '<div class="ly-set-desc">拦截命中后发送给 AI 的提示文本</div>' +
+          '<textarea id="sh-set-intercept-prompt" rows="3" class="ly-set-textarea" style="margin-top:4px;"></textarea>' +
+        '</div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-intercept-save">保存</button></div>' +
+        '</div>' +
+      '</div>' +
+      // 提示词管理（2026-11-01 新增）
+      '<div class="ly-set-cat'+(active==='prompt-tpl'?' active':'')+'" data-cat="prompt-tpl">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">提示词草稿</div>' +
+          '<div class="ly-set-desc">管理「初始化项目」时发送的系统提示词模板。支持多份草稿，可编辑/重命名/删除/设为激活。激活的草稿会在下次「初始化项目」时使用。</div>' +
+          '<div class="ly-set-row" style="margin-top:8px;">' +
+            '<button class="sh-btn primary" id="sh-tpl-new">＋ 新建草稿</button>' +
+            '<button class="sh-btn" id="sh-tpl-refresh">刷新</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="sh-tpl-list" class="sh-empty" style="text-align:left;padding:8px 0;">加载中…</div>' +
+        '</div>' +
+        // 编辑器（默认隐藏）
+        '<div class="sh-card" id="sh-tpl-editor" style="display:none;">' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">草稿名称</div>' +
+            '<input id="sh-tpl-name" type="text" class="ly-set-input" style="width:100%;margin-top:4px;" placeholder="如：我的开发模板" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">提示词内容（支持 {{占位符}}）</div>' +
+            '<div class="ly-set-desc">占位符如 {{PROJECT_DIR}}、{{MEMORY_SECTION}}、{{SKILL_SECTION}}、{{TOOLS_LIST}} 等会在初始化时自动填充。留空则使用内置模板。</div>' +
+            '<textarea id="sh-tpl-content" rows="20" class="ly-set-textarea" style="margin-top:4px;font-family:Consolas,monospace;font-size:11.5px;resize:vertical;min-height:300px;"></textarea>' +
+          '</div>' +
+          '<div class="ly-set-row" style="justify-content:space-between;margin-top:8px;">' +
+            '<button class="sh-btn" id="sh-tpl-reset" style="display:none;color:#f87171;">恢复默认</button>' +
+            '<div style="display:flex;gap:6px;">' +
+              '<button class="sh-btn" id="sh-tpl-cancel">取消</button>' +
+              '<button class="sh-btn primary" id="sh-tpl-save">保存</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      // 日志
+      '<div class="ly-set-cat'+(active==='logs'?' active':'')+'" data-cat="logs">' +
+        '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">执行日志</div><div class="ly-set-desc">历史执行记录、工具调用、命令输出。可通过「日志」页签查看完整内容。</div></div></div>' +
+      '</div>';
+
+    el.innerHTML = panel('设置',
+      '<div class="ly-settings-layout">' +
+        '<div class="ly-settings-nav">' +
+          '<div class="ly-settings-nav-title">设置</div>' +
+          navHtml +
+        '</div>' +
+        '<div class="ly-settings-content" id="sh-set-content">' + contentHtml + '</div>' +
+      '</div>');
+
+    // 内部导航切换
+    var _contentEl = document.getElementById('sh-set-content');
+    el.querySelectorAll('.ly-settings-nav-item').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var cat = btn.getAttribute('data-cat');
+        if (!cat) return;
+        active = cat;
+        try { localStorage.setItem('lingya-settings-active', cat); } catch(_e){}
+        el.querySelectorAll('.ly-settings-nav-item').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-cat')===cat); });
+        if (_contentEl) {
+          _contentEl.querySelectorAll('.ly-set-cat').forEach(function(c){ c.classList.toggle('active', c.getAttribute('data-cat')===cat); });
+        }
+      });
+    });
+
     var ev=function(id){ return document.getElementById(id); };
     var tb=ev('sh-set-theme');
     (function(){ var ag=document.getElementById('sh-set-agent'); if(ag&&window.shellAPI&&window.shellAPI.listAgents){ var cur='build'; function hl(){ var bs=ag.querySelectorAll('button[data-agent]'); for(var x=0;x<bs.length;x++){ bs[x].style.background=(bs[x].getAttribute('data-agent')===cur)?'var(--ck-primary)':''; bs[x].style.color=(bs[x].getAttribute('data-agent')===cur)?'#fff':''; } } window.shellAPI.listAgents().then(function(r){ cur=(r&&r.current)||'build'; hl(); })['catch'](function(){}); var bs2=ag.querySelectorAll('button[data-agent]'); for(var y=0;y<bs2.length;y++){ (function(b){ b.addEventListener('click',function(){ var aid=b.getAttribute('data-agent'); if(window.shellAPI&&window.shellAPI.setAgent) window.shellAPI.setAgent(aid).then(function(r2){ if(r2&&r2.success){ cur=r2.agentId||aid; hl(); toast2('已切换到 '+cur+' 模式'); } })['catch'](function(){}); }); })(bs2[y]); } } })(); if(tb) tb.addEventListener('click',function(){ var cur=document.documentElement.classList.contains('lingya-theme-light')?'light':'dark'; applyTheme(cur==='light'?'dark':'light'); });
@@ -2425,50 +2654,402 @@
     var pa=ev('sh-set-parse'); if(pa) pa.addEventListener('click',function(){ act('manual-parse'); });
     var st=ev('sh-set-stop'); if(st) st.addEventListener('click',function(){ act('stop'); });
     var ai=ev('sh-set-autoinject'); if(ai) ai.addEventListener('change',function(){ try{ localStorage.setItem('sh-autoinject', ai.checked?'1':'0'); }catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-inject', ai.checked); });
-    // 自动重命名开关（默认开启；只有显式设为 '0' 才关闭）
-    (function(){
-      var ar=ev('sh-set-autorename');
-      if(!ar) return;
-      try { ar.checked = localStorage.getItem('lingya-auto-rename-enabled') !== '0'; } catch(_e) { ar.checked = true; }
-      ar.addEventListener('change', function(){
-        try { localStorage.setItem('lingya-auto-rename-enabled', ar.checked ? '1' : '0'); } catch(_e) {}
-        if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-rename-enabled', ar.checked);
-        toast2(ar.checked ? '已开启自动 AI 重命名' : '已关闭自动 AI 重命名');
-      });
-    })();
+    (function(){ var ar=ev('sh-set-autorename'); if(!ar) return; try{ ar.checked = localStorage.getItem('lingya-auto-rename-enabled') !== '0'; }catch(_e){ ar.checked = true; } ar.addEventListener('change', function(){ try{ localStorage.setItem('lingya-auto-rename-enabled', ar.checked ? '1' : '0'); }catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('auto-rename-enabled', ar.checked); toast2(ar.checked ? '已开启自动 AI 重命名' : '已关闭自动 AI 重命名'); }); })();
     function loadFloatCb(){ try{ var hf=localStorage.getItem('lingya-hide-floating')==='1'; var hp=localStorage.getItem('lingya-hide-plan-float')==='1'; var e1=ev('sh-set-hidefloat'); if(e1) e1.checked=hf; var e2=ev('sh-set-hideplan'); if(e2) e2.checked=hp; }catch(_e){} }
     loadFloatCb();
-    (function loadSettingsCb(){ try{ var v; var e3=ev('sh-set-autoinject'); if(e3) e3.checked=(localStorage.getItem('sh-autoinject')==='1'); var e4=ev('sh-set-acen'); if(e4) e4.checked=(localStorage.getItem('sh-acen')==='1'); v=localStorage.getItem('sh-acth'); var e5=ev('sh-set-acth'); if(v&&e5) e5.value=v; v=localStorage.getItem('lingya-think-ratio'); var e6=ev('sh-set-think-ratio'); if(v&&e6) e6.value=v; v=localStorage.getItem('lingya-think-max-delay'); var e7=ev('sh-set-think-max'); if(v&&e7) e7.value=v; v=localStorage.getItem('lingya-adaptive-threshold'); var e8=ev('sh-set-dual-th'); if(v&&e8) e8.value=v; v=localStorage.getItem('lingya-global-send-delay-min'); var e9=ev('sh-set-dual-delay-min'); if(v&&e9) e9.value=v; v=localStorage.getItem('lingya-global-send-delay-max'); var e10=ev('sh-set-dual-delay-max'); if(v&&e10) e10.value=v; }catch(_e){} })();
+    (function loadSettingsCb(){ try{ var v; var e3=ev('sh-set-autoinject'); if(e3) e3.checked=(localStorage.getItem('sh-autoinject')==='1'); var e4=ev('sh-set-acen'); if(e4) e4.checked=(localStorage.getItem('sh-acen')==='1'); v=localStorage.getItem('sh-acth'); var e5=ev('sh-set-acth'); if(v&&e5) e5.value=v; }catch(_e){} })();
     var hf=ev('sh-set-hidefloat'); if(hf) hf.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-floating', hf.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-floating', hf.checked); toast2(hf.checked?'已隐藏悬浮元素':'已显示悬浮元素'); });
     var hp=ev('sh-set-hideplan'); if(hp) hp.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-plan-float', hp.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-plan-float', hp.checked); toast2(hp.checked?'已隐藏计划卡':'已显示计划卡'); });
     var acs=ev('sh-set-acsave'); if(acs) acs.addEventListener('click',function(){ if(!window.shellAPI||!window.shellAPI.setSetting) return; var en=!!((ev('sh-set-acen')||{}).checked); var th=Number((ev('sh-set-acth')||{}).value)||80; try{ localStorage.setItem('sh-acen', en?'1':'0'); localStorage.setItem('sh-acth', String(th)); }catch(_e){} window.shellAPI.setSetting('auto-compact-enabled',en); window.shellAPI.setSetting('auto-compact-threshold',th); toast2('自动压缩已保存'); });
-    var tss=ev('sh-set-think-save'); if(tss) tss.addEventListener('click',function(){
-      var th=parseInt((ev('sh-set-dual-th')||{}).value,10);
-      var glMin=parseInt((ev('sh-set-dual-delay-min')||{}).value,10);
-      var glMax=parseInt((ev('sh-set-dual-delay-max')||{}).value,10);
-      var ratio=parseFloat((ev('sh-set-think-ratio')||{}).value);
-      var maxDelay=parseInt((ev('sh-set-think-max')||{}).value,10);
-      if(!isFinite(th)||th<0||th>600000){ toast2('阈值需在 0 - 600000ms 之间'); return; }
-      if(!isFinite(glMin)||glMin<0||glMin>600000){ toast2('延迟最小值需在 0 - 600000ms 之间'); return; }
-      if(!isFinite(glMax)||glMax<0||glMax>600000){ toast2('延迟最大值需在 0 - 600000ms 之间'); return; }
-      if(glMin>glMax){ toast2('延迟最小值不能大于最大值'); return; }
-      if(!isFinite(ratio)||ratio<0||ratio>5){ toast2('比例需在 0 - 5 之间'); return; }
-      if(!isFinite(maxDelay)||maxDelay<0||maxDelay>600000){ toast2('延迟上限需在 0 - 600000ms 之间'); return; }
+
+    // ===== 失败自动重试：回填 + 保存 =====
+    function _num(v, def){ var n = parseFloat(v); return isFinite(n) ? n : def; }
+    (function(){
+      var v;
+      v=ev('sh-set-retry-enabled'); if(v){ var en=localStorage.getItem('lingya-retry-enabled'); v.checked = (en === null) ? true : (en==='1'); }
+      v=ev('sh-set-retry-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-retry-delay-min'), 4000); v.value = Math.round(ms/1000*10)/10; }
+      v=ev('sh-set-retry-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-retry-delay-max'), 10000); v.value = Math.round(ms/1000*10)/10; }
+      v=ev('sh-set-retry-count'); if(v){ v.value = (localStorage.getItem('lingya-retry-count') || '10'); }
+      v=ev('sh-set-retry-429-delay'); if(v){ var ms=_num(localStorage.getItem('lingya-retry-429-delay'), 120000); v.value = Math.round(ms/1000); }
+      v=ev('sh-set-retry-429-count'); if(v){ v.value = (localStorage.getItem('lingya-retry-429-count') || '40'); }
+      v=ev('sh-set-retry-prompt'); if(v){ v.value = (localStorage.getItem('lingya-retry-prompt') || '刚才的回复似乎中断了，请重新完整回答上一个问题。'); }
+      v=ev('sh-set-xhr-idle-timeout'); if(v){ var ms=_num(localStorage.getItem('lingya-xhr-idle-timeout'), 300000); v.value = Math.round(ms/1000); }
+      v=ev('sh-set-watchdog-prompt'); if(v){ v.value = (localStorage.getItem('lingya-watchdog-prompt') || '请继续'); }
+      v=ev('sh-set-watchdog-count'); if(v){ v.value = (localStorage.getItem('lingya-watchdog-count') || '10'); }
+    })();
+    var rs=ev('sh-set-retry-save'); if(rs) rs.addEventListener('click',function(){
+      var en=!!((ev('sh-set-retry-enabled')||{}).checked);
+      var dmin=Number((ev('sh-set-retry-delay-min')||{}).value);
+      var dmax=Number((ev('sh-set-retry-delay-max')||{}).value);
+      var cnt=parseInt((ev('sh-set-retry-count')||{}).value,10);
+      var d429=Number((ev('sh-set-retry-429-delay')||{}).value);
+      var c429=parseInt((ev('sh-set-retry-429-count')||{}).value,10);
+      var prompt=(ev('sh-set-retry-prompt')||{}).value || '';
+      var idle=Number((ev('sh-set-xhr-idle-timeout')||{}).value);
+      var wprompt=(ev('sh-set-watchdog-prompt')||{}).value || '';
+      var wcnt=parseInt((ev('sh-set-watchdog-count')||{}).value,10);
+      if(!isFinite(dmin)||!isFinite(dmax)||dmin<0||dmax<dmin){ toast2('普通失败间隔区间非法'); return; }
+      if(!isFinite(d429)||d429<0){ toast2('操作频繁间隔非法'); return; }
+      if(!isFinite(idle)||idle<0){ toast2('超时秒数非法'); return; }
       try{
-        localStorage.setItem('lingya-adaptive-threshold',String(th));
-        localStorage.setItem('lingya-global-send-delay-min',String(glMin));
-        localStorage.setItem('lingya-global-send-delay-max',String(glMax));
-        localStorage.setItem('lingya-think-ratio',String(ratio));
-        localStorage.setItem('lingya-think-max-delay',String(maxDelay));
+        localStorage.setItem('lingya-retry-enabled', en?'1':'0');
+        localStorage.setItem('lingya-retry-delay-min', String(Math.round(dmin*1000)));
+        localStorage.setItem('lingya-retry-delay-max', String(Math.round(dmax*1000)));
+        localStorage.setItem('lingya-retry-count', String(cnt||0));
+        localStorage.setItem('lingya-retry-429-delay', String(Math.round(d429*1000)));
+        localStorage.setItem('lingya-retry-429-count', String(c429||0));
+        localStorage.setItem('lingya-retry-prompt', prompt);
+        localStorage.setItem('lingya-xhr-idle-timeout', String(Math.round(idle*1000)));
+        localStorage.setItem('lingya-watchdog-prompt', wprompt);
+        localStorage.setItem('lingya-watchdog-count', String(wcnt||0));
       }catch(_e){}
       if(window.shellAPI&&window.shellAPI.setSetting){
-        window.shellAPI.setSetting('adaptive-threshold',th);
-        window.shellAPI.setSetting('global-send-delay-min',glMin);
-        window.shellAPI.setSetting('global-send-delay-max',glMax);
-        window.shellAPI.setSetting('think-ratio',ratio);
-        window.shellAPI.setSetting('think-max-delay',maxDelay);
+        window.shellAPI.setSetting('retry-enabled', en);
+        window.shellAPI.setSetting('retry-delay-min', Math.round(dmin*1000));
+        window.shellAPI.setSetting('retry-delay-max', Math.round(dmax*1000));
+        window.shellAPI.setSetting('retry-count', cnt||0);
+        window.shellAPI.setSetting('retry-429-delay', Math.round(d429*1000));
+        window.shellAPI.setSetting('retry-429-count', c429||0);
+        window.shellAPI.setSetting('retry-prompt', prompt);
+        window.shellAPI.setSetting('xhr-idle-timeout', Math.round(idle*1000));
+        window.shellAPI.setSetting('watchdog-prompt', wprompt);
+        window.shellAPI.setSetting('watchdog-count', wcnt||0);
       }
-      toast2('已保存：≤' + th + 'ms 时在 ' + glMin + '~' + glMax + 'ms 内随机；超过则等「耗时×' + ratio + '」（最多 ' + maxDelay + 'ms）');
+      toast2('失败自动重试配置已保存');
+    });
+
+    // ===== 长消息上传阈值：回填 + 保存 =====
+    (function(){
+      var v = ev('sh-set-upload-threshold');
+      if (v) {
+        var n = parseInt(localStorage.getItem('lingya-upload-threshold') || '', 10);
+        v.value = Number.isFinite(n) && n > 0 ? n : 200;
+      }
+    })();
+    var uts = ev('sh-set-upload-threshold-save');
+    if (uts) uts.addEventListener('click', function(){
+      var v = parseInt((ev('sh-set-upload-threshold') || {}).value, 10);
+      if (!isFinite(v) || v < 1) { toast2('阈值需为正整数（≥ 1）'); return; }
+      try { localStorage.setItem('lingya-upload-threshold', String(v)); } catch(_e){}
+      if (window.shellAPI && window.shellAPI.setSetting) window.shellAPI.setSetting('upload-threshold', v);
+      toast2('长消息上传阈值已保存：' + v + ' 字符');
+    });
+
+    // ===== 发送延迟：回填 + 保存（双策略完整版，恢复原 LingYa 配置）=====
+    function _applyDelayMode(mode){
+      var uniField = document.getElementById('sh-set-send-uniform-field');
+      var dualField = document.getElementById('sh-set-send-dual-field');
+      var dualField2 = document.getElementById('sh-set-send-dual-field2');
+      var dualField3 = document.getElementById('sh-set-send-dual-field3');
+      var showUniform = (mode !== 'dual');
+      [uniField].forEach(function(el){ if(el) el.style.display = showUniform ? '' : 'none'; });
+      [dualField, dualField2, dualField3].forEach(function(el){ if(el) el.style.display = showUniform ? 'none' : ''; });
+    }
+    (function(){
+      var v, mode;
+      try { mode = localStorage.getItem('lingya-send-delay-mode') || 'uniform'; } catch(_e){ mode = 'uniform'; }
+      var mUni = ev('sh-set-mode-uniform'); if(mUni) mUni.checked = (mode !== 'dual');
+      var mDual = ev('sh-set-mode-dual'); if(mDual) mDual.checked = (mode === 'dual');
+      _applyDelayMode(mode);
+      // 绑定模式切换
+      if(mUni) mUni.addEventListener('change', function(){ if(mUni.checked) _applyDelayMode('uniform'); });
+      if(mDual) mDual.addEventListener('change', function(){ if(mDual.checked) _applyDelayMode('dual'); });
+
+      // 回填：均匀随机区间
+      v=ev('sh-set-send-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-min'), 4000); v.value = ms; }
+      v=ev('sh-set-send-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-max'), 10000); v.value = ms; }
+      // 回填：双策略
+      v=ev('sh-set-dual-th'); if(v){ var ms=_num(localStorage.getItem('lingya-adaptive-threshold'), 20000); v.value = ms; }
+      v=ev('sh-set-dual-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-min'), 4000); v.value = ms; }
+      v=ev('sh-set-dual-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-max'), 10000); v.value = ms; }
+      v=ev('sh-set-think-ratio'); if(v){ var r=_num(localStorage.getItem('lingya-think-ratio'), 0.2); v.value = r; }
+      v=ev('sh-set-think-max'); if(v){ var ms=_num(localStorage.getItem('lingya-think-max-delay'), 60000); v.value = ms; }
+    })();
+    var ss=ev('sh-set-send-save'); if(ss) ss.addEventListener('click',function(){
+      var mode = 'uniform';
+      var mDual = ev('sh-set-mode-dual');
+      if(mDual && mDual.checked) mode = 'dual';
+
+      // 公共区间：均匀随机区间 = 快请求区间（两个分类共用，避免配置分叉）
+      var a=parseInt((ev('sh-set-send-delay-min')||{}).value,10);
+      var b=parseInt((ev('sh-set-send-delay-max')||{}).value,10);
+      if(!isFinite(a)||!isFinite(b)||a<0||b<a){ toast2('发送延迟区间非法（需 0 ≤ min ≤ max）'); return; }
+      try{
+        localStorage.setItem('lingya-send-delay-mode', mode);
+        localStorage.setItem('lingya-global-send-delay-min', String(a));
+        localStorage.setItem('lingya-global-send-delay-max', String(b));
+      }catch(_e){}
+      if(window.shellAPI&&window.shellAPI.setSetting){
+        window.shellAPI.setSetting('send-delay-mode', mode);
+        window.shellAPI.setSetting('global-send-delay-min', a);
+        window.shellAPI.setSetting('global-send-delay-max', b);
+      }
+
+      // 双策略额外字段
+      if(mode === 'dual'){
+        var th=parseInt((ev('sh-set-dual-th')||{}).value,10);
+        var dmin=parseInt((ev('sh-set-dual-delay-min')||{}).value,10);
+        var dmax=parseInt((ev('sh-set-dual-delay-max')||{}).value,10);
+        var ratio=parseFloat((ev('sh-set-think-ratio')||{}).value);
+        var tmax=parseInt((ev('sh-set-think-max')||{}).value,10);
+        if(!isFinite(th)||th<0||th>600000){ toast2('判定阈值需在 0-600000ms 之间'); return; }
+        if(!isFinite(dmin)||!isFinite(dmax)||dmin<0||dmax<dmin){ toast2('快请求区间非法'); return; }
+        if(!isFinite(ratio)||ratio<0||ratio>5){ toast2('比例需在 0-5 之间'); return; }
+        if(!isFinite(tmax)||tmax<0||tmax>600000){ toast2('自适应上限需在 0-600000ms 之间'); return; }
+        try{
+          localStorage.setItem('lingya-adaptive-threshold', String(th));
+          localStorage.setItem('lingya-think-ratio', String(ratio));
+          localStorage.setItem('lingya-think-max-delay', String(tmax));
+          // 快请求区间与均匀随机区间共用同一组键（避免配置不一致）
+        }catch(_e){}
+        if(window.shellAPI&&window.shellAPI.setSetting){
+          window.shellAPI.setSetting('adaptive-threshold', th);
+          window.shellAPI.setSetting('think-ratio', ratio);
+          window.shellAPI.setSetting('think-max-delay', tmax);
+        }
+      }
+      toast2('发送延迟已保存（' + (mode==='dual'?'双策略':'均匀随机') + '）：区间 ' + a + '~' + b + 'ms');
+    });
+
+    // ===== 提示词草稿管理（2026-11-01）=====
+    (function(){
+      var editingId = null;       // 正在编辑的草稿 id（null = 新建）
+      var currentTemplates = [];  // 缓存当前所有草稿
+
+      function ev2(id){ return document.getElementById(id); }
+      function showEditor(show){ var el = ev2('sh-tpl-editor'); if(el) el.style.display = show ? '' : 'none'; }
+
+      function renderList(r){
+        var box = ev2('sh-tpl-list');
+        if(!box) return;
+        var templates = (r && r.templates) || [];
+        var activeId = (r && r.activeId) || '';
+        currentTemplates = templates;
+        if(!templates.length){
+          box.innerHTML = '<div style="padding:8px 0;color:var(--ck-text-dim);font-size:12px;">暂无草稿</div>';
+          return;
+        }
+        var h = '';
+        for(var i=0;i<templates.length;i++){
+          var t = templates[i];
+          var isActive = t.id === activeId;
+          var isBuiltin = !!t.isBuiltin;
+          var hasOverride = !!t.hasOverride;
+          // 【极简徽章】只保留最必要的（用户/内置省掉——看内容长度就知道是内置还是用户的；激活用主色点）
+          // 用一个小圆点表示状态，不占文字宽度
+          var badge = '';
+          if(isBuiltin && hasOverride){
+            // 已修改：黄点
+            badge = '<span title="已修改（原版已覆盖）" style="width:6px;height:6px;border-radius:50%;background:#fbbf24;flex-shrink:0;display:inline-block;"></span>';
+          } else if(!isBuiltin){
+            // 用户草稿：青点
+            badge = '<span title="用户草稿" style="width:6px;height:6px;border-radius:50%;background:var(--ck-primary);flex-shrink:0;display:inline-block;"></span>';
+          }
+          var modifiedBadge = '';
+          var activeBadge = isActive
+            ? '<span style="font-size:9px;padding:1px 3px;border-radius:3px;background:var(--ck-primary);color:#fff;flex-shrink:0;white-space:nowrap;">●激活</span>'
+            : '';
+          var contentLen = String(t.content || '').length;
+          // 图标按钮：24×24，鼠标悬停显示 title
+          function iconBtn(act, icon, title, color){
+            return '<button class="sh-tpl-icon-btn' + (color==='danger'?' danger':'') + (color==='primary'?' primary':'') + '" data-tpl-act="' + act + '" title="' + esc(title) + '">' + icon + '</button>';
+          }
+          var btns = '';
+          btns += isActive
+            ? iconBtn('unset', TPL_ICON.unset, '取消激活')
+            : iconBtn('activate', TPL_ICON.activate, '设为激活', 'primary');
+          btns += iconBtn('view', TPL_ICON.edit, '编辑内容');
+          btns += iconBtn('duplicate', TPL_ICON.duplicate, '另存为副本');
+          if(isBuiltin && hasOverride) btns += iconBtn('reset', TPL_ICON.reset, '恢复默认', 'danger');
+          if(!isBuiltin){
+            btns += iconBtn('rename', TPL_ICON.rename, '重命名');
+            btns += iconBtn('delete', TPL_ICON.trash, '删除', 'danger');
+          }
+          // 【单行紧凑布局】徽章 + 名称（flex:1 省略号）+ 图标按钮（flex-shrink:0）
+          // 字数放进 title tooltip，不占水平空间
+          h += '<div class="sh-tpl-row" data-id="' + t.id + '" title="' + esc(t.name || '') + ' · ' + contentLen + ' 字" style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--ck-border);border-radius:8px;margin-bottom:4px;background:' + (isActive?'rgba(45,212,191,0.08)':'var(--ck-surface)') + ';min-width:0;">' +
+            badge + modifiedBadge + activeBadge +
+            '<span style="flex:1;min-width:0;font-size:12px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(t.name || '(未命名)') + '</span>' +
+            '<div style="display:flex;gap:3px;flex-shrink:0;">' + btns + '</div>' +
+          '</div>';
+        }
+        box.innerHTML = h;
+        // 绑定事件
+        box.querySelectorAll('[data-tpl-act]').forEach(function(btn){
+          btn.addEventListener('click', function(ev){
+            var row = btn.closest('.sh-tpl-row');
+            var id = row ? row.getAttribute('data-id') : null;
+            var act = btn.getAttribute('data-tpl-act');
+            if(!id) return;
+            var tpl = currentTemplates.find(function(x){ return x.id === id; });
+            if(!tpl) return;
+
+            if(act === 'activate'){
+              window.shellAPI.promptTplSetActive(id).then(function(r2){
+                if(r2 && r2.success) { toast2('已激活：' + tpl.name); loadTpl(); }
+                else toast2('激活失败');
+              })['catch'](function(){ toast2('激活失败'); });
+            } else if(act === 'unset'){
+              window.shellAPI.promptTplSetActive('').then(function(r2){
+                if(r2 && r2.success) { toast2('已取消激活，将使用内置模板'); loadTpl(); }
+                else toast2('操作失败');
+              })['catch'](function(){ toast2('操作失败'); });
+            } else if(act === 'view' || act === 'edit'){
+              editingId = tpl.id;   // 【2026-11-01】内置也可编辑（内容写入 overrides，不改磁盘原文件）
+              var nameEl = ev2('sh-tpl-name');
+              var contentEl = ev2('sh-tpl-content');
+              var saveBtn = ev2('sh-tpl-save');
+              var resetBtn = ev2('sh-tpl-reset');
+              if(tpl.isBuiltin){
+                // 内置：名称固定显示（不允许改名），内容可编辑
+                if(nameEl){ nameEl.value = tpl.name || ''; nameEl.readOnly = true; }
+                if(contentEl){ contentEl.value = String(tpl.content || ''); contentEl.readOnly = false; }
+                if(saveBtn) saveBtn.style.display = '';
+                if(resetBtn) resetBtn.style.display = tpl.hasOverride ? '' : 'none';  // 只有覆盖过才显示「恢复默认」
+              } else {
+                if(nameEl){ nameEl.value = tpl.name || ''; nameEl.readOnly = false; }
+                if(contentEl){ contentEl.value = String(tpl.content || ''); contentEl.readOnly = false; }
+                if(saveBtn) saveBtn.style.display = '';
+                if(resetBtn) resetBtn.style.display = 'none';
+              }
+              showEditor(true);
+              if(contentEl) contentEl.scrollTop = 0;
+            } else if(act === 'duplicate'){
+              window.shellAPI.promptTplDuplicate(id, tpl.name + ' 副本').then(function(r2){
+                if(r2 && r2.success) { toast2('已创建副本'); loadTpl(); }
+                else toast2('复制失败：' + ((r2 && r2.error) || '未知'));
+              })['catch'](function(){ toast2('复制失败'); });
+            } else if(act === 'rename'){
+              promptInput('重命名草稿', '输入新名称', tpl.name, function(newName){
+                if(!newName || newName === tpl.name) return;
+                window.shellAPI.promptTplUpdate({ id: id, name: newName }).then(function(r2){
+                  if(r2 && r2.success) { toast2('已重命名'); loadTpl(); }
+                  else toast2('重命名失败：' + ((r2 && r2.error) || '未知'));
+                })['catch'](function(){ toast2('重命名失败'); });
+              });
+            } else if(act === 'delete'){
+              if(!confirm('确定删除草稿「' + tpl.name + '」？')) return;
+              window.shellAPI.promptTplDelete(id).then(function(r2){
+                if(r2 && r2.success) { toast2('已删除'); loadTpl(); }
+                else toast2('删除失败：' + ((r2 && r2.error) || '未知'));
+              })['catch'](function(){ toast2('删除失败'); });
+            } else if(act === 'reset'){
+              if(!confirm('确定恢复「' + tpl.name + '」为原始内容？\n\n会丢弃你的所有修改。')) return;
+              window.shellAPI.promptTplResetBuiltin(id).then(function(r2){
+                if(r2 && r2.success) { toast2('已恢复默认'); loadTpl(); }
+                else toast2('恢复失败：' + ((r2 && r2.error) || '未知'));
+              })['catch'](function(){ toast2('恢复失败'); });
+            }
+          });
+        });
+      }
+
+      function loadTpl(){
+        if(!window.shellAPI || !window.shellAPI.promptTplList) return;
+        window.shellAPI.promptTplList().then(function(r){ renderList(r || {}); })['catch'](function(){
+          var box = ev2('sh-tpl-list'); if(box) box.innerHTML = '<div style="padding:8px;color:#f87171;font-size:12px;">加载失败</div>';
+        });
+      }
+
+      // 新建
+      var nb = ev2('sh-tpl-new');
+      if(nb) nb.addEventListener('click', function(){
+        editingId = null;
+        var nameEl = ev2('sh-tpl-name'); if(nameEl){ nameEl.value = '我的提示词 ' + new Date().toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); nameEl.readOnly = false; }
+        var contentEl = ev2('sh-tpl-content'); if(contentEl){ contentEl.value = ''; contentEl.readOnly = false; }
+        var saveBtn = ev2('sh-tpl-save'); if(saveBtn) saveBtn.style.display = '';
+        showEditor(true);
+        if(nameEl) nameEl.focus();
+      });
+
+      // 刷新
+      var rf = ev2('sh-tpl-refresh');
+      if(rf) rf.addEventListener('click', loadTpl);
+
+      // 取消
+      var cb = ev2('sh-tpl-cancel');
+      if(cb) cb.addEventListener('click', function(){ showEditor(false); });
+
+      // 保存
+      var sb = ev2('sh-tpl-save');
+      if(sb) sb.addEventListener('click', function(){
+        var name = (ev2('sh-tpl-name') || {}).value || '';
+        var content = (ev2('sh-tpl-content') || {}).value || '';
+        name = String(name).trim();
+        var isBuiltin = editingId && editingId.indexOf('builtin-') === 0;
+        if(!isBuiltin && !name){ toast2('草稿名不能为空'); return; }
+        if(editingId){
+          var payload = isBuiltin ? { id: editingId, content: content } : { id: editingId, name: name, content: content };
+          window.shellAPI.promptTplUpdate(payload).then(function(r2){
+            if(r2 && r2.success) { toast2(isBuiltin ? '已覆盖内置模板' : '已保存'); showEditor(false); loadTpl(); }
+            else toast2('保存失败：' + ((r2 && r2.error) || '未知'));
+          })['catch'](function(){ toast2('保存失败'); });
+        } else {
+          window.shellAPI.promptTplCreate({ name: name, content: content }).then(function(r2){
+            if(r2 && r2.success) { toast2('已创建：' + name); showEditor(false); loadTpl(); }
+            else toast2('创建失败：' + ((r2 && r2.error) || '未知'));
+          })['catch'](function(){ toast2('创建失败'); });
+        }
+      });
+
+      // 【2026-11-01】恢复默认（仅内置模板有覆盖时显示）
+      var resetBtn = ev2('sh-tpl-reset');
+      if(resetBtn) resetBtn.addEventListener('click', function(){
+        if(!editingId || editingId.indexOf('builtin-') !== 0) return;
+        if(!confirm('确定恢复默认？将丢弃你对这个内置模板的所有修改。')) return;
+        window.shellAPI.promptTplResetBuiltin(editingId).then(function(r2){
+          if(r2 && r2.success) { toast2('已恢复默认'); showEditor(false); loadTpl(); }
+          else toast2('恢复失败：' + ((r2 && r2.error) || '未知'));
+        })['catch'](function(){ toast2('恢复失败'); });
+      });
+
+      // 首次加载
+      loadTpl();
+    })();
+
+    // ===== 附件上传间隔：回填 + 保存 =====
+    (function(){
+      var v;
+      v=ev('sh-set-attach-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-attach-delay-min'), 800); v.value = ms; }
+      v=ev('sh-set-attach-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-attach-delay-max'), 2000); v.value = ms; }
+    })();
+    var as=ev('sh-set-attach-save'); if(as) as.addEventListener('click',function(){
+      var a=parseInt((ev('sh-set-attach-delay-min')||{}).value,10);
+      var b=parseInt((ev('sh-set-attach-delay-max')||{}).value,10);
+      if(!isFinite(a)||!isFinite(b)||a<0||b<a){ toast2('区间非法（需 0 ≤ min ≤ max）'); return; }
+      try{ localStorage.setItem('lingya-attach-delay-min', String(a)); localStorage.setItem('lingya-attach-delay-max', String(b)); }catch(_e){}
+      toast2('附件上传间隔已保存：' + a + '~' + b + 'ms');
+    });
+
+    // ===== 网络安全：回填 + 保存 =====
+    (function(){
+      var v=ev('sh-set-ssrf-guard'); if(v){ v.checked = localStorage.getItem('lingya-ssrf-guard')==='1'; }
+      if(v) v.addEventListener('change', function(){ try{ localStorage.setItem('lingya-ssrf-guard', v.checked?'1':'0'); }catch(_e){} toast2(v.checked?'已开启 SSRF 防护':'已关闭 SSRF 防护'); });
+    })();
+
+    // ===== AI 回复拦截：回填 + 保存 =====
+    (function(){
+      var v;
+      v=ev('sh-set-intercept-patterns'); if(v){ v.value = (localStorage.getItem('lingya-ai-intercept-patterns') || ''); }
+      v=ev('sh-set-intercept-prompt'); if(v){ v.value = (localStorage.getItem('lingya-ai-intercept-prompt') || ''); }
+    })();
+    var isv=ev('sh-set-intercept-save'); if(isv) isv.addEventListener('click',function(){
+      var pat=(ev('sh-set-intercept-patterns')||{}).value || '';
+      var prompt=(ev('sh-set-intercept-prompt')||{}).value || '';
+      // 校验每条正则
+      var lines = pat.split(/\r?\n/).map(function(s){return s.trim();}).filter(Boolean);
+      for (var i=0;i<lines.length;i++){
+        try { new RegExp(lines[i], 'i'); } catch(e) { toast2('第 '+(i+1)+' 条正则非法：'+e.message); return; }
+      }
+      try{
+        localStorage.setItem('lingya-ai-intercept-patterns', pat);
+        localStorage.setItem('lingya-ai-intercept-prompt', prompt);
+      }catch(_e){}
+      if(window.shellAPI&&window.shellAPI.setSetting){
+        window.shellAPI.setSetting('ai-intercept-patterns', pat);
+        window.shellAPI.setSetting('ai-intercept-prompt', prompt);
+      }
+      toast2('AI 回复拦截配置已保存（' + lines.length + ' 条正则）');
     });
   }
 
@@ -2780,7 +3361,9 @@
               ev.stopPropagation();
               var act = actEl.getAttribute('data-act');
               if(act === 'rename'){
-                var nn = prompt('重命名对话', title);
+                // 注：Electron 里 window.prompt() 不可用，这里改用 promptInput
+                // 但这是旧函数（_legacyRenderSessionsView），已经不调用了；仅保留占位
+                var nn = null;
                 if(nn == null) return;
                 nn = String(nn).trim();
                 if(!nn) return;
@@ -2958,7 +3541,7 @@
         }
         box.innerHTML=h;
         var q=function(cls,fn){ var els=box.querySelectorAll(cls); for(var x=0;x<els.length;x++){ (function(e2){ e2.addEventListener('click',function(){ fn(e2.getAttribute('data-id'),e2.getAttribute('data-name'),e2); }); })(els[x]); } };
-        q('.sh-win-num',function(id){ var cur=null; for(var k=0;k<list.length;k++) if(list[k].id===id) cur=list[k].number; var nv=prompt('新编号',String(cur||'')); if(nv==null) return; var n=parseInt(nv,10); if(!n||n<1){ toast2('编号需为正整数'); return; } window.shellAPI.updateProfileNumber(id,n).then(function(r2){ toast2(r2&&r2.success?'编号已更新':'更新失败'); load(); })['catch'](function(){}); });
+        q('.sh-win-num',function(id){ var cur=null; for(var k=0;k<list.length;k++) if(list[k].id===id) cur=list[k].number; promptInput('新编号', '正整数', String(cur||''), function(nv){ var n=parseInt(nv,10); if(!n||n<1){ toast2('编号需为正整数'); return; } window.shellAPI.updateProfileNumber(id,n).then(function(r2){ toast2(r2&&r2.success?'编号已更新':'更新失败'); load(); })['catch'](function(){}); }); });
         q('.sh-win-open',function(id){ window.shellAPI.openProfileWindow(id).then(function(r2){ toast2(r2&&r2.success?(r2.focused?'已切换':'已打开'):'打开失败'); })['catch'](function(){}); });
         q('.sh-win-merge',function(id,name){
           if(!window.shellAPI || !window.shellAPI.mergeWindowTo){
@@ -2980,7 +3563,7 @@
             if(r2&&r2.success){ toast2('已合并'); } else { toast2('合并失败：'+((r2&&r2.error)||'未知错误')); }
           })['catch'](function(){ toast2('合并失败'); });
         });
-        q('.sh-win-rename',function(id,name){ var nn=prompt('新名称',name); if(nn==null) return; window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); });
+        q('.sh-win-rename',function(id,name){ promptInput('新名称', '输入窗口名称', name, function(nn){ window.shellAPI.updateWindowName(nn).then(function(){ toast2('已改名'); load(); })['catch'](function(){}); }); });
         q('.sh-win-del',function(id,name){ if(!confirm('确定删除窗口「'+name+'」？')) return; window.shellAPI.deleteProfileWindow(id).then(function(){ toast2('已删除'); load(); })['catch'](function(){}); });
 
         // 拖动排序：数组顺序即显示顺序，第一位为主窗口
@@ -3842,6 +4425,17 @@
     return tb - ta;
   }
 
+  // ===== 提示词管理图标（2026-11-01）=====
+  var TPL_ICON = {
+    activate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg>',
+    unset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    duplicate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    reset: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
+    rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>'
+  };
+
   // 图标（与 Cuckoo 完全一致）
   var WS_ICON = {
     caret: '<svg class="ck-ws-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>',
@@ -3850,6 +4444,8 @@
     archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>',
     unarchive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v5h5"/><path d="M3.5 12a8.5 8.5 0 1 0 2-5.4L3 9"/></svg>',
     rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>',
+    export: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
     expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>'
   };
 
@@ -3900,6 +4496,8 @@
     var time = wsRelTime(s.updatedAt);
     var isCur = s.sessionId === currentSessionId;
     var renameBtn = '<span class="ck-ws-act" data-act="rename" title="重命名">' + WS_ICON.rename + '</span>';
+    var exportBtn = '<span class="ck-ws-act" data-act="export" title="导出为 .md">' + WS_ICON.export + '</span>';
+    var delBtn = '<span class="ck-ws-act" data-act="delete" title="删除会话" style="color:#f87171;">' + WS_ICON.trash + '</span>';
     var act = archived
       ? '<span class="ck-ws-act" data-act="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
       : (sub ? '' : '<span class="ck-ws-act" data-act="archive" title="归档">' + WS_ICON.archive + '</span>');
@@ -3912,7 +4510,7 @@
       caret +
       '<span class="ck-ws-name">' + esc(label) + '</span>' +
       (time ? '<span class="ck-ws-time">' + esc(time) + '</span>' : '') +
-      '<span class="ck-ws-acts">' + renameBtn + act + '</span>' +
+      '<span class="ck-ws-acts">' + renameBtn + exportBtn + act + delBtn + '</span>' +
       '</div>';
   }
 
@@ -3927,6 +4525,7 @@
       (archivedProjects.indexOf(dir) !== -1
         ? '<span class="ck-ws-gact" data-gact="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
         : '<span class="ck-ws-gact" data-gact="archive" title="归档项目">' + WS_ICON.archive + '</span>') +
+      '<span class="ck-ws-gact" data-gact="delete" title="删除项目（含所有会话）" style="color:#f87171;">' + WS_ICON.trash + '</span>' +
       '</span>';
     var html = '<div class="ck-ws-group' + (isOpen ? ' open' : '') + '" data-dir="' + attr(dir) + '">' +
       '<div class="ck-ws-group-title" title="' + attr(dir) + '">' +
@@ -4065,6 +4664,13 @@
         } else if(act === 'unarchive'){
           if(!window.shellAPI || !window.shellAPI.setProjectArchived) return;
           window.shellAPI.setProjectArchived(dir, false).then(function(){ reload(); })['catch'](function(){});
+        } else if(act === 'delete'){
+          if(!window.shellAPI || !window.shellAPI.deleteProject) return;
+          if(!confirm('确定删除项目「' + dir + '」？\n\n这会移除该项目的所有会话记录（不影响磁盘上的项目文件）。')) return;
+          window.shellAPI.deleteProject(dir).then(function(r){
+            if(r && r.success) { toast2('项目已删除（' + (r.deletedCount||0) + ' 个会话）'); reload(); }
+            else toast2('删除失败：' + ((r && r.error) || '未知错误'));
+          })['catch'](function(){ toast2('删除失败'); });
         }
       });
     });
@@ -4079,18 +4685,60 @@
           var act = actEl.getAttribute('data-act');
           if(act === 'rename'){
             if(!id || !window.shellAPI || !window.shellAPI.setSessionTitle) return;
-            var cur = (name === id) ? '' : name;
-            var nn = prompt('重命名对话', cur);
-            if(nn == null) return;
-            nn = String(nn).trim();
-            if(!nn) return;
-            window.shellAPI.setSessionTitle(nn, id).then(function(){ reload(); })['catch'](function(){});
+            // 【2026-11-01】改为内联编辑（不再用 promptInput 弹窗，因为它会被 AI 页面 WebContentsView 遮挡）
+            var nameEl = item.querySelector('.ck-ws-name');
+            if(!nameEl || item.querySelector('.ck-ws-rename-input')) return;
+            var curName = nameEl.textContent || '';
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'ck-ws-rename-input';
+            input.value = curName;
+            nameEl.style.display = 'none';
+            nameEl.parentNode.insertBefore(input, nameEl);
+            // 隐藏操作按钮，避免干扰
+            var actsEl = item.querySelector('.ck-ws-acts');
+            if(actsEl) actsEl.style.display = 'none';
+            setTimeout(function(){ input.focus(); input.select(); }, 30);
+            var finished = false;
+            function finish(save){
+              if(finished) return;
+              finished = true;
+              var newName = String(input.value || '').trim();
+              if(!save || !newName || newName === curName){
+                input.remove();
+                nameEl.style.display = '';
+                if(actsEl) actsEl.style.display = '';
+                return;
+              }
+              window.shellAPI.setSessionTitle(newName, id).then(function(r){
+                if(r && r.success){ toast2('已改名'); reload(); }
+                else { toast2('改名失败：' + ((r && r.error) || '未知错误')); input.remove(); nameEl.style.display=''; if(actsEl) actsEl.style.display=''; }
+              })['catch'](function(){ toast2('改名失败'); input.remove(); nameEl.style.display=''; if(actsEl) actsEl.style.display=''; });
+            }
+            input.addEventListener('keydown', function(e){
+              if(e.key === 'Enter'){ e.preventDefault(); finish(true); }
+              else if(e.key === 'Escape'){ e.preventDefault(); finish(false); }
+            });
+            input.addEventListener('blur', function(){ finish(true); });
           } else if(act === 'archive'){
             if(!id || !window.shellAPI || !window.shellAPI.setSessionArchived) return;
             window.shellAPI.setSessionArchived(id, true).then(function(){ reload(); })['catch'](function(){});
           } else if(act === 'unarchive'){
             if(!id || !window.shellAPI || !window.shellAPI.setSessionArchived) return;
             window.shellAPI.setSessionArchived(id, false).then(function(){ reload(); })['catch'](function(){});
+          } else if(act === 'delete'){
+            if(!id || !window.shellAPI || !window.shellAPI.deleteSession) return;
+            if(!confirm('确定删除会话「' + (name || id) + '」？\n\n仅从 LingYa 本地记录中移除（不影响 DeepSeek 网页上的对话）。')) return;
+            window.shellAPI.deleteSession(id).then(function(r){
+              if(r && r.success) { toast2('会话已删除'); reload(); }
+              else toast2('删除失败：' + ((r && r.error) || '未知错误'));
+            })['catch'](function(){ toast2('删除失败'); });
+          } else if(act === 'export'){
+            if(!id || !window.shellAPI || !window.shellAPI.exportSessionMd) return;
+            window.shellAPI.exportSessionMd(id, name || id).then(function(r){
+              if(r && r.success) { /* 主进程会异步弹保存框 */ }
+              else toast2('导出失败：' + ((r && r.error) || '未知错误'));
+            })['catch'](function(){ toast2('导出失败'); });
           }
           return;
         }
