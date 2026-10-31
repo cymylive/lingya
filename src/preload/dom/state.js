@@ -46,12 +46,12 @@ module.exports = {
   // 慢请求（往返 > adaptiveThreshold）用思考耗时自适应（× thinkRatio，封顶 thinkMaxDelay）
   // 保留 globalSendDelay 供旧代码/旧配置兼容，快请求分支已不再直接读取它
   globalSendDelay: 3000,
-  // 快请求延迟区间（闭区间；min === max 时会被 pickGlobalDelay 短路成固定值，
-  // 等于每轮精确同一节拍 —— 那是最强的 bot 指纹，切勿再配成相等）。
-  // 【2026-11-01 对齐 Cuckoo】改为 4000~10000（与 Cuckoo 的 pickDelay(4000,10000) 一致）
-  // 原 2500/9000 与历史响应时长相关，现在改为纯均匀随机后无需依赖 thinkRatio
+  // 快请求延迟区间（双策略模式下使用）
   globalSendDelayMin: 4000,
   globalSendDelayMax: 10000,
+  // 【2026-11-01 拆分】均匀随机模式的独立区间（与双策略的快请求区间分开存储，互不影响）
+  uniformDelayMin: 4000,
+  uniformDelayMax: 10000,
   // 【2026-11-01 恢复】延迟模式：'uniform'（均匀随机，默认）| 'dual'（双策略，原版）
   sendDelayMode: 'uniform',
   // 【2026-11-01 新增】长消息分流阈值：消息长度 > 此值 → 转 .md 附件上传；≤ 此值 → 直接输入框输入

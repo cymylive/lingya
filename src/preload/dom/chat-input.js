@@ -96,6 +96,21 @@ async function resolveInitialChunkDelay() {
     // 【2026-11-01 恢复】延迟模式：'uniform'（默认）| 'dual'（原版双策略）
     const mode = localStorage.getItem('lingya-send-delay-mode');
     if (mode === 'dual' || mode === 'uniform') state.sendDelayMode = mode;
+    // 【2026-11-01 拆分】均匀随机独立区间（老用户未设置 → 用 globalSendDelay 兼容）
+    const umin = localStorage.getItem('lingya-uniform-delay-min');
+    const umax = localStorage.getItem('lingya-uniform-delay-max');
+    if (umin !== null) {
+      const a = parseInt(umin, 10);
+      if (Number.isFinite(a) && a >= 0) state.uniformDelayMin = a;
+    } else {
+      state.uniformDelayMin = state.globalSendDelayMin;
+    }
+    if (umax !== null) {
+      const b = parseInt(umax, 10);
+      if (Number.isFinite(b) && b >= 0) state.uniformDelayMax = b;
+    } else {
+      state.uniformDelayMax = state.globalSendDelayMax;
+    }
     // 【2026-11-01 新增】长消息分流阈值
     const ut = localStorage.getItem('lingya-upload-threshold');
     if (ut !== null) {
@@ -121,13 +136,15 @@ function computeThinkAdaptiveDelay() {
 }
 
 /**
- * 计算快请求发送延迟：在 [globalSendDelayMin, globalSendDelayMax] 闭区间内均匀随机。
- * min === max 时退化为固定值（与旧行为一致）。
- * min > max 时自动交换（UI 已校验，此处兜底，避免卡死发送）。
+ * 计算发送延迟：根据当前延迟模式选择不同的配置 source
+ *  - 'dual'（双策略）：快请求用 globalSendDelayMin/Max
+ *  - 'uniform'（均匀随机）：用 uniformDelayMin/Max
+ * min === max 时退化为固定值。min > max 时自动交换（兜底）。
  */
 function pickGlobalDelay() {
-  let min = Number(state.globalSendDelayMin);
-  let max = Number(state.globalSendDelayMax);
+  const isUniform = state.sendDelayMode === 'uniform';
+  let min = isUniform ? Number(state.uniformDelayMin) : Number(state.globalSendDelayMin);
+  let max = isUniform ? Number(state.uniformDelayMax) : Number(state.globalSendDelayMax);
   if (!Number.isFinite(min) || min < 0) min = 3000;
   if (!Number.isFinite(max) || max < 0) max = min;
   if (min > max) { const t = min; min = max; max = t; }
@@ -471,7 +488,7 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     // 均匀随机（默认，对齐 Cuckoo）
     const globalDelay = pickGlobalDelay();
     sendDelay = globalDelay;
-    branch = '均匀随机：区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
+    branch = '均匀随机：区间 [' + state.uniformDelayMin + ', ' + state.uniformDelayMax +
       ']ms 内随机取 ' + globalDelay + 'ms（与历史无关）';
   }
   console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（' + branch + '）...');
@@ -1150,6 +1167,9 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
     else if (k === 'think-max-delay') { localStorage.setItem('lingya-think-max-delay', String(v)); state.thinkMaxDelay = Number(v); console.log('[LingYa] 配置已更新 thinkMaxDelay=' + state.thinkMaxDelay + '（IPC 生效）'); }
     else if (k === 'global-send-delay-min') { localStorage.setItem('lingya-global-send-delay-min', String(v)); state.globalSendDelayMin = Number(v); }
     else if (k === 'global-send-delay-max') { localStorage.setItem('lingya-global-send-delay-max', String(v)); state.globalSendDelayMax = Number(v); }
+    // 【2026-11-01 拆分】均匀随机独立区间
+    else if (k === 'uniform-delay-min') { localStorage.setItem('lingya-uniform-delay-min', String(v)); state.uniformDelayMin = Number(v); }
+    else if (k === 'uniform-delay-max') { localStorage.setItem('lingya-uniform-delay-max', String(v)); state.uniformDelayMax = Number(v); }
     else if (k === 'adaptive-threshold') { localStorage.setItem('lingya-adaptive-threshold', String(v)); state.adaptiveThreshold = Number(v); }
     else if (k === 'auto-compact-enabled') { localStorage.setItem('lingya-auto-compact-enabled', v ? '1' : '0'); }
     else if (k === 'auto-compact-threshold') { localStorage.setItem('lingya-auto-compact-threshold', String(v)); }

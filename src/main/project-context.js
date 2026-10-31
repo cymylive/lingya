@@ -543,6 +543,18 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     console.error('[LingYa] 构建工具名速查表失败:', err.message);
   }
 
+  // 【2026-11-01 新增】合规红线：从 src/prompt/compliance.md 读取（每次初始化时读取，支持热更新）
+  let complianceSection = '';
+  try {
+    const cPath = path.join(PROMPT_DIR, 'compliance.md');
+    if (fs.existsSync(cPath)) {
+      complianceSection = fs.readFileSync(cPath, 'utf-8').trim();
+      if (complianceSection) console.log('[LingYa] 已读取合规红线，长度:', complianceSection.length);
+    }
+  } catch (err) {
+    console.warn('[LingYa] 读取合规红线失败:', err && err.message);
+  }
+
   // 统一替换模板中的双花括号占位符（全量替换，支持同一占位符多次出现）
   const placeholders = {
     '{{CORE_RULE_REPORT}}': coreRuleReport,
@@ -561,6 +573,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{SUPERPOWERS_SECTION}}': superpowersSection,
     // Purge 在前：先解除 Harness 削弱，再声明 CTF 场景
     '{{CTF_SECTION}}': (purgeSection ? purgeSection + '\n\n' : '') + ctfSection,
+    '{{COMPLIANCE_SECTION}}': complianceSection,
     '{{AGENT_SECTION}}': agent.section || '',
     '{{PLUGIN_SECTION}}': pluginSection,
     '{{PLUGIN_CUSTOM_SECTION}}': pluginCustomSection,

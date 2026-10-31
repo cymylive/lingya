@@ -2755,10 +2755,10 @@
       if(mUni) mUni.addEventListener('change', function(){ if(mUni.checked) _applyDelayMode('uniform'); });
       if(mDual) mDual.addEventListener('change', function(){ if(mDual.checked) _applyDelayMode('dual'); });
 
-      // 回填：均匀随机区间
-      v=ev('sh-set-send-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-min'), 4000); v.value = ms; }
-      v=ev('sh-set-send-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-max'), 10000); v.value = ms; }
-      // 回填：双策略
+      // 【2026-11-01 拆分】均匀随机区间（独立键）
+      v=ev('sh-set-send-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-uniform-delay-min') || localStorage.getItem('lingya-global-send-delay-min'), 4000); v.value = ms; }
+      v=ev('sh-set-send-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-uniform-delay-max') || localStorage.getItem('lingya-global-send-delay-max'), 10000); v.value = ms; }
+      // 【2026-11-01】双策略（用原有的 global-send-delay-* 键）
       v=ev('sh-set-dual-th'); if(v){ var ms=_num(localStorage.getItem('lingya-adaptive-threshold'), 20000); v.value = ms; }
       v=ev('sh-set-dual-delay-min'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-min'), 4000); v.value = ms; }
       v=ev('sh-set-dual-delay-max'); if(v){ var ms=_num(localStorage.getItem('lingya-global-send-delay-max'), 10000); v.value = ms; }
@@ -2770,45 +2770,50 @@
       var mDual = ev('sh-set-mode-dual');
       if(mDual && mDual.checked) mode = 'dual';
 
-      // 公共区间：均匀随机区间 = 快请求区间（两个分类共用，避免配置分叉）
-      var a=parseInt((ev('sh-set-send-delay-min')||{}).value,10);
-      var b=parseInt((ev('sh-set-send-delay-max')||{}).value,10);
-      if(!isFinite(a)||!isFinite(b)||a<0||b<a){ toast2('发送延迟区间非法（需 0 ≤ min ≤ max）'); return; }
-      try{
-        localStorage.setItem('lingya-send-delay-mode', mode);
-        localStorage.setItem('lingya-global-send-delay-min', String(a));
-        localStorage.setItem('lingya-global-send-delay-max', String(b));
-      }catch(_e){}
-      if(window.shellAPI&&window.shellAPI.setSetting){
-        window.shellAPI.setSetting('send-delay-mode', mode);
-        window.shellAPI.setSetting('global-send-delay-min', a);
-        window.shellAPI.setSetting('global-send-delay-max', b);
-      }
+      try{ localStorage.setItem('lingya-send-delay-mode', mode); }catch(_e){}
+      if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('send-delay-mode', mode);
 
-      // 双策略额外字段
-      if(mode === 'dual'){
-        var th=parseInt((ev('sh-set-dual-th')||{}).value,10);
+      if(mode === 'uniform'){
+        // 【均匀随机模式】只保存 uniform-delay-*（独立键）
+        var a=parseInt((ev('sh-set-send-delay-min')||{}).value,10);
+        var b=parseInt((ev('sh-set-send-delay-max')||{}).value,10);
+        if(!isFinite(a)||!isFinite(b)||a<0||b<a){ toast2('发送延迟区间非法（需 0 ≤ min ≤ max）'); return; }
+        try{
+          localStorage.setItem('lingya-uniform-delay-min', String(a));
+          localStorage.setItem('lingya-uniform-delay-max', String(b));
+        }catch(_e){}
+        if(window.shellAPI&&window.shellAPI.setSetting){
+          window.shellAPI.setSetting('uniform-delay-min', a);
+          window.shellAPI.setSetting('uniform-delay-max', b);
+        }
+        toast2('发送延迟已保存（均匀随机）：区间 ' + a + '~' + b + 'ms');
+      } else {
+        // 【双策略模式】保存 global-send-delay-* + 其他字段
         var dmin=parseInt((ev('sh-set-dual-delay-min')||{}).value,10);
         var dmax=parseInt((ev('sh-set-dual-delay-max')||{}).value,10);
+        var th=parseInt((ev('sh-set-dual-th')||{}).value,10);
         var ratio=parseFloat((ev('sh-set-think-ratio')||{}).value);
         var tmax=parseInt((ev('sh-set-think-max')||{}).value,10);
+        if(!isFinite(dmin)||!isFinite(dmax)||dmin<0||dmax<dmin){ toast2('快请求区间非法（需 0 ≤ min ≤ max）'); return; }
         if(!isFinite(th)||th<0||th>600000){ toast2('判定阈值需在 0-600000ms 之间'); return; }
-        if(!isFinite(dmin)||!isFinite(dmax)||dmin<0||dmax<dmin){ toast2('快请求区间非法'); return; }
         if(!isFinite(ratio)||ratio<0||ratio>5){ toast2('比例需在 0-5 之间'); return; }
         if(!isFinite(tmax)||tmax<0||tmax>600000){ toast2('自适应上限需在 0-600000ms 之间'); return; }
         try{
+          localStorage.setItem('lingya-global-send-delay-min', String(dmin));
+          localStorage.setItem('lingya-global-send-delay-max', String(dmax));
           localStorage.setItem('lingya-adaptive-threshold', String(th));
           localStorage.setItem('lingya-think-ratio', String(ratio));
           localStorage.setItem('lingya-think-max-delay', String(tmax));
-          // 快请求区间与均匀随机区间共用同一组键（避免配置不一致）
         }catch(_e){}
         if(window.shellAPI&&window.shellAPI.setSetting){
+          window.shellAPI.setSetting('global-send-delay-min', dmin);
+          window.shellAPI.setSetting('global-send-delay-max', dmax);
           window.shellAPI.setSetting('adaptive-threshold', th);
           window.shellAPI.setSetting('think-ratio', ratio);
           window.shellAPI.setSetting('think-max-delay', tmax);
         }
+        toast2('发送延迟已保存（双策略）：快请求区间 ' + dmin + '~' + dmax + 'ms');
       }
-      toast2('发送延迟已保存（' + (mode==='dual'?'双策略':'均匀随机') + '）：区间 ' + a + '~' + b + 'ms');
     });
 
     // ===== 提示词草稿管理（2026-11-01）=====
