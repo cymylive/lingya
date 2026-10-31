@@ -1,3 +1,4 @@
+
 'use strict';
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert');
@@ -38,7 +39,7 @@ function load(opts) {
     electronAPI: {
       clearAbort: () => {},
       newChat: async () => { calls.newChat++; },
-      rotationGetConfig: async () => ({ success: true, config: { enabled: o.rotationEnabled === true, thresholdWan: 0.1, historyMaxBytes: 2097152 } }),
+      rotationGetConfig: async () => ({ success: true, config: { enabled: o.rotationEnabled === true, thresholdWan: (typeof o.rotationThresholdWan === 'number' ? o.rotationThresholdWan : 0.1), historyMaxBytes: 2097152 } }),
       rotationSubmit: async (data) => {
         calls.submit.push(data);
         return o.submitResult || { success: true, requestId: 'r1', targetProfileId: 'p2' };
@@ -46,11 +47,16 @@ function load(opts) {
       onRotationResult: (cb) => { calls.resultCb = cb; return () => {}; },
     },
   };
+  const lsEntries = o.disableLegacySwitch
+    ? [['lingya-auto-compact-threshold', '0.1']]
+    : [['lingya-auto-compact-enabled', '1'], ['lingya-auto-compact-threshold', '0.1']];
+  // 轮转缓存键：checkAutoCompact 同步读这两个，不再每秒 IPC
+  if (o.rotationEnabled === true) {
+    lsEntries.push(['lingya-rotation-enabled', '1']);
+    lsEntries.push(['lingya-rotation-threshold', String(typeof o.rotationThresholdWan === 'number' ? o.rotationThresholdWan : 0.1)]);
+  }
   global.localStorage = {
-    _m: new Map([
-      ['lingya-auto-compact-enabled', '1'],
-      ['lingya-auto-compact-threshold', '0.1'],
-    ]),
+    _m: new Map(lsEntries),
     getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
     setItem(k, v) { this._m.set(k, String(v)); },
     removeItem(k) { this._m.delete(k); },
@@ -81,7 +87,7 @@ function load(opts) {
   });
   stub(path.join(DOM, 'compaction.js'), { runCompaction: () => {}, checkPendingInit: () => {} });
   stub(path.join(DOM, 'state.js'), {
-    serverTokenUsage: { accumulatedTokens: 5000 },
+    serverTokenUsage: { accumulatedTokens: (typeof o.tokens === 'number' ? o.tokens : 5000) },
     serverTokenUsageBySession: {}, tokenBaseline: {},
     isMigrating: false, migratingAt: 0,
     currentProjectDir: 'D:/proj',
@@ -175,4 +181,39 @@ test('bindRotationEvents 已导出且可调用', () => {
   assert.equal(typeof mod.bindRotationEvents, 'function');
   // 无 DOM 元素时不能抛错
   mod.bindRotationEvents();
+});
+
+
+
+// ===== 回归：轮转不能依赖旧「自动压缩」开关 =====
+test('旧自动压缩开关关闭时，轮转仍能触发（不被旧门槛挡住）', async () => {
+  const { mod, calls } = load({ rotationEnabled: true, disableLegacySwitch: true });
+  // 旧开关必须处于关闭状态
+  assert.equal(global.localStorage.getItem('lingya-auto-compact-enabled'), null, '前提：旧开关未开');
+  mod.checkAutoCompact();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls.submit.length, 1, '轮转应被触发，不能因旧开关关闭而被挡');
+});
+
+test('轮转启用时使用轮转阈值，而非旧阈值', async () => {
+  const { mod, calls } = load({ rotationEnabled: true, disableLegacySwitch: true, tokens: 3000 });
+  // 轮转阈值 0.1 万 = 1000 token，当前 3000 token 应触发
+  mod.checkAutoCompact();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls.submit.length, 1, '按轮转阈值 1000 应触发');
+});
+
+test('轮转未达自身阈值时不触发（哪怕旧阈值更低）', async () => {
+  const { mod, calls } = load({ rotationEnabled: true, disableLegacySwitch: true, tokens: 500, rotationThresholdWan: 10 });
+  mod.checkAutoCompact();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls.submit.length, 0, '500 token < 10 万，不该触发');
+});
+
+test('轮转关闭时旧开关行为完全不变', async () => {
+  const { mod, calls } = load({ rotationEnabled: false, tokens: 5000 });
+  mod.checkAutoCompact();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(calls.submit.length, 0, '轮转关闭不应走轮转');
+  assert.equal(calls.newChat, 1, '旧链路照常执行');
 });

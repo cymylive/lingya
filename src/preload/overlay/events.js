@@ -408,39 +408,46 @@ let autoCompactTriggering = false;
  */
 function checkAutoCompact() {
   if (autoCompactTriggering) return;
-  // 实时读 localStorage：侧边栏改完立即生效，无需刷新页面
-  let enabled = false;
-  let thresholdWan = 80;
-  try {
-    enabled = localStorage.getItem('lingya-auto-compact-enabled') === '1';
-    const th = localStorage.getItem('lingya-auto-compact-threshold');
-    thresholdWan = th ? (parseFloat(th) || 80) : 80;
-  } catch (_) { return; }
-  if (!enabled) return;
+
   const server = state.serverTokenUsage;
-  if (!server || typeof server.accumulatedTokens !== 'number') return;
+  if (!server || typeof server.accumulatedTokens !== "number") return;
   // 【修复】用扣除基线后的「有效 token 数」判定阈值，避免迁移后新会话拿原值继续触发
   const effective = getEffectiveTokenCount();
   const current = effective !== null ? effective : server.accumulatedTokens;
+
+  // ===== 优先级 1：跨窗口轮转 =====
+  // 轮转是独立开关，不看旧「自动压缩」开关，用自己的阈值。
+  // 启用状态与阈值缓存在 localStorage（由 rotSave 保存时写入），同步读取，避免每秒 IPC。
+  let rotOn = false;
+  let rotThresholdWan = 10;
+  try {
+    rotOn = localStorage.getItem("lingya-rotation-enabled") === "1";
+    const rt = localStorage.getItem("lingya-rotation-threshold");
+    if (rt) rotThresholdWan = parseFloat(rt) || 10;
+  } catch (_) { rotOn = false; }
+  if (rotOn) {
+    const rotThresholdTokens = rotThresholdWan * 10000;
+    if (current < rotThresholdTokens) return;
+    autoCompactTriggering = true;
+    console.log("[LingYa 轮转] 自动触发：当前有效 " + current + " >= 轮转阈值 " + rotThresholdTokens);
+    runRotationMigration().catch((e) => console.error("[LingYa 轮转] 异常:", e && e.message));
+    return;
+  }
+
+  // ===== 优先级 2：原地迁移（原有逻辑，行为完全不变）=====
+  let enabled = false;
+  let thresholdWan = 80;
+  try {
+    enabled = localStorage.getItem("lingya-auto-compact-enabled") === "1";
+    const th = localStorage.getItem("lingya-auto-compact-threshold");
+    thresholdWan = th ? (parseFloat(th) || 80) : 80;
+  } catch (_) { return; }
+  if (!enabled) return;
   const thresholdTokens = thresholdWan * 10000;
   if (current < thresholdTokens) return;
-  // 触发
   autoCompactTriggering = true;
-  console.log('[LingYa Compact] 自动触发：当前有效 ' + current + ' >= 阈值 ' + thresholdTokens);
-  
-  // 【分流】轮转启用 → 跨窗口轮转；否则 → 原地迁移（原逻辑一行不改）
-  (async () => {
-    let rotationOn = false;
-    try {
-      const rc = await window.electronAPI.rotationGetConfig();
-      rotationOn = !!(rc && rc.success && rc.config && rc.config.enabled);
-    } catch (_) { rotationOn = false; }
-    if (rotationOn) {
-      await runRotationMigration();
-      return;
-    }
-    await runMigration();
-  })();
+  console.log("[LingYa Compact] 自动触发：当前有效 " + current + " >= 阈值 " + thresholdTokens);
+  runMigration().catch((e) => console.error("[LingYa 迁移] 异常:", e && e.message));
 }
 
 /** 原地迁移：Token 超阈值 → 打包历史 → 新会话承接（原有逻辑，行为不变） */
@@ -1197,6 +1204,11 @@ async function rotFillForm() {
     if (el("lingya-rot-wait-ms")) el("lingya-rot-wait-ms").value = c.targetBusyWaitMs;
     if (el("lingya-rot-diff-account")) el("lingya-rot-diff-account").checked = c.preferDifferentAccount === true;
     rotPoolDraft = Array.isArray(c.pool) ? c.pool.map((x) => ({ ...x })) : [];
+    // 同步缓存给 checkAutoCompact 同步读取（避免每秒 IPC）
+    try {
+      localStorage.setItem('lingya-rotation-enabled', c.enabled === true ? '1' : '0');
+      localStorage.setItem('lingya-rotation-threshold', String(c.thresholdWan));
+    } catch (_) {}
   } catch (err) {
     console.error("[LingYa 轮转] 读取配置失败:", err && err.message);
   }
@@ -1322,6 +1334,11 @@ async function rotSave() {
   try {
     const r = await window.electronAPI.rotationSetConfig(patch);
     if (r && r.success) {
+      // 立刻同步缓存，让 checkAutoCompact 下一次轮询就按新配置判定
+      try {
+        localStorage.setItem('lingya-rotation-enabled', patch.enabled ? '1' : '0');
+        localStorage.setItem('lingya-rotation-threshold', String(patch.thresholdWan));
+      } catch (_) {}
       showToast("轮转配置已保存", 3000);
       await rotFillForm();
       await rotRenderPool();
