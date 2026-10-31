@@ -377,7 +377,8 @@ function updateConversationTokenDisplay() {
   let fabTokenEl = document.getElementById('lingya-fab-token');
   if (!fabTokenEl) {
     fabTokenEl = document.createElement('div');
-    fabTokenEl.id = 'lingya-fab-token';
+    // 【封号风险改造 2026-11-01】动态 id 也走前缀替换
+    fabTokenEl.id = require('./dom-prefix').mapId('lingya-fab-token');
     // 初始位置放到屏幕外，防止在计算坐标前闪现在左上角
     fabTokenEl.style.cssText = 'position: fixed; left: -9999px; top: -9999px; transform: translate(-50%, -100%); background: rgba(12, 14, 16, 0.95); border: 1px solid #2dd4bf; border-radius: 12px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #2dd4bf; pointer-events: none; z-index: 2147483647; white-space: nowrap; display: block;';
     document.body.appendChild(fabTokenEl);
@@ -738,9 +739,12 @@ function makeFabDraggable(badge) {
     badge.style.right = 'auto';
 
     // 同步更新 Token 标签位置
+    // 【BUG 修复 2026-11-01】原代码引用未定义变量 cx（ReferenceError）。
+    // Token 标签应居中显示在悬浮球正上方，与 updateConversationTokenDisplay() 逻辑一致。
     const tokenEl = document.getElementById('lingya-fab-token');
     if (tokenEl) {
-      tokenEl.style.left = cx + 'px';
+      const tokenCx = left + w / 2;
+      tokenEl.style.left = tokenCx + 'px';
       tokenEl.style.top = (top - 6) + 'px';
     }
     badge.style.bottom = 'auto';

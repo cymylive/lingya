@@ -67,7 +67,7 @@ function initFeishuBridge() {
 
   // 1b. AI 开始生成 → 上报（手机能看到"进行中"，而非只看到最后一条）
   try {
-    window.addEventListener('lingya-ai-start', () => {
+    window.addEventListener(require('./evt-names').AI_START, () => {
       if (!enabled) return;
       currentActivity = '🧠 AI 正在生成…';
       report({ type: 'ai-start' });

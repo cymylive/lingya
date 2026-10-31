@@ -66,6 +66,8 @@ async function handleEnable(event, args) {
     onStart: () => send({ kind: 'start', data: { provider: providerId, at: Date.now() } }),
     onUserMessage: (text) => send({ kind: 'userMessage', data: { text, at: Date.now() } }),
     onResponse: (parsed) => send({ kind: 'response', data: parsed }),
+    // 【对齐 Cuckoo 2026-11-01】流式字节增量 → 估算 TPS
+    onStream: (d) => send({ kind: 'stream', data: d || {} }),
     onHeaders: (obj) => send({ kind: 'headers', data: obj }),
     onInterrupted: (reason) => send({
       kind: 'interrupted',

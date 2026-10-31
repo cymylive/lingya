@@ -69,7 +69,7 @@ function initWeixinBridge() {
 
   // 3. AI 开始生成
   try {
-    window.addEventListener('lingya-ai-start', () => {
+    window.addEventListener(require('./evt-names').AI_START, () => {
       if (!enabled) return;
       currentActivity = '🧠 AI 正在生成…';
       report({ type: 'ai-start' });

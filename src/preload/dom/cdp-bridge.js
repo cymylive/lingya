@@ -37,9 +37,10 @@ function handleEvent(fakeWindow, payload) {
   if (!payload || typeof payload !== 'object') return;
   const kind = payload.kind;
   const data = payload.data || {};
+  const evtNames = require('./evt-names');
 
   if (kind === 'start') {
-    fakeWindow.dispatchEvent(buildEvent(fakeWindow, 'lingya-ai-start', {
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.AI_START, {
       provider: data.provider || 'deepseek',
       at: data.at || Date.now(),
     }));
@@ -48,19 +49,37 @@ function handleEvent(fakeWindow, payload) {
 
   if (kind === 'response') {
     // detail 结构与 deepseek.js 的 dispatch() 完全一致
-    fakeWindow.dispatchEvent(buildEvent(fakeWindow, 'lingya-ai-response', {
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.AI_RESPONSE, {
       text: data.text || '',
       finished: !!data.finished,
       tokenUsage: data.tokenUsage || null,
       msgIds: data.msgIds || null,
       interrupted: !!data.interrupted,
       thinking: data.thinking || '',
+      // 【对齐 Cuckoo】真实 TPS（来自 getResponseBody 的精确 token / 时长），
+      // 供 intercept-observer 结束后覆盖估算值
+      _realTps: typeof data._realTps === 'number' ? data._realTps : null,
+    }));
+    return;
+  }
+
+  if (kind === 'stream') {
+    // 【对齐 Cuckoo 2026-11-01】CDP dataReceived 给的是网络字节数（含 SSE 协议头 + JSON 结构）。
+    // 实测校准：DeepSeek 每 token 平均消耗约 25 字节（含 data: {...} 包裹），
+    // 8979 字节 ≈ 359 token（500 字文章），580 tps × 4.5/25 ≈ 104 tps ≈ 真实值。
+    const bytes = (data && typeof data.bytes === 'number') ? data.bytes : 0;
+    const fakeTokens = Math.round(bytes / 25);
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.AI_STREAM, {
+      think: '',
+      text: '',
+      finished: !!(data && data.finished),
+      accumulatedTokens: fakeTokens,
     }));
     return;
   }
 
   if (kind === 'userMessage') {
-    fakeWindow.dispatchEvent(buildEvent(fakeWindow, 'lingya-user-message', {
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.USER_MESSAGE, {
       text: data.text || '',
       at: data.at || Date.now(),
     }));
@@ -69,14 +88,14 @@ function handleEvent(fakeWindow, payload) {
 
   if (kind === 'headers') {
     // 与 deepseek.js cacheHeaders() 派发的 detail 结构一致（裸对象）
-    fakeWindow.dispatchEvent(buildEvent(fakeWindow, 'lingya-ds-headers', data));
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.DS_HEADERS, data));
     return;
   }
 
   if (kind === 'interrupted') {
-    // 中断也走 lingya-ai-response，但 interrupted=true、finished=true
+    // 中断也走 AI_RESPONSE，但 interrupted=true、finished=true
     // 这样下游统一按「一轮回复结束」处理，不会卡在等待态。
-    fakeWindow.dispatchEvent(buildEvent(fakeWindow, 'lingya-ai-response', {
+    fakeWindow.dispatchEvent(buildEvent(fakeWindow, evtNames.AI_RESPONSE, {
       text: data.text || '',
       finished: true,
       tokenUsage: data.tokenUsage || null,

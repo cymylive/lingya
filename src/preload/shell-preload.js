@@ -144,6 +144,14 @@ const api = {
   updateWindowName: (displayName) => ipcRenderer.invoke('update-window-name', { displayName }),
   // 会话 / 窗口 / Agent / 项目
   listSessions: () => ipcRenderer.invoke('list-sessions'),
+  // 【对齐 Cuckoo 2026-11-01】底部状态栏订阅
+  onTokenUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('shell-token-updated',h); return ()=>ipcRenderer.removeListener('shell-token-updated',h); },
+  onTpsUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('shell-tps-updated',h); return ()=>ipcRenderer.removeListener('shell-tps-updated',h); },
+  // 【工作区侧栏对齐 Cuckoo 2026-11-01】跨项目聚合 + 项目级归档 + 目录信息 + 新对话
+  listAllSessions: () => ipcRenderer.invoke('list-all-sessions'),
+  setProjectArchived: (dir, archived) => ipcRenderer.invoke('set-project-archived', { dir, archived: !!archived }),
+  getDirInfo: (dir) => ipcRenderer.invoke('get-dir-info', { dir }),
+  newConversationForProject: (projectDir) => ipcRenderer.invoke('new-conversation-for-project', { projectDir }),
   navigateSession: (sessionId) => ipcRenderer.invoke('navigate-session', { sessionId }),
   setSessionTitle: (title, sessionId) => ipcRenderer.invoke('set-session-title', sessionId ? { title, sessionId } : { title }),
   setSessionArchived: (sessionId, archived) => ipcRenderer.invoke('set-session-archived', { sessionId, archived: !!archived }),

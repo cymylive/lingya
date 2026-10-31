@@ -23,7 +23,6 @@ const ROOT = path.join(__dirname, '..', '..');
 const PRELOAD_FILES = [
   ['refusal-rewriter', 'preload.js'],
   ['task-watcher', 'preload.js'],
-  ['deepseek-archive', 'archive.js'],
 ];
 
 for (const [plugin, file] of PRELOAD_FILES) {

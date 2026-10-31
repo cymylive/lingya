@@ -5,9 +5,12 @@
 // ========== 网络拦截器（内联，注入主世界执行）==========
 // 说明：hook 源码直接内联在 provider 中，保证 provider 单文件自包含。
 // 函数体必须自包含（不引用模块级变量）。
-function chatgptHookInstaller() {
+function chatgptHookInstaller(EVT_NAMES) {
   var MARKER = Symbol.for('l.hook.gpt');
   if (window[MARKER]) return;
+  EVT_NAMES = EVT_NAMES || {
+    AI_RESPONSE: 'lingya-ai-response', AI_START: 'lingya-ai-start',
+  };
 
   // 【2026-10-30 移除 spoofNative】
   // 原实现用 Object.defineProperty 给被 hook 的函数加自有 toString，
@@ -32,7 +35,7 @@ function chatgptHookInstaller() {
 
   function dispatch(text, finished) {
     try {
-      window.dispatchEvent(new CustomEvent('lingya-ai-response', {
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_RESPONSE, {
         detail: { text: text || '', finished: !!finished }
       }));
     } catch (e) { /* ignore */ }
@@ -40,7 +43,7 @@ function chatgptHookInstaller() {
 
   function dispatchStart() {
     try {
-      window.dispatchEvent(new CustomEvent('lingya-ai-start'));
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_START));
     } catch (e) { /* ignore */ }
   }
 
@@ -404,7 +407,13 @@ module.exports = {
   },
 
   // 返回注入主世界的网络拦截器源码（拦截模式使用）
-  getHookSource() {
-    return '(' + chatgptHookInstaller.toString() + ')();';
+  getHookSource(evtNames) {
+    // 【封号风险改造 2026-11-01】IIFE 包裹避免 window.EVT_NAMES 暴露；只传必要字段
+    const src = evtNames || {};
+    const N = {
+      AI_RESPONSE: src.AI_RESPONSE || 'lingya-ai-response',
+      AI_START: src.AI_START || 'lingya-ai-start',
+    };
+    return '(function(){(' + chatgptHookInstaller.toString() + ')(' + JSON.stringify(N) + ');})();';
   },
 };

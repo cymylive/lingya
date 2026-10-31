@@ -12,8 +12,9 @@ const petLoader = require('./pet-loader');
 const path = require('path');
 const { WebContentsView } = require('electron');
 
-const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+// 【封号风险改造 2026-11-01】动态取真实内核版本，避免硬编码落后
+const { buildChromeUserAgent } = require('./user-agent');
+const USER_AGENT = buildChromeUserAgent();
 
 const AI_PRELOAD = path.join(__dirname, '..', '..', 'preload.js');
 

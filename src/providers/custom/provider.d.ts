@@ -2,9 +2,8 @@
  * LingYa 自定义 Provider 接口定义
  * 用户编写自定义平台 Provider 时，可参考本文件获得类型提示。
  *
- * 使用方式（在用户 JS 文件顶部）：
- *   /** @type {import('./custom/provider.d.ts').Provider} */
- *   module.exports = { ... }
+ * 使用方式（在用户 JS 文件顶部加 @type 注释，指向本文件的 Provider 类型），
+ * 然后 module.exports = { ... } 导出对象即可获得类型提示。
  */
 
 /**
@@ -56,17 +55,29 @@ export interface Provider {
   /**
    * 返回注入页面主世界的网络拦截器源码（拦截模式使用）
    * 仅当 useIntercept 为 true 时需要。源码会在主世界执行，
-   * 负责监听 fetch/XHR 并派发 'lingya-ai-response' 事件。
+   * 负责监听 fetch/XHR 并派发 AI 回复事件。
+   *
+   * 【封号风险改造 2026-11-01】可选接收 evtNames 参数（每会话随机后缀的事件名），
+   * 内置 provider（deepseek/claude/chatgpt）已适配：事件名变为
+   * lingya-ai-response_<随机后缀>，防止页面脚本预埋监听器窃取回复全文。
+   * 自定义 provider 可选择性适配（不适配则回退明文名，向后兼容）。
    *
    * ⚠️ 必须自包含：provider 是单文件上传，hook 源码要内联在此方法中，
-   * 不能 require 外部文件。推荐写法：
-   *   getHookSource() {
-   *     return '(' + function () { /* 拦截逻辑，只用浏览器全局 */ }.toString() + ')();';
-   *   }
+   * 不能 require 外部文件。推荐写法：定义一个只使用浏览器全局的
+   * hook 函数，返回 '(' + hookFn.toString() + ')();' 形式的源码字符串。
    *
    * 派发事件时可选携带 tokenUsage 字段（详见 provider.template.js）。
    */
-  getHookSource?(): string;
+  getHookSource?(evtNames?: {
+    AI_START?: string;
+    AI_RESPONSE?: string;
+    AI_ERROR?: string;
+    USER_MESSAGE?: string;
+    DS_HEADERS?: string;
+    HOOK_READY?: string;
+    SUFFIX?: string;
+    DEFAULTS?: Record<string, string>;
+  }): string;
 
   /** 返回自定义提示词模板（优先级最高；返回空则回退到文件模板） */
   getPromptTemplate?(): string;

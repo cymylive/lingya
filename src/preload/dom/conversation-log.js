@@ -194,7 +194,7 @@ function initConversationLog() {
   // 3. 用户手动发送的消息（主世界 hook 从请求体提取后派发）
   try {
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('lingya-user-message', function (ev) {
+      window.addEventListener(require('./evt-names').USER_MESSAGE, function (ev) {
         const d = ev && ev.detail;
         if (!d || !d.text) return;
         addEntry('user', d.text, '手动输入');

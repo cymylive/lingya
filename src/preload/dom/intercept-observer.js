@@ -547,6 +547,24 @@ function onInterceptedResponse(cb) {
 }
 
 /**
+ * 推送当前会话的「对话上下文」到壳页面状态栏（对齐 Cuckoo 2026-11-01）
+ * @param {string|null} sid 会话 ID（null/空 = 首页 → __home__）
+ * 逻辑：优先读 state.serverTokenUsageBySession[sid]，按 baseline 扣减后推送；
+ *      无缓存则推送 0（清空显示，与 Cuckoo getTokenForSession 缺省 0 一致）。
+ */
+function pushContextToStatusBar(sid) {
+  try {
+    if (!window.electronAPI || typeof window.electronAPI.updateTokenUsage !== 'function') return;
+    const key = sid || '__home__';
+    const entry = state.serverTokenUsageBySession[key];
+    const baseline = (state.tokenBaselineBySession && state.tokenBaselineBySession[key]) || 0;
+    const acc = entry && typeof entry.accumulatedTokens === 'number' ? entry.accumulatedTokens : 0;
+    const effective = Math.max(0, acc - baseline);
+    window.electronAPI.updateTokenUsage(effective, 0, 0, 0, null).catch(() => {});
+  } catch (_) {}
+}
+
+/**
  * 启动拦截事件监听
  */
 function startInterceptObserver() {
@@ -568,6 +586,9 @@ function startInterceptObserver() {
         ? _p0.extractSessionId(window.location.href)
         : null) || '__home__';
       state.serverTokenUsage = cached.usage[_sid0] || null;
+      // 【对齐 Cuckoo 2026-11-01】启动时把缓存中的 token 推送到状态栏
+      // （否则状态栏初始显示 0，即便该会话有缓存）
+      try { pushContextToStatusBar(_sid0); } catch (_) {}
     } catch (_) {}
     if (n > 0) console.log('[LingYa][Token] 已从 localStorage 恢复 ' + n + ' 个会话的 token 缓存');
   } catch (_) { /* 恢复失败不影响启动 */ }
@@ -598,7 +619,31 @@ function startInterceptObserver() {
   }
 
   // AI 开始生成回复：悬浮球切换为「AI 生成中」
-  window.addEventListener('lingya-ai-start', () => {
+  const evtNames = require('./evt-names');
+
+  // 【对齐 Cuckoo 2026-11-01】流式增量 → TPS 测速 → 推送壳页面状态栏
+  const { createTpsMeter, formatTps } = require('./tps-meter');
+  const tpsMeter = createTpsMeter();
+  let lastPushedTps = '';
+  function pushTps() {
+    const text = tpsMeter.value > 0 ? formatTps(tpsMeter.value) : '';
+    if (text === lastPushedTps) return;
+    lastPushedTps = text;
+    try {
+      if (window.electronAPI && window.electronAPI.updateTps) {
+        window.electronAPI.updateTps(text).catch(() => {});
+      }
+    } catch (_) {}
+  }
+  window.addEventListener(evtNames.AI_STREAM, (ev) => {
+    try {
+      const d = (ev && ev.detail) || {};
+      tpsMeter.update(d.text || '', !!d.finished, typeof d.accumulatedTokens === 'number' ? d.accumulatedTokens : null);
+      pushTps();
+    } catch (_) {}
+  });
+
+  window.addEventListener(evtNames.AI_START, () => {
     try {
       state.touch(); // AI 开始生成 = 有活动
       // 检测到新一轮 AI 生成开始（用户手动发消息 或 程序发送）
@@ -642,10 +687,15 @@ function startInterceptObserver() {
     }
   });
 
-  window.addEventListener('lingya-ai-response', (ev) => {
+  window.addEventListener(evtNames.AI_RESPONSE, (ev) => {
     try {
       const detail = ev && ev.detail;
       if (!detail || !detail.finished) return;
+      // 【对齐 Cuckoo】如果有真实 TPS（CDP 模式下从 getResponseBody 拿到的精确值），
+      // 覆盖测速器的估算值，让状态栏显示真实速度
+      if (typeof detail._realTps === 'number' && detail._realTps > 0) {
+        try { tpsMeter.setValue(detail._realTps); pushTps(); } catch (_) {}
+      }
       // 【2026-10-30】记录本次回复的总字符数（正文 + 思考），供下一条消息的延迟计算使用。
       // 真人读完长回复会等更久才发下一条 —— 这是「间隔 vs 回复长度」正相关的来源。
       // 实测基线：回复 4143 字节 → 等 8.7s；回复 8603 字节 → 等 14.5s。
@@ -816,6 +866,8 @@ function startInterceptObserver() {
           state.serverTokenUsageBySession[_sid] = detail.tokenUsage;
           // 同步落盘：关闭 LingYa 再打开时仍能看到该会话的 token
           saveTokenCache(state.serverTokenUsageBySession);
+          // 【对齐 Cuckoo 2026-11-01】推送 token 上下文给壳页面状态栏
+          pushContextToStatusBar(_sid);
         } catch (_) { /* URL 解析失败不阻断 token 显示 */ }
       }
       // 保存最近一次回复的消息 id（压缩时定位摘要用）
@@ -837,7 +889,7 @@ function startInterceptObserver() {
   // hook 自检：主世界注入器确认生效后会派发此事件。
   // 它的价值在于「可观测」——若这条日志没出现，说明 hook 没注入成功或事件通道断了，
   // 用户/开发者能立刻定位，而不是面对「AI 回复不执行」的静默失败。
-  window.addEventListener('lingya-hook-ready', (ev) => {
+  window.addEventListener(evtNames.HOOK_READY, (ev) => {
     const d = (ev && ev.detail) || {};
     // 【2026-10-30】幂等：主世界为解决时序竞态会派发多次，这里只记录第一次。
     if (window.__lingyaHookReadySeen__) return;
@@ -899,6 +951,9 @@ function startInterceptObserver() {
         const _tokenKey = sid || '__home__';
         state.serverTokenUsage = state.serverTokenUsageBySession[_tokenKey] || null;
       } catch (_) {}
+      // 【对齐 Cuckoo 2026-11-01】切会话时推送新会话的 token 给状态栏
+      // （Cuckoo 在 handleUrlChanged 里调 refreshTokenForCurrentSession 等效）
+      try { pushContextToStatusBar(sid); } catch (_) {}
       // 首页暂存的激活请求：会话 ID 一出现立即补激活
       if (sid && state.pendingActivation) {
         state.pendingActivation = false;

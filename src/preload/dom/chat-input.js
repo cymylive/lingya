@@ -332,6 +332,14 @@ async function sendToChat(msg, tag, fixedDelay, afterSent, opts) {
 async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
   state.touch(); // 发消息 = 有活动
   const isAuto = !!(opts && opts.auto);
+  // 【封号风险改造 2026-11-01】冷静期内丢弃自动发送（用户手动发送不受限）
+  // 触发场景：DeepSeek 返回 429/40029/限流文案 → rate-limit-retry 设置 state.rateLimitUntil。
+  // 冷醒期结束由 rate-limit-retry 自动解除并发重试消息，此处只做拦截。
+  if (isAuto && state.rateLimitUntil && Date.now() < state.rateLimitUntil) {
+    const remainSec = Math.ceil((state.rateLimitUntil - Date.now()) / 1000);
+    console.log('[LingYa] 限流冷静期内，丢弃自动消息（' + (tag || '') + '），剩余 ' + remainSec + 's');
+    return false;
+  }
   // 【重要】程序自动发送的消息绝不能清除 stopped ——
   // 否则用户点了停止后，程序自己发的消息会把 stopped 清掉，任务原地复活。
   // 这类消息在 stopped 状态下应当直接丢弃。
@@ -405,30 +413,30 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
       return false;
     }
   }
-  // 双策略延迟：
-  //   - 上次请求往返（思考+回复）> adaptiveThreshold → 慢请求，走思考耗时自适应
-  //   - 否则 → 快请求，走全局固定延迟
-  //   - fixedDelay 显式指定时（压缩/重命名等特殊操作）一律优先
-  const thinkMs = Number(state.lastThinkMs) || 0;
-  const threshold = Number(state.adaptiveThreshold) || 20000;
+  // 【对齐 Cuckoo 2026-11-01】发送延迟统一为「均匀随机」（与历史无关）。
+  // 原实现的双策略（往返耗时 × 0.2 自适应）有强烈特征：延迟与上一次 AI 响应时长强相关，
+  // DeepSeek 可用统计方法识别（人类打字速度与 AI 思考时长无正相关）。
+  // Cuckoo 用 pickDelay(4000, 10000) 均匀随机长期不封号，现对齐此行为。
   let sendDelay;
   let branch;
   if (fixedDelay !== undefined) {
-    sendDelay = fixedDelay;
-    branch = '调用方指定 ' + fixedDelay + 'ms';
-  } else if (thinkMs > threshold) {
-    const adaptiveDelay = computeThinkAdaptiveDelay();
-    const fallbackDelay = initialDelay();
-    sendDelay = Math.max(fallbackDelay, adaptiveDelay);
-    branch = '慢请求自适应：往返 ' + thinkMs + 'ms > 阈值 ' + threshold +
-      'ms → ' + sendDelay + 'ms（兜底 ' + fallbackDelay + '，自适应 ' + adaptiveDelay +
-      '，比例 ' + state.thinkRatio + '，上限 ' + state.thinkMaxDelay + '）';
+    // 系统消息随机区间（fixedDelay<=1000 是历史遗留的固定节拍）
+    if (fixedDelay <= 1000) {
+      const rMin = Number(state.systemMsgDelayMin) || 1500;
+      const rMax = Number(state.systemMsgDelayMax) || 4000;
+      const span = Math.max(0, rMax - rMin);
+      sendDelay = rMin + Math.floor(Math.random() * (span + 1));
+      branch = '系统消息随机（原固定 ' + fixedDelay + 'ms → ' + sendDelay + 'ms，区间 [' + rMin + ', ' + rMax + ']）';
+    } else {
+      sendDelay = fixedDelay;
+      branch = '调用方指定 ' + fixedDelay + 'ms';
+    }
   } else {
+    // 【对齐 Cuckoo】纯均匀随机，与历史响应时长无关
     const globalDelay = pickGlobalDelay();
     sendDelay = globalDelay;
-    branch = '快请求随机：往返 ' + thinkMs + 'ms ≤ 阈值 ' + threshold +
-      'ms → 区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
-      ']ms 内随机取 ' + globalDelay + 'ms';
+    branch = '均匀随机：区间 [' + state.globalSendDelayMin + ', ' + state.globalSendDelayMax +
+      ']ms 内随机取 ' + globalDelay + 'ms（与历史无关）';
   }
   console.log('[LingYa] 消息已填入输入框，等待 ' + sendDelay + 'ms 后发送（' + branch + '）...');
 

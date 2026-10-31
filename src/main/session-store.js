@@ -241,6 +241,61 @@ function createSessionStore(profileId, storeDir, windowState) {
     } catch (_) { /* ignore */ }
   }
 
+  // ========== 项目级归档（工作区侧栏）==========
+  // 存储位置：STORE_FILE 里的特殊键 __project_archived__
+  // 结构：{ "/path/to/dir": "2026-11-01T..." }（值 = 归档时间 ISO）
+  function readProjectArchived() {
+    const store = readSessionStore();
+    const v = store.__project_archived__;
+    return (v && typeof v === 'object') ? v : {};
+  }
+
+  function setProjectArchived(dir, archived) {
+    if (!dir || typeof dir !== 'string') return { success: false, error: '缺少目录路径' };
+    const store = readSessionStore();
+    const cur = (store.__project_archived__ && typeof store.__project_archived__ === 'object')
+      ? store.__project_archived__ : {};
+    if (archived) {
+      cur[dir] = new Date().toISOString();
+    } else {
+      delete cur[dir];
+    }
+    store.__project_archived__ = cur;
+    writeSessionStore(store);
+    return { success: true };
+  }
+
+  /**
+   * 跨项目聚合：返回所有会话（含完整元信息）+ 当前会话 id + 已归档项目列表。
+   * 供侧栏「工作区」页使用（对齐 Cuckoo-Code 的 listAllSessions）。
+   */
+  function listAllSessions() {
+    const store = readSessionStore();
+    const projectArchived = readProjectArchived();
+    const archivedProjects = Object.keys(projectArchived);
+    const sessions = [];
+    for (const id of Object.keys(store)) {
+      if (id === '__project_archived__') continue;
+      const e = normalizeEntry(store[id]);
+      if (!e) continue;
+      sessions.push({
+        sessionId: id,
+        projectDir: e.projectDir || null,
+        title: e.title || null,
+        createdAt: e.createdAt || null,
+        updatedAt: e.updatedAt || null,
+        archived: !!(e.archivedAt),
+      });
+    }
+    return {
+      success: true,
+      sessions,
+      currentSessionId: state.currentSessionId || null,
+      currentProjectDir: state.selectedProjectDir || null,
+      archivedProjects,
+    };
+  }
+
   /**
    * 归档 / 取消归档某个会话。
    * @param {string} sessionId
@@ -399,6 +454,9 @@ function createSessionStore(profileId, storeDir, windowState) {
     setSessionTitle,
     setSessionTitleById,
     setSessionArchived,
+    setProjectArchived,
+    readProjectArchived,
+    listAllSessions,
     getSessionTitleById,
     syncMainTabTitle,
     extractSessionIdFromUrl,

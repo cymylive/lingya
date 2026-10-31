@@ -224,7 +224,16 @@ function getWindowByProfileId(profileId) {
   return null;
 }
 
+// 主进程退出前清理节流定时器，防止延迟退出 100ms
+function clearBroadcastTimer() {
+  if (__allTodosTimer) {
+    try { clearTimeout(__allTodosTimer); } catch (_) {}
+    __allTodosTimer = null;
+  }
+}
+
 module.exports = {
+  clearBroadcastTimer,
   addWindow,
   setWindowView,
   addAttachedView,

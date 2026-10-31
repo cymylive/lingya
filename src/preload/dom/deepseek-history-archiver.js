@@ -18,7 +18,8 @@
 
 const ROOT_ID = 'lingya-archived-section';
 const STYLE_ID = 'lingya-archived-css';
-const HIDDEN_ATTR = 'data-lingya-archived-hidden';
+// 【封号风险改造 2026-11-01】改用中性属性名，避免页面 querySelectorAll('[data-lingya-*]') 命中
+const HIDDEN_ATTR = 'data-webapp-archived-hidden';
 const STORAGE_KEY = 'lingya-ds-archived-sessions';
 
 // ===== 会话删除时清理 token 缓存 =====
@@ -178,7 +179,7 @@ function injectStyles() {
       color: #ef4444;
     }
     a[${HIDDEN_ATTR}="1"] { display: none !important; }
-    [data-lingya-archived-row="1"] { display: none !important; }
+    [data-webapp-archived-row="1"] { display: none !important; }
   `;
   document.head.appendChild(style);
 }
@@ -438,7 +439,7 @@ function downloadMarkdown(filename, content) {
 // ---------- 应用隐藏状态 ----------
 function applyArchivedState() {
   const archived = readArchived();
-  const ROW_ATTR = 'data-lingya-archived-row';
+  const ROW_ATTR = 'data-webapp-archived-row';
   // 清除所有旧的隐藏标记（anchor + row）
   document.querySelectorAll('a[' + HIDDEN_ATTR + ']').forEach(a => a.removeAttribute(HIDDEN_ATTR));
   document.querySelectorAll('[' + ROW_ATTR + ']').forEach(el => el.removeAttribute(ROW_ATTR));
@@ -541,7 +542,7 @@ function findDropdownMenu() {
 /** 往菜单插入「归档」项 */
 function injectMenuItem(menu, sessionId, title) {
   if (!menu) return;
-  if (menu.querySelector('[data-lingya-menu-item]')) return;   // 已插入
+  if (menu.querySelector('[data-webapp-menu-item]')) return;   // 已插入
   const archived = readArchived();
   const isArchived = !!archived[sessionId];
 
@@ -555,7 +556,7 @@ function injectMenuItem(menu, sessionId, title) {
   }) || options[0];
 
   const clone = tpl.cloneNode(true);
-  clone.setAttribute('data-lingya-menu-item', '1');
+  clone.setAttribute('data-webapp-menu-item', '1');
   clone.style.cursor = 'pointer';
 
   // 改 label
@@ -695,7 +696,7 @@ function stop() {
   const old = document.getElementById(ROOT_ID);
   if (old) old.remove();
   document.querySelectorAll('a[' + HIDDEN_ATTR + ']').forEach(a => a.removeAttribute(HIDDEN_ATTR));
-  document.querySelectorAll('[data-lingya-archived-row]').forEach(el => el.removeAttribute('data-lingya-archived-row'));
+  document.querySelectorAll('[data-webapp-archived-row]').forEach(el => el.removeAttribute('data-webapp-archived-row'));
   // 复位跨模块标志，允许将来重新 start()
   try { if (window) window.__lingyaDeepseekArchiveStarted = false; } catch (_) {}
 }

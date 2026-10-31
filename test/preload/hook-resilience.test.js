@@ -90,11 +90,13 @@ test('deepseek.js 的 hook 源码仍注入 isCompletion（经共享模块）', (
 });
 
 test('hook 注入后派发自检事件', () => {
-  assert.match(providerSrc, /lingya-hook-ready/, 'deepseek hook 应派发 lingya-hook-ready 自检事件');
+  // 【封号风险改造 2026-11-01】事件名改为 EVT_NAMES.HOOK_READY（随机后缀）
+  assert.match(providerSrc, /EVT_NAMES\.HOOK_READY/, 'deepseek hook 应派发 EVT_NAMES.HOOK_READY 自检事件');
 });
 
 test('preload 监听 hook 自检并给出超时警告', () => {
-  assert.match(observerSrc, /lingya-hook-ready/, 'intercept-observer 应监听 hook 自检事件');
+  // 【封号风险改造 2026-11-01】监听改为 evtNames.HOOK_READY（随机后缀）
+  assert.match(observerSrc, /evtNames\.HOOK_READY|evtNames\.HOOK_READY/, 'intercept-observer 应监听 hook 自检事件');
   assert.match(observerSrc, /__lingyaHookReadySeen__/, '应用标记记录自检是否到达');
   assert.match(
     observerSrc,

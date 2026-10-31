@@ -2516,108 +2516,315 @@
 
   // ===== v2 面板（会话/日志/MCP/窗口）=====
 
+  // 【对齐 Cuckoo 2026-11-01】侧栏「工作区」页：按项目分组 + 归档 + 悬停路径卡
   function renderSessionsView(el){
-    el.innerHTML = panel('会话列表',
-      '<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;"><button class="sh-btn" id="sh-ss-refresh">刷新</button><button class="sh-btn" id="sh-ss-init">初始化项目</button><button class="sh-btn" id="sh-ss-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button></div>'+
-      '<div id="sh-ss-body" class="sh-empty">加载中…</div>');
-    function load(){
-      if(!window.shellAPI||!window.shellAPI.listSessions) return;
-      window.shellAPI.listSessions().then(function(r){
-        var box=document.getElementById('sh-ss-body'); if(!box) return;
-        var list=(r&&r.success&&r.sessions)||[];
-        if(!list.length){ box.innerHTML='<div class="sh-empty">暂无会话（先选择项目目录）</div>'; return; }
-        // 分组：未归档 / 已归档
-        var active=[], archived=[];
-        for(var z=0;z<list.length;z++){
-          var zz=list[z];
-          if(typeof zz==='object' && zz.archivedAt) archived.push(zz); else active.push(zz);
-        }
-        function renderOne(it, isArch){
-          var sid=String(typeof it==='string'?it:(it.sessionId||''));
-          var title=typeof it==='object'?(it.title||''):'';
-          var shortId=sid.length>14?(sid.slice(0,14)+'…'):sid;
-          var main=title?(esc(title)+' <span style="color:var(--ck-text-dim);font-size:10px;">('+esc(shortId)+')</span>'):esc(shortId);
-          var archBtn = isArch
-            ? '<span class="sh-ss-unarchive" title="取消归档" style="font-size:11px;color:var(--ck-primary);cursor:pointer;">取消归档</span>'
-            : '<span class="sh-ss-archive" title="归档（从列表隐藏）" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">归档</span>';
-          var op = isArch ? '0.62' : '1';
-          return '<div class="sh-list-item sh-ss-item" data-id="'+esc(sid)+'" data-title="'+esc(title)+'" data-arch="'+(isArch?'1':'0')+'" style="cursor:pointer;display:flex;align-items:center;gap:6px;opacity:'+op+';"><span style="flex:1;font-size:11px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;">'+main+'</span><span class="sh-ss-rename" title="重命名" style="font-size:11px;color:var(--ck-text-dim);cursor:pointer;">改名</span>'+archBtn+'<span class="sh-ss-nav" style="font-size:11px;color:var(--ck-primary);">跳转</span></div>';
-        }
-        var h='';
-        if(!active.length) h+='<div class="sh-empty" style="padding:6px 0;">暂无进行中的会话</div>';
-        else for(var i=0;i<active.length;i++) h+=renderOne(active[i], false);
-        if(archived.length){
-          var KEY='lingya-shell-archived-open';
-          var opened=false; try{ opened=(localStorage.getItem(KEY)==='1'); }catch(_e){}
-          h+='<div class="sh-ss-archhead" data-open="'+(opened?'1':'0')+'" style="display:flex;align-items:center;gap:6px;padding:6px 4px;margin-top:6px;font-size:11.5px;color:var(--ck-text-dim);cursor:pointer;border-radius:6px;background:rgba(255,255,255,0.03);"><span class="sh-ss-archcaret">'+(opened?'▾':'▸')+'</span><span>📦 已归档 ('+archived.length+')</span></div>';
-          h+='<div class="sh-ss-archlist" style="display:'+(opened?'flex':'none')+';flex-direction:column;gap:4px;margin-top:4px;">';
-          for(var m=0;m<archived.length;m++) h+=renderOne(archived[m], true);
-          h+='</div>';
-        }
-        box.innerHTML=h;
-        var items=box.querySelectorAll('.sh-ss-item');
-        for(var j=0;j<items.length;j++){ (function(el){ el.addEventListener('click',function(){
-          if(!window.shellAPI.navigateSession) return;
-          window.shellAPI.navigateSession(el.getAttribute('data-id')).then(function(r2){ if(r2&&r2.success) toast2('已跳转'); else toast2('跳转失败'); })['catch'](function(){});
-        }); })(items[j]); }
-        // 改名按钮
-        var renames=box.querySelectorAll('.sh-ss-rename');
-        for(var k=0;k<renames.length;k++){ (function(btn){ btn.addEventListener('click',function(ev){
-          ev.stopPropagation();
-          var item=btn.closest('.sh-ss-item'); if(!item) return;
-          var sid=item.getAttribute('data-id'); if(!sid) return;
-          var cur=item.getAttribute('data-title')||'';
-          var nn=prompt('重命名对话',cur); if(nn==null) return;
-          nn=String(nn).trim(); if(!nn) return;
-          if(!window.shellAPI.setSessionTitle){ toast2('接口不可用'); return; }
-          window.shellAPI.setSessionTitle(nn,sid).then(function(r3){
-            if(r3&&r3.success){ toast2('已改名'); load(); } else toast2('改名失败');
-          })['catch'](function(){ toast2('改名失败'); });
-        }); })(renames[k]); }
-        // 归档按钮
-        var archs=box.querySelectorAll('.sh-ss-archive');
-        for(var a1=0;a1<archs.length;a1++){ (function(btn){ btn.addEventListener('click',function(ev){
-          ev.stopPropagation();
-          var item=btn.closest('.sh-ss-item'); if(!item) return;
-          var sid=item.getAttribute('data-id'); if(!sid) return;
-          if(!window.shellAPI.setSessionArchived){ toast2('接口不可用'); return; }
-          window.shellAPI.setSessionArchived(sid, true).then(function(rr){
-            if(rr&&rr.success){ toast2('已归档'); load(); } else toast2('归档失败');
-          })['catch'](function(){ toast2('归档失败'); });
-        }); })(archs[a1]); }
-        // 取消归档按钮
-        var unarchs=box.querySelectorAll('.sh-ss-unarchive');
-        for(var a2=0;a2<unarchs.length;a2++){ (function(btn){ btn.addEventListener('click',function(ev){
-          ev.stopPropagation();
-          var item=btn.closest('.sh-ss-item'); if(!item) return;
-          var sid=item.getAttribute('data-id'); if(!sid) return;
-          if(!window.shellAPI.setSessionArchived){ toast2('接口不可用'); return; }
-          window.shellAPI.setSessionArchived(sid, false).then(function(rr){
-            if(rr&&rr.success){ toast2('已取消归档'); load(); } else toast2('操作失败');
-          })['catch'](function(){ toast2('操作失败'); });
-        }); })(unarchs[a2]); }
-        // 折叠头
-        var ach=box.querySelector('.sh-ss-archhead');
-        var acl=box.querySelector('.sh-ss-archlist');
-        if(ach && acl){
-          ach.addEventListener('click', function(ev){
-            ev.stopPropagation();
-            var nowOpen = acl.style.display === 'none';
-            acl.style.display = nowOpen ? 'flex' : 'none';
-            var caret = ach.querySelector('.sh-ss-archcaret');
-            if(caret) caret.textContent = nowOpen ? '▾' : '▸';
-            try { localStorage.setItem('lingya-shell-archived-open', nowOpen ? '1' : '0'); } catch(_e){}
-          });
-        }
+    return __renderCuckooWorkspaces(el);
+  }
+
+  // ===== 工作区视图（按项目分组，对齐 Cuckoo-Code）=====
+  // 辅助：项目路径 → 显示名
+  function wsBaseName(dir){
+    if(!dir) return '未选择项目';
+    var s = String(dir).replace(/[\\/]+$/, '');
+    var seg = s.split(/[\\/]/).pop();
+    return seg || dir;
+  }
+  // 辅助：ISO 时间 → 相对时间
+  function wsRelTime(iso){
+    if(!iso) return '';
+    var t = Date.parse(iso);
+    if(!isFinite(t)) return '';
+    var diff = Date.now() - t;
+    var min = Math.floor(diff / 60000);
+    if(min < 1) return '刚刚';
+    if(min < 60) return min + '分钟前';
+    var hr = Math.floor(min / 60);
+    if(hr < 24) return hr + '小时前';
+    var day = Math.floor(hr / 24);
+    if(day < 30) return day + '天前';
+    var mon = Math.floor(day / 30);
+    if(mon < 12) return mon + '个月前';
+    return Math.floor(mon / 12) + '年前';
+  }
+  // 项目悬停卡片
+  var _wsTipEl = null;
+  function wsShowDirTip(dir, anchor){
+    if(!_wsTipEl){
+      _wsTipEl = document.createElement('div');
+      _wsTipEl.style.cssText = 'position:fixed;z-index:2147483647;background:rgba(12,14,16,0.98);border:1px solid var(--ck-border);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--ck-text);max-width:280px;box-shadow:0 8px 24px rgba(0,0,0,0.5);pointer-events:none;display:none;';
+      document.body.appendChild(_wsTipEl);
+    }
+    _wsTipEl.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">' + esc(wsBaseName(dir)) + '</div>' +
+      '<div style="color:var(--ck-text-dim);font-size:10px;word-break:break-all;margin-bottom:4px;">' + esc(dir) + '</div>' +
+      '<div style="color:var(--ck-text-dim);font-size:10px;" id="ws-tip-time">读取中…</div>';
+    _wsTipEl.style.display = 'block';
+    var rc = anchor.getBoundingClientRect();
+    var left = Math.min(rc.left, window.innerWidth - 290);
+    if(left < 6) left = 6;
+    _wsTipEl.style.left = left + 'px';
+    _wsTipEl.style.top = (rc.bottom + 6) + 'px';
+    if(window.shellAPI && window.shellAPI.getDirInfo){
+      window.shellAPI.getDirInfo(dir).then(function(res){
+        var tEl = document.getElementById('ws-tip-time');
+        if(!tEl) return;
+        if(res && res.success && res.createdAt){
+          var d = new Date(res.createdAt);
+          var p2 = function(n){return n<10?'0'+n:String(n);};
+          tEl.textContent = '创建于 ' + d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日 ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+        } else { tEl.textContent = '（无法读取创建时间）'; }
       })['catch'](function(){});
     }
-    var rf=document.getElementById('sh-ss-refresh'); if(rf) rf.addEventListener('click',load);
-    var airen=document.getElementById('sh-ss-ai-rename');
-    if(airen) airen.addEventListener('click',function(){
-      if(!window.shellAPI||!window.shellAPI.runAction){ toast2('接口不可用'); return; }
-      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r&&r.success?'已请求 AI 重新命名':'失败'); })['catch'](function(){ toast2('失败'); });
+  }
+  function wsHideDirTip(){ if(_wsTipEl) _wsTipEl.style.display = 'none'; }
+
+  // 展开状态（跨渲染保留）
+  var _wsExpandedDirs = new Set();
+  var _wsArchivedProjOpen = false;
+
+  function __doRenderWorkspacesView(el){
+    el.innerHTML = panel('工作区',
+      '<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;">' +
+        '<button class="sh-btn" id="ws-refresh">刷新</button>' +
+        '<button class="sh-btn" id="ws-init">初始化项目</button>' +
+        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button>' +
+      '</div>' +
+      '<div id="ws-list" class="sh-empty">加载中…</div>');
+
+    function load(){
+      var box = document.getElementById('ws-list');
+      if(!box) return;
+      if(!window.shellAPI || !window.shellAPI.listAllSessions){
+        box.innerHTML = '<div class="sh-empty">接口不可用</div>'; return;
+      }
+      window.shellAPI.listAllSessions().then(function(r){
+        if(!r || !r.success){
+          box.innerHTML = '<div class="sh-empty">加载失败：' + esc((r && r.error) || '未知错误') + '</div>'; return;
+        }
+        var sessions = r.sessions || [];
+        var currentSessionId = r.currentSessionId || null;
+        var currentProjectDir = r.currentProjectDir || null;
+        var archivedProjects = r.archivedProjects || [];
+        if(!sessions.length){
+          box.innerHTML = '<div class="sh-empty">暂无会话（先「初始化项目」）</div>'; return;
+        }
+        // 按项目分组（active / archived 分开）
+        var groups = {};
+        for(var i=0;i<sessions.length;i++){
+          var s = sessions[i];
+          var dir = s.projectDir || '';
+          if(!groups[dir]) groups[dir] = { active: [], archived: [] };
+          if(s.archived) groups[dir].archived.push(s); else groups[dir].active.push(s);
+        }
+        // 组内按 updatedAt 倒序
+        var byTimeDesc = function(a, b){
+          var ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+          var tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+          return tb - ta;
+        };
+        for(var d in groups){ groups[d].active.sort(byTimeDesc); groups[d].archived.sort(byTimeDesc); }
+
+        // 渲染会话项
+        function renderSession(s, isArchived){
+          var title = s.title || ('会话 ' + String(s.sessionId).slice(0, 8));
+          var time = wsRelTime(s.updatedAt);
+          var isCur = s.sessionId === currentSessionId;
+          var actBtn = isArchived
+            ? '<span class="ws-act" data-act="unarchive" title="取消归档" style="cursor:pointer;color:var(--ck-primary);font-size:11px;">取消归档</span>'
+            : '<span class="ws-act" data-act="archive" title="归档" style="cursor:pointer;color:var(--ck-text-dim);font-size:11px;">归档</span>';
+          return '<div class="ws-session sh-list-item" data-sid="' + attr(s.sessionId) + '" data-title="' + attr(title) + '" data-arch="' + (isArchived?'1':'0') + '"' +
+            ' style="cursor:pointer;display:flex;align-items:center;gap:6px;opacity:' + (isArchived ? '0.62' : '1') + ';' + (isCur ? 'border-color:var(--ck-primary);' : '') + '">' +
+            '<span style="flex:1;font-size:11.5px;color:var(--ck-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(title) + '</span>' +
+            (time ? '<span style="font-size:10px;color:var(--ck-text-dim);flex-shrink:0;">' + esc(time) + '</span>' : '') +
+            '<span class="ws-act" data-act="rename" title="重命名" style="cursor:pointer;color:var(--ck-text-dim);font-size:11px;">改名</span>' +
+            actBtn +
+          '</div>';
+        }
+
+        // 渲染项目组
+        function renderGroup(dir, g){
+          var expanded = _wsExpandedDirs.has(dir);
+          var groupCls = expanded ? 'ws-group open' : 'ws-group';
+          var name = wsBaseName(dir);
+          var totalActive = g.active.length;
+          var totalArchived = g.archived.length;
+          var h = '<div class="' + groupCls + '" data-dir="' + attr(dir) + '" style="margin-bottom:8px;">';
+          // 组标题（点击展开/收起；hover 显示路径卡；右侧按钮：新建/归档）
+          h += '<div class="ws-group-title" style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:6px;cursor:pointer;user-select:none;">' +
+            '<span class="ws-caret" style="color:var(--ck-text-dim);font-size:10px;width:12px;">' + (expanded ? '▾' : '▸') + '</span>' +
+            '<span style="flex:1;font-size:12px;font-weight:600;color:var(--ck-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + attr(dir) + '">' + esc(name) + '</span>' +
+            '<span style="font-size:10px;color:var(--ck-text-dim);">' + (totalActive + totalArchived) + '</span>' +
+            '<span class="ws-gact" data-gact="new" title="新建对话" style="cursor:pointer;color:var(--ck-primary);font-size:12px;padding:0 4px;">＋</span>' +
+            '<span class="ws-gact" data-gact="archive" title="归档项目" style="cursor:pointer;color:var(--ck-text-dim);font-size:10px;padding:0 4px;">📦</span>' +
+          '</div>';
+          // 会话列表（展开时显示）
+          if(expanded){
+            h += '<div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;padding-left:8px;">';
+            if(!g.active.length){
+              h += '<div class="sh-empty" style="padding:4px 0;font-size:11px;">暂无进行中的会话</div>';
+            } else {
+              for(var i=0;i<g.active.length;i++) h += renderSession(g.active[i], false);
+            }
+            if(g.archived.length){
+              var archKey = 'ws-arch-' + dir;
+              var archOpen = _wsExpandedDirs.has(archKey);
+              h += '<div class="ws-archhead" data-dir="' + attr(dir) + '" style="display:flex;align-items:center;gap:6px;padding:4px 6px;margin-top:4px;font-size:11px;color:var(--ck-text-dim);cursor:pointer;border-radius:6px;background:rgba(255,255,255,0.02);">' +
+                '<span class="ws-archcaret">' + (archOpen ? '▾' : '▸') + '</span>' +
+                '<span>📦 已归档 (' + g.archived.length + ')</span>' +
+              '</div>';
+              h += '<div class="ws-archlist" style="display:' + (archOpen?'flex':'none') + ';flex-direction:column;gap:4px;margin-top:2px;padding-left:8px;">';
+              for(var j=0;j<g.archived.length;j++) h += renderSession(g.archived[j], true);
+              h += '</div>';
+            }
+            h += '</div>';
+          }
+          h += '</div>';
+          return h;
+        }
+
+        // 主列表：按 currentProjectDir 置顶，其他按名称
+        var activeDirs = Object.keys(groups).filter(function(d){ return archivedProjects.indexOf(d) === -1; });
+        activeDirs.sort(function(a, b){
+          if(a === currentProjectDir) return -1;
+          if(b === currentProjectDir) return 1;
+          return wsBaseName(a).localeCompare(wsBaseName(b));
+        });
+        var html = '';
+        for(var di=0;di<activeDirs.length;di++){
+          html += renderGroup(activeDirs[di], groups[activeDirs[di]]);
+        }
+        // 已归档项目折叠区
+        var archivedDirs = Object.keys(groups).filter(function(d){ return archivedProjects.indexOf(d) !== -1; });
+        if(archivedDirs.length){
+          var apOpen = _wsArchivedProjOpen;
+          html += '<div class="ws-archproj" style="margin-top:8px;border-top:1px solid var(--ck-border);padding-top:8px;">' +
+            '<div class="ws-archproj-title" style="display:flex;align-items:center;gap:6px;padding:6px 8px;font-size:11.5px;color:var(--ck-text-dim);cursor:pointer;">' +
+              '<span>' + (apOpen ? '▾' : '▸') + '</span>' +
+              '<span>📦 已归档项目 (' + archivedDirs.length + ')</span>' +
+            '</div>' +
+            '<div class="ws-archproj-list" style="display:' + (apOpen?'block':'none') + ';">';
+          for(var ai=0;ai<archivedDirs.length;ai++){
+            var ad = archivedDirs[ai];
+            var g2 = groups[ad];
+            var totalCount = g2.active.length + g2.archived.length;
+            html += '<div class="ws-archproj-row" data-dir="' + attr(ad) + '" style="display:flex;align-items:center;gap:6px;padding:6px 8px;font-size:11px;color:var(--ck-text);background:rgba(255,255,255,0.02);border-radius:6px;margin-bottom:3px;opacity:0.7;">' +
+              '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + attr(ad) + '">' + esc(wsBaseName(ad)) + '</span>' +
+              '<span style="font-size:10px;color:var(--ck-text-dim);">' + totalCount + '</span>' +
+              '<span class="ws-gact" data-gact="unarchive" style="cursor:pointer;color:var(--ck-primary);font-size:10px;">取消归档</span>' +
+            '</div>';
+          }
+          html += '</div></div>';
+        }
+        box.innerHTML = html;
+
+        // ===== 绑定事件 =====
+        // 组展开/收起
+        box.querySelectorAll('.ws-group-title').forEach(function(el2){
+          el2.addEventListener('click', function(ev){
+            if(ev.target.closest('.ws-gact')) return; // 组内按钮不触发折叠
+            var grp = el2.closest('.ws-group');
+            var dir = grp.getAttribute('data-dir');
+            if(_wsExpandedDirs.has(dir)) _wsExpandedDirs.delete(dir); else _wsExpandedDirs.add(dir);
+            load();
+          });
+          // 【已移除】悬停显示路径卡（用户认为太丑，删除）
+        });
+        // 组按钮：新建 / 归档
+        box.querySelectorAll('.ws-gact').forEach(function(btn){
+          btn.addEventListener('click', function(ev){
+            ev.stopPropagation();
+            var grp = btn.closest('[data-dir]');
+            var dir = grp ? grp.getAttribute('data-dir') : null;
+            var act = btn.getAttribute('data-gact');
+            if(!dir) return;
+            if(act === 'new'){
+              if(!window.shellAPI || !window.shellAPI.newConversationForProject){ toast2('接口不可用'); return; }
+              window.shellAPI.newConversationForProject(dir).then(function(r3){
+                toast2(r3 && r3.success ? '已在「' + wsBaseName(dir) + '」开新对话' : '失败');
+                if(r3 && r3.success) load();
+              })['catch'](function(){ toast2('失败'); });
+            } else if(act === 'archive'){
+              if(!window.shellAPI || !window.shellAPI.setProjectArchived){ toast2('接口不可用'); return; }
+              window.shellAPI.setProjectArchived(dir, true).then(function(r4){
+                toast2(r4 && r4.success ? '已归档项目' : '失败');
+                if(r4 && r4.success) load();
+              })['catch'](function(){ toast2('失败'); });
+            } else if(act === 'unarchive'){
+              if(!window.shellAPI || !window.shellAPI.setProjectArchived){ toast2('接口不可用'); return; }
+              window.shellAPI.setProjectArchived(dir, false).then(function(r5){
+                toast2(r5 && r5.success ? '已取消归档' : '失败');
+                if(r5 && r5.success) load();
+              })['catch'](function(){ toast2('失败'); });
+            }
+          });
+        });
+        // 归档会话折叠
+        box.querySelectorAll('.ws-archhead').forEach(function(hd){
+          hd.addEventListener('click', function(){
+            var dir = hd.getAttribute('data-dir');
+            var key = 'ws-arch-' + dir;
+            if(_wsExpandedDirs.has(key)) _wsExpandedDirs.delete(key); else _wsExpandedDirs.add(key);
+            load();
+          });
+        });
+        // 已归档项目折叠
+        var apt = box.querySelector('.ws-archproj-title');
+        if(apt){ apt.addEventListener('click', function(){ _wsArchivedProjOpen = !_wsArchivedProjOpen; load(); }); }
+        // 会话项：点击导航 + 按钮
+        box.querySelectorAll('.ws-session').forEach(function(item){
+          item.addEventListener('click', function(ev){
+            var sid = item.getAttribute('data-sid');
+            var title = item.getAttribute('data-title') || '';
+            // 按钮优先处理
+            var actEl = ev.target.closest('.ws-act');
+            if(actEl){
+              ev.stopPropagation();
+              var act = actEl.getAttribute('data-act');
+              if(act === 'rename'){
+                var nn = prompt('重命名对话', title);
+                if(nn == null) return;
+                nn = String(nn).trim();
+                if(!nn) return;
+                if(!window.shellAPI || !window.shellAPI.setSessionTitle){ toast2('接口不可用'); return; }
+                window.shellAPI.setSessionTitle(nn, sid).then(function(r6){
+                  toast2(r6 && r6.success ? '已改名' : '改名失败');
+                  if(r6 && r6.success) load();
+                })['catch'](function(){ toast2('改名失败'); });
+              } else if(act === 'archive'){
+                window.shellAPI.setSessionArchived(sid, true).then(function(r7){
+                  toast2(r7 && r7.success ? '已归档' : '失败');
+                  if(r7 && r7.success) load();
+                })['catch'](function(){ toast2('失败'); });
+              } else if(act === 'unarchive'){
+                window.shellAPI.setSessionArchived(sid, false).then(function(r8){
+                  toast2(r8 && r8.success ? '已取消归档' : '失败');
+                  if(r8 && r8.success) load();
+                })['catch'](function(){ toast2('失败'); });
+              }
+              return;
+            }
+            // 点击会话项 → 导航
+            if(!sid) return;
+            if(!window.shellAPI || !window.shellAPI.navigateSession){ toast2('接口不可用'); return; }
+            window.shellAPI.navigateSession(sid).then(function(r9){
+              if(!r9 || !r9.success) toast2('跳转失败');
+            })['catch'](function(){ toast2('跳转失败'); });
+          });
+        });
+      })['catch'](function(err){
+        if(box) box.innerHTML = '<div class="sh-empty">加载失败：' + esc(err && err.message) + '</div>';
+      });
+    }
+    var rf = document.getElementById('ws-refresh');
+    if(rf) rf.addEventListener('click', load);
+    var ini = document.getElementById('ws-init');
+    if(ini) ini.addEventListener('click', function(){
+      if(window.shellAPI && window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){});
     });
-    var ini=document.getElementById('sh-ss-init'); if(ini) ini.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){}); });
+    var ar = document.getElementById('ws-ai-rename');
+    if(ar) ar.addEventListener('click', function(){
+      if(!window.shellAPI || !window.shellAPI.runAction){ toast2('接口不可用'); return; }
+      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 重新命名' : '失败'); })['catch'](function(){ toast2('失败'); });
+    });
     load();
   }
 
@@ -3357,6 +3564,31 @@
     window.__lyRenderTabsDropdown = renderTabsDropdown;
   })();
 
+  // ===== 底部状态栏订阅（对齐 Cuckoo 2026-11-01）=====
+  (function initStatusBar() {
+    var ctxEl = document.getElementById('sb-context');
+    var tpsEl = document.getElementById('sb-tps');
+    if (!ctxEl || !tpsEl || !window.shellAPI) return;
+    function formatTokenCount(n) {
+      if (!isFinite(n) || n < 0) return '0';
+      if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
+      if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+      return String(Math.round(n));
+    }
+    if (window.shellAPI.onTokenUpdated) {
+      window.shellAPI.onTokenUpdated(function (d) {
+        if (d && typeof d.context === 'number') {
+          ctxEl.textContent = formatTokenCount(d.context);
+        }
+      });
+    }
+    if (window.shellAPI.onTpsUpdated) {
+      window.shellAPI.onTpsUpdated(function (d) {
+        tpsEl.textContent = (d && d.tps) ? String(d.tps) : '--';
+      });
+    }
+  })();
+
   // ===== 分屏横向滚动条 =====
   (function initSplitScrollbar() {
     var bar = document.getElementById('lingya-split-scrollbar');
@@ -3553,5 +3785,319 @@
     setTimeout(refresh, 350);
     window.__lyRefreshVScrollbar = refresh;
   })();
+
+  // ============================================================
+  // 【工作区视图 v2 · 完全复刻 Cuckoo-Code 2026-11-01】
+  // 结构对齐 Cuckoo workspaces.ts：
+  //   .ck-ws-group > .ck-ws-group-title + .ck-ws-items
+  //   .ck-ws-item  > .ck-ws-expand + .ck-ws-name + .ck-ws-time + .ck-ws-acts
+  // 悬停时：时间隐藏、操作按钮出现（CSS 控制）
+  // 组悬停时：新建/归档按钮出现（CSS 控制）
+  // 所有 SVG 图标与 Cuckoo 完全一致
+  // ============================================================
+
+  // 辅助：项目路径 → 显示名
+  function wsBaseName(dir){
+    if(!dir) return '未命名';
+    var parts = String(dir).replace(/[\\/]+$/, '').split(/[\\/]/);
+    return parts[parts.length - 1] || dir;
+  }
+  // 辅助：ISO → 相对时间
+  function wsRelTime(iso){
+    if(!iso) return '';
+    var t = Date.parse(iso);
+    if(!isFinite(t)) return '';
+    var diff = Date.now() - t;
+    var min = Math.floor(diff / 60000);
+    if(min < 1) return '刚刚';
+    if(min < 60) return min + '分钟前';
+    var hr = Math.floor(min / 60);
+    if(hr < 24) return hr + '小时前';
+    var day = Math.floor(hr / 24);
+    if(day < 30) return day + '天前';
+    var mon = Math.floor(day / 30);
+    if(mon < 12) return mon + '个月前';
+    return Math.floor(mon / 12) + '年前';
+  }
+  // 辅助：YYYY年M月D日 HH:mm
+  function wsFmtCreatedAt(iso){
+    if(!iso) return '';
+    var d = new Date(iso);
+    if(!isFinite(d.getTime())) return '';
+    var p2 = function(n){return n<10?'0'+n:String(n);};
+    return d.getFullYear() + '年' + (d.getMonth()+1) + '月' + d.getDate() + '日 ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  // 辅助：组内最新时间
+  function wsLatestTs(list){
+    var max = 0;
+    for(var i=0;i<list.length;i++){
+      var t = list[i].updatedAt ? Date.parse(list[i].updatedAt) : 0;
+      if(isFinite(t) && t > max) max = t;
+    }
+    return max;
+  }
+  function wsByTimeDesc(a, b){
+    var ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    var tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return tb - ta;
+  }
+
+  // 图标（与 Cuckoo 完全一致）
+  var WS_ICON = {
+    caret: '<svg class="ck-ws-caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>',
+    folder: '<svg class="ck-ws-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+    archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><path d="M10 12h4"/></svg>',
+    unarchive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v5h5"/><path d="M3.5 12a8.5 8.5 0 1 0 2-5.4L3 9"/></svg>',
+    rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>'
+  };
+
+  // ================ 主视图 ================
+  var _wsExpandedDirs = {};
+  var _wsArchivedOpen = {};
+  var _wsArchivedProjOpen = false;
+  var _wsTipEl = null;
+
+  function wsShowDirTip(dir, anchor){
+    if(!_wsTipEl){
+      _wsTipEl = document.createElement('div');
+      _wsTipEl.className = 'ck-ws-tip';
+      document.body.appendChild(_wsTipEl);
+    }
+    _wsTipEl.innerHTML =
+      '<div class="ck-tip-name">' + esc(wsBaseName(dir)) + '</div>' +
+      '<div class="ck-tip-path">' + esc(dir) + '</div>' +
+      '<div class="ck-tip-time" id="ws-tip-time">读取中…</div>';
+    _wsTipEl.style.display = 'block';
+    var rc = anchor.getBoundingClientRect();
+    var top = rc.bottom + 6;
+    var sbw = 320;
+    var maxLeft = sbw - _wsTipEl.offsetWidth - 6;
+    var left = Math.min(rc.left, Math.max(6, maxLeft));
+    if(left < 6) left = 6;
+    _wsTipEl.style.top = top + 'px';
+    _wsTipEl.style.left = left + 'px';
+    if(window.shellAPI && window.shellAPI.getDirInfo){
+      window.shellAPI.getDirInfo(dir).then(function(res){
+        var tEl = document.getElementById('ws-tip-time');
+        if(!tEl) return;
+        if(res && res.success && res.createdAt) tEl.textContent = '创建于 ' + wsFmtCreatedAt(res.createdAt);
+        else tEl.textContent = '（无法读取创建时间）';
+      })['catch'](function(){
+        var tEl = document.getElementById('ws-tip-time');
+        if(tEl) tEl.textContent = '（无法读取创建时间）';
+      });
+    }
+  }
+  function wsHideDirTip(){
+    if(_wsTipEl) _wsTipEl.style.display = 'none';
+  }
+
+  // 渲染单个会话项（Cuckoo renderItem 复刻）
+  function wsRenderItem(s, currentSessionId, archived, hasChildren, sub){
+    var label = s.title || s.sessionId;
+    var time = wsRelTime(s.updatedAt);
+    var isCur = s.sessionId === currentSessionId;
+    var renameBtn = '<span class="ck-ws-act" data-act="rename" title="重命名">' + WS_ICON.rename + '</span>';
+    var act = archived
+      ? '<span class="ck-ws-act" data-act="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
+      : (sub ? '' : '<span class="ck-ws-act" data-act="archive" title="归档">' + WS_ICON.archive + '</span>');
+    var open = hasChildren && _wsExpandedDirs['node:' + s.sessionId];
+    var caret = '<span class="ck-ws-expand' + (open ? ' open' : '') + (hasChildren ? '' : ' ck-ws-expand-hidden') + '">' + WS_ICON.expand + '</span>';
+    return '<div class="ck-ws-item' + (isCur ? ' current' : '') + (sub ? ' sub' : '') + '"' +
+      ' data-session-id="' + attr(s.sessionId) + '"' +
+      ' data-name="' + attr(label) + '"' +
+      ' title="' + attr(s.sessionId) + '">' +
+      caret +
+      '<span class="ck-ws-name">' + esc(label) + '</span>' +
+      (time ? '<span class="ck-ws-time">' + esc(time) + '</span>' : '') +
+      '<span class="ck-ws-acts">' + renameBtn + act + '</span>' +
+      '</div>';
+  }
+
+  // 渲染一个项目组（Cuckoo renderGroup 复刻）
+  function wsRenderGroup(dir, g, currentDir, currentSessionId, archivedProjects){
+    g.active.sort(wsByTimeDesc);
+    g.archived.sort(wsByTimeDesc);
+    var isOpen = (dir === currentDir) || !!_wsExpandedDirs['dir:' + dir];
+    var isArchOpen = !!_wsArchivedOpen[dir];
+    var gactHtml = '<span class="ck-ws-gacts">' +
+      '<span class="ck-ws-gact" data-gact="new" title="用该项目新建对话">' + WS_ICON.plus + '</span>' +
+      (archivedProjects.indexOf(dir) !== -1
+        ? '<span class="ck-ws-gact" data-gact="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
+        : '<span class="ck-ws-gact" data-gact="archive" title="归档项目">' + WS_ICON.archive + '</span>') +
+      '</span>';
+    var html = '<div class="ck-ws-group' + (isOpen ? ' open' : '') + '" data-dir="' + attr(dir) + '">' +
+      '<div class="ck-ws-group-title" title="' + attr(dir) + '">' +
+        WS_ICON.caret +
+        WS_ICON.folder +
+        '<span class="ck-ws-gname">' + esc(wsBaseName(dir)) + '</span>' +
+        gactHtml +
+      '</div>' +
+      '<div class="ck-ws-items">';
+    for(var i=0;i<g.active.length;i++) html += wsRenderItem(g.active[i], currentSessionId, false, false, false);
+    if(g.archived.length){
+      html += '<div class="ck-ws-archived' + (isArchOpen ? ' open' : '') + '" data-dir="' + attr(dir) + '">' +
+        '<div class="ck-ws-archived-title">已归档 ' + g.archived.length + ' 对话</div>' +
+        '<div class="ck-ws-archived-items">';
+      for(var j=0;j<g.archived.length;j++) html += wsRenderItem(g.archived[j], currentSessionId, true, false, false);
+      html += '</div></div>';
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function __renderCuckooWorkspaces(el){
+    el.innerHTML = panel('工作区',
+      '<div class="ck-actions" style="margin-bottom:6px;">' +
+        '<button class="sh-btn" id="ws-refresh">刷新</button>' +
+        '<button class="sh-btn" id="ws-init">初始化项目</button>' +
+        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button>' +
+      '</div>' +
+      '<div class="ck-list" id="ws-list"><div class="ck-list-empty">加载中…</div></div>');
+
+    function load(){
+      var listEl = document.getElementById('ws-list');
+      if(!listEl) return;
+      if(!window.shellAPI || !window.shellAPI.listAllSessions){
+        listEl.innerHTML = '<div class="ck-list-empty">接口不可用</div>'; return;
+      }
+      window.shellAPI.listAllSessions().then(function(r){
+        if(!r || !r.success){
+          listEl.innerHTML = '<div class="ck-list-empty">加载失败</div>'; return;
+        }
+        var sessions = r.sessions || [];
+        var currentSessionId = r.currentSessionId || null;
+        var currentDir = r.currentProjectDir || null;
+        var archivedProjects = r.archivedProjects || [];
+        if(!sessions.length){
+          listEl.innerHTML = '<div class="ck-list-empty">暂无会话（先「初始化项目」）</div>'; return;
+        }
+        // 按项目分组
+        var groups = {};
+        for(var i=0;i<sessions.length;i++){
+          var s = sessions[i];
+          var dir = s.projectDir || '';
+          if(!groups[dir]) groups[dir] = { active: [], archived: [] };
+          if(s.archived) groups[dir].archived.push(s); else groups[dir].active.push(s);
+        }
+        // 按最新活动时间排序
+        var dirs = Object.keys(groups).sort(function(a, b){
+          return wsLatestTs(groups[b].active.concat(groups[b].archived)) - wsLatestTs(groups[a].active.concat(groups[a].archived));
+        });
+        var activeDirs = dirs.filter(function(d){ return archivedProjects.indexOf(d) === -1; });
+        var archivedDirs = dirs.filter(function(d){ return archivedProjects.indexOf(d) !== -1; });
+        var html = '';
+        for(var di=0;di<activeDirs.length;di++) html += wsRenderGroup(activeDirs[di], groups[activeDirs[di]], currentDir, currentSessionId, archivedProjects);
+        if(archivedDirs.length){
+          html += '<div class="ck-ws-archived-projects' + (_wsArchivedProjOpen ? ' open' : '') + '">' +
+            '<div class="ck-ws-archived-projects-title">已归档 ' + archivedDirs.length + ' 项目</div>' +
+            '<div class="ck-ws-archived-projects-items">';
+          for(var ai=0;ai<archivedDirs.length;ai++) html += wsRenderGroup(archivedDirs[ai], groups[archivedDirs[ai]], currentDir, currentSessionId, archivedProjects);
+          html += '</div></div>';
+        }
+        listEl.innerHTML = html;
+        bindWorkspaceEvents(listEl, load);
+      })['catch'](function(){
+        if(listEl) listEl.innerHTML = '<div class="ck-list-empty">加载失败</div>';
+      });
+    }
+
+    var rf = document.getElementById('ws-refresh');
+    if(rf) rf.addEventListener('click', load);
+    var ini = document.getElementById('ws-init');
+    if(ini) ini.addEventListener('click', function(){
+      if(window.shellAPI && window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){});
+    });
+    var ar = document.getElementById('ws-ai-rename');
+    if(ar) ar.addEventListener('click', function(){
+      if(!window.shellAPI || !window.shellAPI.runAction){ toast2('接口不可用'); return; }
+      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 重新命名' : '失败'); })['catch'](function(){ toast2('失败'); });
+    });
+    load();
+  }
+
+  // 绑定事件（Cuckoo bindWorkspaceEvents 复刻）
+  function bindWorkspaceEvents(listEl, reload){
+    // 组展开/收起
+    listEl.querySelectorAll('.ck-ws-group-title').forEach(function(el){
+      el.addEventListener('click', function(ev){
+        if(ev.target.closest('.ck-ws-gact')) return;
+        var grp = el.closest('.ck-ws-group');
+        var dir = grp.getAttribute('data-dir');
+        var key = 'dir:' + dir;
+        if(_wsExpandedDirs[key]) delete _wsExpandedDirs[key]; else _wsExpandedDirs[key] = true;
+        reload();
+      });
+      // 【已移除】鼠标悬停显示路径提示卡片（用户认为太丑，删除）。
+    });
+    // 已归档对话展开/收起
+    listEl.querySelectorAll('.ck-ws-archived-title').forEach(function(el){
+      el.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var box = el.closest('.ck-ws-archived');
+        var dir = box.getAttribute('data-dir');
+        if(_wsArchivedOpen[dir]) delete _wsArchivedOpen[dir]; else _wsArchivedOpen[dir] = true;
+        reload();
+      });
+    });
+    // 已归档项目展开/收起
+    var apt = listEl.querySelector('.ck-ws-archived-projects-title');
+    if(apt) apt.addEventListener('click', function(){
+      _wsArchivedProjOpen = !_wsArchivedProjOpen;
+      reload();
+    });
+    // 组按钮：新建 / 归档 / 取消归档
+    listEl.querySelectorAll('.ck-ws-gact').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var grp = btn.closest('.ck-ws-group');
+        var dir = grp.getAttribute('data-dir');
+        var act = btn.getAttribute('data-gact');
+        if(!dir) return;
+        if(act === 'new'){
+          if(!window.shellAPI || !window.shellAPI.newConversationForProject) return;
+          window.shellAPI.newConversationForProject(dir).then(function(){ reload(); })['catch'](function(){});
+        } else if(act === 'archive'){
+          if(!window.shellAPI || !window.shellAPI.setProjectArchived) return;
+          window.shellAPI.setProjectArchived(dir, true).then(function(){ reload(); })['catch'](function(){});
+        } else if(act === 'unarchive'){
+          if(!window.shellAPI || !window.shellAPI.setProjectArchived) return;
+          window.shellAPI.setProjectArchived(dir, false).then(function(){ reload(); })['catch'](function(){});
+        }
+      });
+    });
+    // 会话项：点击导航 + 操作按钮
+    listEl.querySelectorAll('.ck-ws-item').forEach(function(item){
+      item.addEventListener('click', function(ev){
+        var id = item.getAttribute('data-session-id');
+        var name = item.getAttribute('data-name') || '';
+        var actEl = ev.target.closest('.ck-ws-act');
+        if(actEl){
+          ev.stopPropagation();
+          var act = actEl.getAttribute('data-act');
+          if(act === 'rename'){
+            if(!id || !window.shellAPI || !window.shellAPI.setSessionTitle) return;
+            var cur = (name === id) ? '' : name;
+            var nn = prompt('重命名对话', cur);
+            if(nn == null) return;
+            nn = String(nn).trim();
+            if(!nn) return;
+            window.shellAPI.setSessionTitle(nn, id).then(function(){ reload(); })['catch'](function(){});
+          } else if(act === 'archive'){
+            if(!id || !window.shellAPI || !window.shellAPI.setSessionArchived) return;
+            window.shellAPI.setSessionArchived(id, true).then(function(){ reload(); })['catch'](function(){});
+          } else if(act === 'unarchive'){
+            if(!id || !window.shellAPI || !window.shellAPI.setSessionArchived) return;
+            window.shellAPI.setSessionArchived(id, false).then(function(){ reload(); })['catch'](function(){});
+          }
+          return;
+        }
+        if(!id || !window.shellAPI || !window.shellAPI.navigateSession) return;
+        window.shellAPI.navigateSession(id)['catch'](function(){});
+      });
+    });
+  }
 
 })();

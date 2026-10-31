@@ -17,6 +17,11 @@ const sse = require('../providers/sse/deepseek-parse');
 /** webContents.id -> { handler, listener, providerId } */
 const tracked = new Map();
 
+/** 【临时校准】requestId -> { startAt, baselineAcc, totalBytes } */
+const CALIB_META = new Map();
+/** 【临时校准】上一轮结束时的 accumulatedTokens（作为下一轮 baseline） */
+let _lastKnownAcc = 0;
+
 /** webContents -> { onDestroyed, onNavigate }，用于重新 attach 时摘掉旧监听器 */
 const lifecycleHandlers = new WeakMap();
 
@@ -92,7 +97,6 @@ async function handleLoadingFinished(dbg, providerId, params, handler) {
     const result = await dbg.sendCommand('Network.getResponseBody', { requestId });
     bodyText = decodeBody(result);
   } catch (err) {
-    // 超长 body / 请求已被回收 / 跨进程读取失败 —— 都走中断路径
     log('getResponseBody 失败，按中断处理:', err && err.message);
     if (typeof handler.onInterrupted === 'function') {
       handler.onInterrupted('body_unavailable: ' + (err && err.message));
@@ -109,6 +113,26 @@ async function handleLoadingFinished(dbg, providerId, params, handler) {
     }
     return;
   }
+  // 【对齐 Cuckoo】用真实 token 数据计算并覆盖 TPS
+  try {
+    const meta = CALIB_META.get(requestId);
+    const elapsedSec = meta ? (Date.now() - meta.startAt) / 1000 : 0;
+    const realAcc = parsed && parsed.tokenUsage && typeof parsed.tokenUsage.accumulatedTokens === 'number'
+      ? parsed.tokenUsage.accumulatedTokens : -1;
+    const baseline = meta ? meta.baselineAcc : 0;
+    const outTokens = realAcc >= 0 ? Math.max(0, realAcc - baseline) : -1;
+    if (realAcc >= 0) _lastKnownAcc = realAcc;
+    CALIB_META.delete(requestId);
+    // 【对齐 Cuckoo】把真实 TPS 塞进 parsed，供前端覆盖估算值
+    // 首轮冷启动（baseline=0 且 outTokens 巨大）视为异常，不覆盖
+    if (outTokens > 0 && outTokens < 5000 && elapsedSec > 0.3) {
+      const realTps = outTokens / elapsedSec;
+      if (realTps > 0 && realTps < 1000) {
+        parsed._realTps = Math.round(realTps * 10) / 10;
+        log('[CALIB] realTps=' + parsed._realTps + ' 覆盖估算值');
+      }
+    }
+  } catch (_) {}
   try { handler.onResponse(parsed); } catch (err) {
     log('onResponse 回调抛异常:', err && err.message);
   }
@@ -169,6 +193,12 @@ function attach(wc, providerId, handlers) {
   // 记录「哪些 requestId 是我们关心的」。只有 isCompletion 命中的请求才抓 body，
   // 否则每一条静态资源请求都会触发 getResponseBody，白白拖慢页面。
   const watched = new Set();
+  // 【对齐 Cuckoo 2026-11-01】流式字节累计：用于 TPS 测速（fetch 流）
+  // requestId -> 已接收字节数（从 dataReceived 累计）
+  const streamBytes = new Map();
+  // 节流：上一次派发时间（避免每帧都 IPC）
+  let lastStreamAt = 0;
+  const STREAM_THROTTLE_MS = 100;
 
 
   const listener = (event, method, params) => {
@@ -182,6 +212,13 @@ function attach(wc, providerId, handlers) {
         const m = params && params.request && params.request.method;
         if (!sse.isCompletion(url, m)) return;
         watched.add(params.requestId);
+        streamBytes.set(params.requestId, 0);
+        // 【临时校准】记录本轮起始时刻和 baseline
+        CALIB_META.set(params.requestId, {
+          startAt: Date.now(),
+          baselineAcc: _lastKnownAcc,
+          totalBytes: 0,
+        });
         // 派发开始事件
         if (typeof handler.onStart === 'function') {
           try { handler.onStart(); } catch (e) { log('onStart 抛异常:', e && e.message); }
@@ -207,9 +244,36 @@ function attach(wc, providerId, handlers) {
         return;
       }
 
+      // 【对齐 Cuckoo 2026-11-01】DeepSeek 用 fetch + ReadableStream（非原生 EventSource），
+      // 因此 eventSourceMessageReceived 不触发。改用 Network.dataReceived 捕获网络包长度，
+      // 累加后按「5 字节 ≈ 1 token」估算 accumulatedTokens，供 TPS 测速器计算。
+      if (method === 'Network.dataReceived') {
+        if (!watched.has(params.requestId)) return;
+        const prev = streamBytes.get(params.requestId) || 0;
+        const total = prev + (params.dataLength || 0);
+        streamBytes.set(params.requestId, total);
+
+        const now = Date.now();
+        if (now - lastStreamAt >= STREAM_THROTTLE_MS) {
+          lastStreamAt = now;
+          if (typeof handler.onStream === 'function') {
+            try { handler.onStream({ bytes: total, requestId: params.requestId }); }
+            catch (e) { log('onStream 抛异常:', e && e.message); }
+          }
+        }
+        return;
+      }
+
       if (method === 'Network.loadingFinished') {
         if (!watched.has(params.requestId)) return;
         watched.delete(params.requestId);
+        const totalBytes = streamBytes.get(params.requestId) || 0;
+        streamBytes.delete(params.requestId);
+        // 请求结束：最后派发一次（finished=true），让测速器冻结最终值
+        if (typeof handler.onStream === 'function' && totalBytes > 0) {
+          try { handler.onStream({ bytes: totalBytes, requestId: params.requestId, finished: true }); }
+          catch (e) { log('onStream(final) 抛异常:', e && e.message); }
+        }
         handleLoadingFinished(wc.debugger, providerId, params, handler);
         return;
       }

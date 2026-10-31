@@ -9,6 +9,23 @@ console.log('[LingYa] Preload script 开始执行');
 require('./api');
 
 const { webFrame } = require('electron');
+
+// ========== 主世界指纹修正（最早注入，先于 hook/页面脚本）==========
+// 【封号风险改造 2026-11-01】移植自 Cuckoo-Code 0.8.19：
+//  - Electron 默认 navigator.userAgentData.brands 缺少 "Google Chrome" 品牌
+//  - navigator.webdriver 可能为 true（或可被反爬库识别）
+// 两者都是 Electron 应用默认特征，会被 DeepSeek 等平台的风控识别。
+// 必须在页面脚本执行前（preload 阶段）注入到主世界，否则会被页面抢先读到默认值。
+try {
+  const { buildUserAgentDataFix } = require('../main/user-agent');
+  webFrame.executeJavaScript(buildUserAgentDataFix()).then(
+    () => console.log('[LingYa] 主世界指纹修正已注入'),
+    (err) => console.warn('[LingYa] 主世界指纹修正注入失败:', err && err.message)
+  );
+} catch (err) {
+  console.warn('[LingYa] 主世界指纹修正异常:', err && err.message);
+}
+
 const ui = require('./overlay/ui');
 const projectDir = require('./overlay/project-dir');
 const bindEvents = require('./overlay/events');
@@ -29,10 +46,13 @@ console.log('[LingYa] 平台=' + (currentProvider ? currentProvider.id : 'unknow
 //     不碰页面 JS 环境。回复在流结束后由主进程解析并推事件回来。
 //  B. 主世界 hook（旧路径）—— 注入覆盖 window.fetch / XHR。
 //
-// 【为什么优先 A】hook 会改写页面的 window.fetch 和 XMLHttpRequest.prototype，
-// 页面内任意脚本执行 fetch.toString() 即可发现被劫持。CDP 不触碰页面运行时。
-// 【为什么能等价替换】hook 也只在 extractor.finished 时 dispatch 一次全文
-// （见 deepseek.js observeBody），本就不做流式增量处理，CDP 拿全量时机相同。
+// 【为什么优先 A（CDP）】CDP 是进程外监听，页面 JS 完全感知不到：
+//  - Hook 会改写 window.fetch / XMLHttpRequest.prototype，页面一行
+//    fetch.toString() 就能发现被劫持（即使伪造 native code 也会暴露，
+//    见 deepseek.js 的「移除 spoofNative」决策）
+//  - CDP 在独立进程监听 Network 域，不触碰页面任何 JS API
+//  - 页面内任何反作弊脚本都无法通过 JS 层面探测到 CDP 存在
+// 结论：CDP 的检测成本 >> Hook，是更隐蔽的方案。
 if (useIntercept) {
   const useCdp = currentProvider && currentProvider.useCdp === true;
   if (useCdp) {
@@ -58,7 +78,9 @@ if (useIntercept) {
     // preload 早于页面脚本执行，此处 executeJavaScript 落在主世界。
     try {
       if (typeof currentProvider.getHookSource === 'function') {
-        webFrame.executeJavaScript(currentProvider.getHookSource()).then(
+        // 【封号风险改造 2026-11-01】传入随机后缀事件名（防页面脚本预埋监听器）
+        const evtNames = require('./dom/evt-names');
+        webFrame.executeJavaScript(currentProvider.getHookSource(evtNames)).then(
           () => console.log('[LingYa] 主世界拦截器注入成功 (' + currentProvider.id + ')'),
           (err) => console.error('[LingYa] 主世界拦截器注入失败:', err && err.message)
         );
@@ -170,6 +192,15 @@ function init() {
     console.error('[LingYa][致命] 拦截器启动失败，Agent 循环不可用:', err);
   }
 
+  // 【封号风险改造 2026-11-01】启动限流退避引擎（紧跟拦截器，早于任何发送）
+  // 监听 lingya-ai-error(reason=rate_limit) 事件，遇到 429/40029/限流文案时进入
+  // 2min → 5min → 15min → 30min 指数退避，期间丢弃所有自动发送。
+  try {
+    require('./dom/rate-limit-retry').startRateLimitEngine();
+  } catch (err) {
+    console.error('[LingYa] 限流退避引擎启动失败:', err && err.message);
+  }
+
   // ===== 第 2 层：UI 初始化（失败只影响显示）=====
   try {
     ui.injectCSS();
@@ -265,39 +296,20 @@ function init() {
       }
     } catch (_) {}
 
-    // DeepSeek 侧栏「对话归档」注入（仅 DeepSeek 平台）
-    // 优先走插件（plugins/deepseek-archive）；插件未启用时才用内置版本，避免重复注入。
+    // 【对齐 Cuckoo 2026-11-01】DeepSeek 侧栏「对话归档」注入已停用。
+    // 原因：往 DeepSeek 原生侧栏插入「📦 已归档」分组，会破坏页面原貌，
+    // 且增加 DOM 指纹（与 Cuckoo-Code 不碰页面 DOM 的做法冲突）。
+    // 保留 archiver 模块本身（deleteSessionSilent 用于轮转/迁移时删旧会话，不注入任何 UI）。
+    // 此处调 stop() 清理：万一老版本或插件已启动过 archiver，重启时把注入的 DOM 清掉。
     try {
       if (currentProvider && currentProvider.id === 'deepseek') {
-        var __needBuiltinArchiver = true;
         try {
-          if (window.electronAPI && window.electronAPI.pluginList) {
-            window.electronAPI.pluginList().then(function (pr) {
-              var plugins = (pr && pr.success && pr.plugins) || [];
-              var archPlugin = null;
-              for (var i = 0; i < plugins.length; i++) {
-                if (plugins[i].id === 'deepseek-archive') { archPlugin = plugins[i]; break; }
-              }
-              if (archPlugin && archPlugin.enabled) {
-                console.log('[LingYa] 归档由插件提供，跳过内置版本');
-                return;
-              }
-              // 插件未启用 → 用内置
-              try { require('./dom/deepseek-history-archiver').start(); } catch (e) {
-                console.error('[LingYa] 启动内置归档失败:', e && e.message);
-              }
-            })['catch'](function () {
-              try { require('./dom/deepseek-history-archiver').start(); } catch (_) {}
-            });
-            __needBuiltinArchiver = false;
-          }
-        } catch (_) {}
-        if (__needBuiltinArchiver) {
-          require('./dom/deepseek-history-archiver').start();
-        }
+          const archiver = require('./dom/deepseek-history-archiver');
+          if (archiver && typeof archiver.stop === 'function') archiver.stop();
+        } catch (e) { /* 模块未加载时忽略 */ }
       }
     } catch (e) {
-      console.error('[LingYa] 启动 DeepSeek 归档注入失败:', e.message);
+      console.error('[LingYa] 归档清理失败:', e.message);
     }
 
     // 会话标题更新 → 调平台 API 改名 + DOM 双写（含 MutationObserver 守护）

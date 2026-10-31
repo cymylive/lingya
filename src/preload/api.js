@@ -4,6 +4,58 @@
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ========== localStorage 键名混淆（封号风险改造 2026-11-01）==========
+// 背景：LingYa 在 AI 页面（如 chat.deepseek.com）的 localStorage 里存了 30 个
+// 'lingya-*' 配置键（theme / global-send-delay-min / 等）。DeepSeek 前端一行
+//   Object.keys(localStorage).filter(k => k.startsWith('lingya'))
+// 就能发现工具身份，比 DOM 痕迹更直接（localStorage 无隔离世界概念，主世界可读）。
+//
+// 方案：劫持隔离世界的 localStorage API，自动把 'lingya-' 前缀映射为
+// 中性前缀 'webapp-'。同时启动时一次性迁移旧键 → 新键 → 删旧键。
+//
+// 为什么用固定前缀 'webapp-' 而非动态后缀：
+//   1) 配置必须跨 preload 生命周期稳定（动态后缀会导致下次启动读不到上次配置）
+//   2) 'webapp-' 是中性名字，不暴露 LingYa 身份
+//   3) 与 DeepSeek 自己的 key 不冲突（DeepSeek 用 'oai/...' 或纯英文）
+//
+// 壳窗口（file:// origin）localStorage 独立，DeepSeek 无法访问，无需处理。
+(() => {
+  const LEGACY = 'lingya-';
+  const NEUTRAL = 'webapp-';
+  const mapKey = (k) => (typeof k === 'string' && k.indexOf(LEGACY) === 0)
+    ? NEUTRAL + k.slice(LEGACY.length)
+    : k;
+
+  // 一次性迁移：把所有 'lingya-*' 键复制到新键后删除旧键。
+  // 幂等：无旧键时什么都不做。失败静默（隐私模式等）。
+  try {
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (typeof k === 'string' && k.indexOf(LEGACY) === 0) stale.push(k);
+    }
+    for (const oldKey of stale) {
+      const newKey = mapKey(oldKey);
+      // 新键已存在时以新键为准（说明之前迁移过），不覆盖
+      if (localStorage.getItem(newKey) === null) {
+        const v = localStorage.getItem(oldKey);
+        if (v !== null) localStorage.setItem(newKey, v);
+      }
+      localStorage.removeItem(oldKey);
+    }
+    if (stale.length) console.log('[LingYa] localStorage 键名迁移完成: ' + stale.length + ' 个');
+  } catch (_) { /* 隐私模式/禁用存储 */ }
+
+  // 劫持 getItem / setItem / removeItem。只改 'lingya-*' 键，其他键（含 DeepSeek 自己的）原样透传。
+  const LS = window.localStorage;
+  const origGet = LS.getItem.bind(LS);
+  const origSet = LS.setItem.bind(LS);
+  const origRemove = LS.removeItem.bind(LS);
+  LS.getItem = function (k) { return origGet(mapKey(k)); };
+  LS.setItem = function (k, v) { return origSet(mapKey(k), v); };
+  LS.removeItem = function (k) { return origRemove(mapKey(k)); };
+})();
+
 // ========== 暴露给渲染进程的 API ==========
 // 尝试 contextBridge，如果失败则直接挂载到 window（作为 fallback）
 let electronAPI = {
@@ -11,18 +63,15 @@ let electronAPI = {
     return ipcRenderer.invoke('execute-command', { command, id });
   },
   initProject: (projectDir, isCompaction) => {
+    // 【对齐 Cuckoo 2026-11-01】移除自动重命名调用。
+    // 原实现：初始化项目后自动触发 AI 重命名（调 DeepSeek 侧栏重命名 API），
+    // 这是自动化脚本操作服务的强特征，违反用户协议第 3.2 条。
+    // Cuckoo 的行为：只有用户手动点「AI 重命名」按钮才触发。
+    // 用户如需自动，可在「设置」面板手动开启（已通过 lingya-auto-rename-enabled 控制）。
     return ipcRenderer.invoke('init-project', {
       skipPrompt: false,
       projectDir: projectDir || null,
       isCompaction: !!isCompaction,
-    }).then((r) => {
-      // 初始化成功 → 安排一次自动重命名（等 AI 处理完初始化回复后触发）
-      try {
-        if (r && r.success) {
-          require('./dom/auto-rename').scheduleAfterInit({ projectDir, isCompaction });
-        }
-      } catch (e) { console.error('[LingYa] 安排自动重命名失败:', e.message); }
-      return r;
     });
   },
   updateProjectDir: () => {
@@ -387,6 +436,10 @@ let electronAPI = {
   },
   // ========== 跨窗口 Token 轮转 API ==========
   // 主进程只做「选目标 + 中继 + 超时」，数据与删会话都由窗口侧负责。
+  // 【对齐 Cuckoo 2026-11-01】状态栏数据推送
+  updateTps: (text) => ipcRenderer.invoke('update-tps', { text }),
+  updateTokenUsage: (context, cumulative, windowCumulative, todayCumulative, daily) =>
+    ipcRenderer.invoke('update-token-usage', { context, cumulative, windowCumulative, todayCumulative, daily }),
   rotationGetConfig: () => ipcRenderer.invoke('rotation-get-config'),
   rotationSetConfig: (patch) => ipcRenderer.invoke('rotation-set-config', { patch: patch || {} }),
   rotationListCandidates: () => ipcRenderer.invoke('rotation-list-candidates'),
@@ -458,21 +511,33 @@ let electronAPI = {
 //   - 主世界侧无任何已知合法消费者
 const MAIN_WORLD_BLOCKED = ['executeCommand', 'executeJs', 'executeTool'];
 
+// 【修复 2026-11-01】mainWorldAPI 必须在 try 块外声明，否则块外访问会 ReferenceError
+const mainWorldAPI = {};
+for (const k of Object.keys(electronAPI)) {
+  if (MAIN_WORLD_BLOCKED.indexOf(k) === -1) mainWorldAPI[k] = electronAPI[k];
+}
 try {
-  const mainWorldAPI = {};
-  for (const k of Object.keys(electronAPI)) {
-    if (MAIN_WORLD_BLOCKED.indexOf(k) === -1) mainWorldAPI[k] = electronAPI[k];
-  }
   contextBridge.exposeInMainWorld('electronAPI', mainWorldAPI);
 } catch (err) {
   console.error('[LingYa] contextBridge.exposeInMainWorld 失败:', err);
 }
 
-// 无论 contextBridge 是否成功，都直接挂载到 window 作为备选
+// 【封号风险改造 2026-11-01 · 修正】关键区分两个世界：
+//   1. contextBridge.exposeInMainWorld('electronAPI', mainWorldAPI) —— 注入【主世界】，
+//      页面脚本 window.electronAPI 读到的是白名单版（无 executeCommand/executeJs/executeTool）✅ 安全
+//   2. 本行 window.electronAPI = electronAPI —— 赋值给【隔离世界的 window】，
+//      preload 内部（tool-executor.js 等）通过 window.electronAPI.executeJs/executeTool 调用。
+//      **隔离世界对页面不可见**（contextIsolation:true），完整对象安全。
+// 【上轮改造的错误】曾把本行改成 mainWorldAPI，导致 tool-executor 拿不到 executeJs，
+// 工具执行全部失败（window.electronAPI.executeJs is not a function）。现已还原。
 window.electronAPI = electronAPI;
 
 // 【安全清理】0.6.30 之前的版本把含 Bearer token 的完整请求头明文写进
 // localStorage['lingya-ds-headers']（页面任意脚本可读走 token）。
 // 现版本已改为仅主世界内存 + CustomEvent 传递，不再落存储。
 // 但老用户 profile 里仍残留该键，每次 preload 启动清一次。
+// 注：localStorage 劫持会把 'lingya-' 前缀映射为 'webapp-'，所以这里
+// removeItem('lingya-ds-headers') 实际删除的是 'webapp-ds-headers'。
+// 启动迁移逻辑已把 lingya-ds-headers 迁成 webapp-ds-headers（如果值不为 null），
+// 此 removeItem 就是兜底清理那个迁移出来的 webapp 键。
 try { localStorage.removeItem('lingya-ds-headers'); } catch (_) { /* 隐私模式/禁用存储 */ }

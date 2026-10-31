@@ -7,14 +7,116 @@ const { OVERLAY_HTML, OVERLAY_CSS } = require('./template');
 const { TOOL_CARD_CSS } = require('./tool-card');
 const { getProviderByUrl } = require('../../../src/providers');
 const state = require('../dom/state');
+const domPrefix = require('./dom-prefix');
+
+// ========== 前缀劫持（封号风险改造 2026-11-01）==========
+// 说明：覆盖层所有元素用 'lingya-*' 前缀注入页面，页面脚本一行 querySelectorAll 即暴露身份。
+// 完整迁移到独立 BrowserWindow 成本过高；本模块在注入时把前缀替换为随机串（如 'lx_a3k2_'），
+// 并劫持 document.getElementById / querySelectorAll，让所有调用方（overlay 内 172 处
+// getElementById、3 处 querySelectorAll('.lingya-*')）无感切换。
+//
+// 只在注入前劫持一次（幂等），不影响 AI 页面原生 DOM。
+let __domPrefixHijacked = false;
+function installDomPrefixHijack() {
+  if (__domPrefixHijacked) return;
+  __domPrefixHijacked = true;
+  const LEGACY = domPrefix.LEGACY;
+  const PREFIX = domPrefix.PREFIX;
+
+  // selector 字符串里的 'lingya-' 替换为新前缀（仅当含该子串才替换，性能几乎无损）
+  function patchSel(s) {
+    if (typeof s !== 'string' || s.indexOf(LEGACY) === -1) return s;
+    return s.split(LEGACY).join(PREFIX);
+  }
+
+  // getElementById：'lingya-xxx' 自动映射为新 id
+  const origGetById = Document.prototype.getElementById;
+  Document.prototype.getElementById = function(id) {
+    if (typeof id === 'string' && id.indexOf(LEGACY) === 0) {
+      return origGetById.call(this, domPrefix.mapId(id));
+    }
+    return origGetById.call(this, id);
+  };
+
+  // querySelector / querySelectorAll：Document + Element 四把
+  // 让 overlay 内部 '.lingya-tab' 等选择器仍能命中新前缀 DOM；
+  // 页面侧同样调用 '.lingya-*' 时被替换成 '.lx_xxx_*'，DOM 里没有 → 返回空（这正是我们要的）
+  const origDocQS = Document.prototype.querySelector;
+  const origElQS = Element.prototype.querySelector;
+  const origDocQSA = Document.prototype.querySelectorAll;
+  const origElQSA = Element.prototype.querySelectorAll;
+  Document.prototype.querySelector = function(sel) { return origDocQS.call(this, patchSel(sel)); };
+  Element.prototype.querySelector = function(sel) { return origElQS.call(this, patchSel(sel)); };
+  Document.prototype.querySelectorAll = function(sel) { return origDocQSA.call(this, patchSel(sel)); };
+  Element.prototype.querySelectorAll = function(sel) { return origElQSA.call(this, patchSel(sel)); };
+
+  // 劫持 classList：'lingya-hidden' 等 class 操作也映射到新前缀
+  // 【关键修复 2026-11-01】否则 el.classList.contains('lingya-hidden') 永远 false，
+  // 导致 showOverlay/hideOverlay 判断错乱（点击悬浮球无反应）。
+  const origClassAdd = DOMTokenList.prototype.add;
+  const origClassRemove = DOMTokenList.prototype.remove;
+  const origClassToggle = DOMTokenList.prototype.toggle;
+  const origClassContains = DOMTokenList.prototype.contains;
+  const origClassReplace = DOMTokenList.prototype.replace;
+  DOMTokenList.prototype.add = function() {
+    const args = Array.prototype.map.call(arguments, patchSel);
+    return origClassAdd.apply(this, args);
+  };
+  DOMTokenList.prototype.remove = function() {
+    const args = Array.prototype.map.call(arguments, patchSel);
+    return origClassRemove.apply(this, args);
+  };
+  DOMTokenList.prototype.toggle = function(token, force) {
+    return origClassToggle.call(this, patchSel(token), force);
+  };
+  DOMTokenList.prototype.contains = function(token) {
+    return origClassContains.call(this, patchSel(token));
+  };
+  DOMTokenList.prototype.replace = function(oldToken, newToken) {
+    return origClassReplace.call(this, patchSel(oldToken), patchSel(newToken));
+  };
+
+  // 劫持 innerHTML setter：所有 overlay 动态生成的 HTML 字符串（如
+  //   list.innerHTML = '<div class="lingya-session-empty">暂无</div>'
+  // ）里的 'lingya-' 自动替换为新前缀。否则页面 querySelectorAll('[class*="lingya-"]')
+  // 仍能命中这 26 处动态生成的元素。
+  //
+  // 【安全边界】只在「目标元素位于 overlay 根容器内」时才替换 —— 避免误伤 AI 页面
+  // 自身的 innerHTML 渲染（DeepSeek 前端框架大量使用 innerHTML，虽极少含 'lingya-'
+  // 字串，但绝不赌）。overlay 根容器用 Object.getOwnPropertyDescriptor 判断不依赖 DOM 顺序。
+  const ROOT_ID = domPrefix.mapId('lingya-root');
+  const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+  if (innerHTMLDesc && innerHTMLDesc.set) {
+    Object.defineProperty(Element.prototype, 'innerHTML', {
+      get() { return innerHTMLDesc.get.call(this); },
+      set(v) {
+        if (typeof v === 'string' && v.indexOf(LEGACY) !== -1) {
+          // 判断 this 是否在 overlay 内：this 自身是 root，或最近祖先是 root
+          try {
+            if (this.id === ROOT_ID || (typeof this.closest === 'function' && this.closest('#' + ROOT_ID))) {
+              v = patchSel(v);
+            }
+          } catch (_) { /* closest 失败时保守不替换 */ }
+        }
+        return innerHTMLDesc.set.call(this, v);
+      },
+      configurable: true,
+      enumerable: innerHTMLDesc.enumerable,
+    });
+  }
+}
 
 // ========== 注入样式 ==========
 /**
  * 注入覆盖层 CSS 样式到页面头部
  */
 function injectCSS() {
+  // 【封号风险改造 2026-11-01】先装前缀劫持，再注入（顺序不能反）
+  installDomPrefixHijack();
+
+  // 把 CSS 里的 'lingya-' 前缀替换为随机前缀，使页面无法通过 .lingya-* 选择器命中
   const style = document.createElement('style');
-  style.textContent = OVERLAY_CSS;
+  style.textContent = domPrefix.replacePrefix(OVERLAY_CSS);
   document.head.appendChild(style);
 
   // 工具调用卡片样式（独立模块）。
@@ -23,8 +125,9 @@ function injectCSS() {
   // 在深色 AI 页面上几乎不可见，用户误判为「工具没执行」。
   if (!document.getElementById('lingya-tool-card-style')) {
     const ts = document.createElement('style');
-    ts.id = 'lingya-tool-card-style';
-    ts.textContent = TOOL_CARD_CSS;
+    // 【封号风险改造 2026-11-01】id 也要换成随机前缀，否则下一次 getElementById（已被劫持）找不到它
+    ts.id = domPrefix.mapId('lingya-tool-card-style');
+    ts.textContent = domPrefix.replacePrefix(TOOL_CARD_CSS);
     document.head.appendChild(ts);
   }
 }
@@ -35,8 +138,12 @@ function injectCSS() {
  * 创建 lingya-root 容器并填充 OVERLAY_HTML 内容
  */
 function injectOverlay() {
+  // 【封号风险改造 2026-11-01】把 'lingya-' 前缀替换为随机前缀（如 'lx_a3k2_'），
+  // 页面 querySelectorAll('[id^="lingya-"]') / ('.lingya-*') 均返回 0，等同独立窗口效果。
+  // document.getElementById 已被劫持，所有 'lingya-xxx' 查询自动映射到新 id。
   const container = document.createElement('div');
-  container.id = 'lingya-root';
+  container.id = domPrefix.mapId('lingya-root');
+  // innerHTML 已被劫持，'lingya-' 前缀会自动替换为新前缀
   container.innerHTML = OVERLAY_HTML;
   document.body.appendChild(container);
   applyFloatSettings(); // 注入后应用显隐设置
@@ -100,8 +207,9 @@ function showToast(text, duration = 2200) {
   let toast = document.getElementById('lingya-toast');
   if (!toast) {
     toast = document.createElement('div');
-    toast.id = 'lingya-toast';
-    toast.className = 'lingya-toast';
+    // 【封号风险改造 2026-11-01】动态创建元素 id/class 也换前缀，防页面 querySelectorAll('[id^="lingya-"]') 命中
+    toast.id = domPrefix.mapId('lingya-toast');
+    toast.className = domPrefix.replacePrefix('lingya-toast');
     document.body.appendChild(toast);
   }
   toast.textContent = text;
@@ -133,7 +241,8 @@ function showConfirmDialog(text, options) {
 
   return new Promise((resolve) => {
     const dialog = document.createElement('div');
-    dialog.id = 'lingya-confirm-dialog';
+    // 【封号风险改造 2026-11-01】动态 id 也走前缀替换
+    dialog.id = domPrefix.mapId('lingya-confirm-dialog');
     dialog.style.cssText = `
       position: fixed; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
@@ -158,6 +267,7 @@ function showConfirmDialog(text, options) {
           margin-right: 10px; transition: all 0.2s;
         ">${cancelText}</button>`
       : '';
+    // innerHTML 已被劫持，'lingya-' 前缀自动替换
     dialog.innerHTML = `
       <div style="margin-bottom:16px;white-space:pre-wrap;word-break:break-word;">${text}</div>
       <div>${cancelBtnHtml}
@@ -645,9 +755,15 @@ function forceShowOverlay() {
   const overlay = document.getElementById('lingya-overlay');
   if (overlay) {
     overlay.classList.remove('lingya-hidden');
-    overlay.style.transform = 'translateX(0)';
-    overlay.style.opacity = '1';
-    overlay.style.pointerEvents = 'auto';
+    // 【BUG 修复 2026-11-01】原实现用 inline style 强制 opacity:1/pointer-events:auto，
+    // inline 优先级高于 CSS 类的 .lingya-hidden{opacity:0}，导致「点击悬浮球切换显隐」时
+    // class 切换了但视觉上没反应（opacity 一直是 1，或 panel 始终被挡住）。
+    // 修复：清除 inline style 残留，让 CSS 类完全控制显隐。
+    try {
+      overlay.style.transform = '';
+      overlay.style.opacity = '';
+      overlay.style.pointerEvents = '';
+    } catch (_) {}
   }
 }
 

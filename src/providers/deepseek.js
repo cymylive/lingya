@@ -30,9 +30,16 @@ function isLingyaInjected(el) {
 // ========== 网络拦截器（内联，注入主世界执行）==========
 // 说明：hook 源码直接内联在 provider 中，保证 provider 单文件自包含，
 // 便于自定义 provider 上传与整体移除。函数体必须自包含（不引用模块级变量）。
-function deepseekHookInstaller(SSE) {
+function deepseekHookInstaller(SSE, EVT_NAMES) {
   var MARKER = Symbol.for('l.hook.ds');
   if (window[MARKER]) return;
+  // 【封号风险改造 2026-11-01】事件名改为每会话随机后缀，防止页面脚本预埋监听器。
+  // EVT_NAMES 由 getHookSource(evtNames) 通过 JSON.stringify 注入，缺省回退到明文名（向后兼容）。
+  EVT_NAMES = EVT_NAMES || {
+    AI_START: 'lingya-ai-start', AI_RESPONSE: 'lingya-ai-response',
+    AI_ERROR: 'lingya-ai-error', USER_MESSAGE: 'lingya-user-message',
+    DS_HEADERS: 'lingya-ds-headers', HOOK_READY: 'lingya-hook-ready',
+  };
 
   // 共享 SSE 解析实现（由 getHookSource 注入对象字面量）。
   // 同一份代码同时供页面 hook 和主进程 CDP 解析使用，避免两处逻辑漂移。
@@ -49,9 +56,28 @@ function deepseekHookInstaller(SSE) {
   // 性质重于「自动化操作」。因此移除伪装，hook 本身保持原样。
   window[MARKER] = true;
 
+  // 【对齐 Cuckoo 2026-11-01】流式增量派发（供 TPS 测速器实时算速度）
+  // 节流 80ms，避免高频派发占用主线程
+  var lastStreamAt = 0;
+  function dispatchStream(think, text, finished, acc) {
+    var now = Date.now();
+    if (!finished && now - lastStreamAt < 80) return;
+    lastStreamAt = now;
+    try {
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_STREAM, {
+        detail: {
+          think: think || '',
+          text: text || '',
+          finished: !!finished,
+          accumulatedTokens: typeof acc === 'number' ? acc : null
+        }
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
   function dispatch(text, finished, tokenUsage, msgIds, interrupted, thinking) {
     try {
-      window.dispatchEvent(new CustomEvent('lingya-ai-response', {
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_RESPONSE, {
         detail: {
           text: text || '',
           finished: !!finished,
@@ -68,7 +94,17 @@ function deepseekHookInstaller(SSE) {
 
   function dispatchStart() {
     try {
-      window.dispatchEvent(new CustomEvent('lingya-ai-start'));
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_START));
+    } catch (e) { /* ignore */ }
+  }
+
+  // 【封号风险改造 2026-11-01】派发错误事件（限流识别触发）
+  // detail: { reason: 'rate_limit' | 'http' | 'biz', httpStatus?, bizCode?, retryAfter? }
+  function dispatchError(detail) {
+    try {
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.AI_ERROR, {
+        detail: Object.assign({ at: Date.now() }, detail || {})
+      }));
     } catch (e) { /* ignore */ }
   }
 
@@ -87,6 +123,8 @@ function deepseekHookInstaller(SSE) {
         var parsed = parseBlock(frames[i]);
         if (parsed) extractor.consume(parsed);
       }
+      // 流式增量派发（每 80ms 节流一次）
+      dispatchStream(extractor.thinking, extractor.text, extractor.finished, extractor.tokenUsage ? extractor.tokenUsage.accumulatedTokens : null);
       if (extractor.finished && !dispatched) {
         dispatched = true;
         dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted, extractor.thinking);
@@ -121,6 +159,7 @@ function deepseekHookInstaller(SSE) {
           var parsed = parseBlock(frames[i]);
           if (parsed) extractor.consume(parsed);
         }
+        dispatchStream(extractor.thinking, extractor.text, extractor.finished, extractor.tokenUsage ? extractor.tokenUsage.accumulatedTokens : null);
         if (extractor.finished && !dispatched) {
           dispatched = true;
           dispatch(extractor.text, true, extractor.tokenUsage, extractor.msgIds, extractor.interrupted, extractor.thinking);
@@ -146,7 +185,7 @@ function deepseekHookInstaller(SSE) {
         else if (typeof obj.content === 'string') text = obj.content;
       }
       if (typeof text !== 'string' || !text.trim()) return;
-      window.dispatchEvent(new CustomEvent('lingya-user-message', {
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.USER_MESSAGE, {
         detail: { text: text.trim(), at: Date.now() }
       }));
     } catch (e) { /* ignore */ }
@@ -165,13 +204,12 @@ function deepseekHookInstaller(SSE) {
         }
       }
       if (!lower['authorization']) return;
-      // 【2026-10-30】不再写 localStorage['lingya-ds-headers']。
-      // 原实现把含 Bearer token 的完整请求头明文落在页面 storage 里：
-      //   ① 页面任意脚本可读走 token（安全问题）
-      //   ② 键名带 lingya- 前缀，一行 Object.keys(localStorage) 即暴露工具身份
-      // 改为：主世界内存 + 派发事件给隔离世界，token 不落任何持久化存储。
-      window.__lingyaDsHeaders = lower;
-      window.dispatchEvent(new CustomEvent('lingya-ds-headers', { detail: lower }));
+      // 【封号风险改造 2026-11-01】原实现把含 Bearer token 的完整请求头挂到
+      // window.__lingyaDsHeaders（主世界 window 属性），页面任意脚本一行
+      // window.__lingyaDsHeaders 即可读走 token —— 比 localStorage 更易读。
+      // 本行是纯泄漏（compaction.js 从 CustomEvent detail 读取），直接删除。
+      // 仅通过 CustomEvent 派发给隔离世界。
+      window.dispatchEvent(new CustomEvent(EVT_NAMES.DS_HEADERS, { detail: lower }));
     } catch (e) { /* ignore */ }
   }
 
@@ -187,7 +225,7 @@ function deepseekHookInstaller(SSE) {
   [0, 400, 1200].forEach(function (delay) {
     setTimeout(function () {
       try {
-        window.dispatchEvent(new CustomEvent('lingya-hook-ready', {
+        window.dispatchEvent(new CustomEvent(EVT_NAMES.HOOK_READY, {
           detail: { provider: 'deepseek', at: Date.now() }
         }));
       } catch (e) { /* ignore */ }
@@ -224,9 +262,52 @@ function deepseekHookInstaller(SSE) {
       if (!isCompletion(url, method)) return p;
       dispatchStart();
       return p.then(function (response) {
+        // 【封号风险改造 2026-11-01】识别限流响应，派发 lingya-ai-error 事件。
+        // 触发场景（DeepSeek 三种形态）：
+        //  1) HTTP 429 —— 请求频率过高
+        //  2) 非流式 JSON 响应 code/biz_code = 40029 —— "请求过于频繁"
+        //  3) 响应体含"频率过快/稍后再试"等中文文案
         try {
-          if (response && response.body) observeBody(response.clone().body);
-        } catch (e) { /* ignore */ }
+          if (response && response.ok === false) {
+            var is429 = response.status === 429;
+            if (is429) {
+              dispatchError({ reason: 'rate_limit', httpStatus: 429, retryAfter: response.headers && response.headers.get && response.headers.get('retry-after') });
+            } else {
+              response.clone().text().then(function (body) {
+                var low = String(body || '').toLowerCase();
+                var hit = low.indexOf('too frequently') !== -1 || low.indexOf('rate limit') !== -1 ||
+                  low.indexOf('too many requests') !== -1 || low.indexOf('too fast') !== -1 ||
+                  low.indexOf('过于频繁') !== -1 || low.indexOf('频率过快') !== -1 ||
+                  low.indexOf('稍后再试') !== -1 || low.indexOf('稍后再发') !== -1;
+                dispatchError({ reason: hit ? 'rate_limit' : 'http', httpStatus: response.status });
+              }).catch(function () {
+                dispatchError({ reason: 'http', httpStatus: response.status });
+              });
+            }
+          } else if (response && response.body) {
+            var ct = '';
+            try { ct = (response.headers && response.headers.get && response.headers.get('content-type')) || ''; } catch (_e) {}
+            if (ct.indexOf('json') !== -1) {
+              // 非流式 JSON 响应：可能是限流等业务错误
+              response.clone().json().then(function (j) {
+                var gcode = j && j.code;
+                var biz = j && j.data && j.data.biz_code;
+                var code = (biz !== undefined && biz !== null && biz !== 0) ? biz : gcode;
+                var msgText = String((j && j.msg) || '') + ' ' + String((j && j.data && j.data.biz_msg) || '');
+                var lowMsg = msgText.toLowerCase();
+                var byMsg = lowMsg.indexOf('too frequently') !== -1 || lowMsg.indexOf('rate limit') !== -1 ||
+                  lowMsg.indexOf('过于频繁') !== -1 || lowMsg.indexOf('频率过快') !== -1 ||
+                  lowMsg.indexOf('稍后再试') !== -1 || lowMsg.indexOf('稍后再发') !== -1;
+                if ((code !== undefined && code !== null && code !== 0) || byMsg) {
+                  var isRL = code === 40029 || byMsg;
+                  dispatchError({ reason: isRL ? 'rate_limit' : 'biz', bizCode: code });
+                }
+              }).catch(function () { /* 非 JSON，忽略 */ });
+            } else {
+              observeBody(response.clone().body);
+            }
+          }
+        } catch (_e) { /* ignore */ }
         return response;
       });
     };
@@ -428,6 +509,12 @@ module.exports = {
   // 是否支持 CDP 捕获（替代页面内 hook）。
   // 置 true 后 preload 走 cdp-bridge + 主进程 cdp-capture 路径，
   // 不再向页面主世界注入 fetch/XHR hook。
+  // 【2026-11-01 保留 CDP 决策】CDP 是进程外监听，不触碰页面 JS 环境：
+  //  - 页面内任何脚本（含 DeepSeek 自己的反作弊脚本）都无法通过 fetch.toString()
+  //    / XMLHttpRequest.toString() 感知到被 hook（CDP 未改写这些 API）
+  //  - Hook 模式会改写 window.fetch / XMLHttpRequest.prototype，反而更容易被发现
+  //  - CDP 连接在独立进程，与页面 JS 隔离，检测成本远高于 hook
+  // 结论：继续用 CDP，不切回 Hook。
   useCdp: true,
 
   // 判断元素是否可见（offsetWidth/offsetHeight > 0）
@@ -441,8 +528,21 @@ module.exports = {
   // SSE 解析四个函数来自 src/providers/sse/deepseek-parse.js，用 toString()
   // 序列化后以对象字面量传给 installer。同一份实现同时供主进程 CDP 解析使用，
   // 避免两条路径逻辑漂移。
-  getHookSource() {
+  getHookSource(evtNames) {
     const sse = require('./sse/deepseek-parse');
+    // 【封号风险改造 2026-11-01】只挑 6 个事件名字段，避免把 DEFAULTS 明文也带进主世界。
+    // 整个 hook 源码包进 IIFE —— 否则 'var EVT_NAMES = ...' 会成为 window.EVT_NAMES，
+    // 页面脚本可直接读到当前会话的真实随机事件名，混淆形同虚设。
+    const src = evtNames || {};
+    const N = {
+      AI_START: src.AI_START || 'lingya-ai-start',
+      AI_RESPONSE: src.AI_RESPONSE || 'lingya-ai-response',
+      AI_STREAM: src.AI_STREAM || 'lingya-ai-stream',
+      AI_ERROR: src.AI_ERROR || 'lingya-ai-error',
+      USER_MESSAGE: src.USER_MESSAGE || 'lingya-user-message',
+      DS_HEADERS: src.DS_HEADERS || 'lingya-ds-headers',
+      HOOK_READY: src.HOOK_READY || 'lingya-hook-ready',
+    };
     const shared = [
       'var __SSE__ = {',
       'isCompletion: ' + sse.isCompletion.toString() + ',',
@@ -451,6 +551,8 @@ module.exports = {
       'createExtractor: ' + sse.createExtractor.toString(),
       '};',
     ].join('\n');
-    return shared + '\n(' + deepseekHookInstaller.toString() + ')(__SSE__);';
+    return '(function(){' + shared +
+      '(' + deepseekHookInstaller.toString() + ')(__SSE__, ' + JSON.stringify(N) + ');' +
+      '})();';
   },
 };

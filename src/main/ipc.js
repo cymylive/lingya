@@ -707,6 +707,88 @@ function registerIpcHandlers() {
     }
   });
 
+  // ========== 底部状态栏数据（对齐 Cuckoo-Code）==========
+  // AI 页面推送 token / TPS → 主进程转发给壳页面
+  ipcMain.handle('update-token-usage', async (event, payload) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (ctx && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
+        try { ctx.rawWin.webContents.send('shell-token-updated', payload || {}); } catch (_) {}
+      }
+    } catch (_) {}
+    return { success: true };
+  });
+  ipcMain.handle('update-tps', async (event, { text } = {}) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (ctx && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
+        try { ctx.rawWin.webContents.send('shell-tps-updated', { tps: String(text || '') }); } catch (_) {}
+      }
+    } catch (_) {}
+    return { success: true };
+  });
+
+  // ========== 侧栏「工作区」页（对齐 Cuckoo-Code）==========
+  // 跨项目聚合所有会话 + 当前会话 + 已归档项目
+  ipcMain.handle('list-all-sessions', async (event) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.listAllSessions !== 'function') {
+      return { success: false, error: '会话存储未就绪', sessions: [], currentSessionId: null, archivedProjects: [] };
+    }
+    return store.listAllSessions();
+  });
+
+  // 归档 / 取消归档项目
+  ipcMain.handle('set-project-archived', async (event, { dir, archived } = {}) => {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    const store = ctx ? ctx.sessionStore : null;
+    if (!store || typeof store.setProjectArchived !== 'function') {
+      return { success: false, error: '会话存储未就绪' };
+    }
+    return store.setProjectArchived(dir, !!archived);
+  });
+
+  // 读取目录信息（创建时间，用于工作区悬停卡片）
+  ipcMain.handle('get-dir-info', async (event, { dir } = {}) => {
+    if (!dir || typeof dir !== 'string') return { success: false, error: '缺少目录路径' };
+    try {
+      const fs = require('fs');
+      const st = fs.statSync(dir);
+      if (!st.isDirectory()) return { success: false, error: '不是目录' };
+      return { success: true, createdAt: st.birthtime.toISOString() };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 在指定项目下新建对话（切换项目目录 + 导航到首页）
+  ipcMain.handle('new-conversation-for-project', async (event, { projectDir } = {}) => {
+    if (!projectDir || typeof projectDir !== 'string') return { success: false, error: '缺少项目目录' };
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '窗口上下文不存在' };
+    const store = ctx.sessionStore;
+    if (store && store.state) {
+      store.state.selectedProjectDir = projectDir;
+      store.state.currentSessionId = null;
+      try { if (ctx.win && !ctx.win.isDestroyed()) ctx.win.webContents.send('project-dir-updated', projectDir); } catch (_) {}
+    }
+    // 导航到平台首页
+    let homeUrl = 'https://chat.deepseek.com/';
+    try {
+      const { getProviderByUrl } = require('../providers');
+      const provider = getProviderByUrl(ctx.view ? ctx.view.webContents.getURL() : '');
+      if (provider && provider.homeUrl) homeUrl = provider.homeUrl;
+    } catch (_) {}
+    try {
+      const target = (ctx.view && ctx.view.webContents) || (ctx.win && ctx.win.webContents);
+      if (target) await target.loadURL(homeUrl);
+      return { success: true, projectDir, url: homeUrl };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   // 执行命令
   ipcMain.handle('execute-command', async (event, { command, id }) => {
     if (!command || typeof command !== 'string') {

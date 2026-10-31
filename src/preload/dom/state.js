@@ -48,9 +48,19 @@ module.exports = {
   globalSendDelay: 3000,
   // 快请求延迟区间（闭区间；min === max 时会被 pickGlobalDelay 短路成固定值，
   // 等于每轮精确同一节拍 —— 那是最强的 bot 指纹，切勿再配成相等）。
-  // 2026-10-24：DeepSeek 封号根因 ③-B3，原 3000/3000 恒定节拍改为 2.5~9s 随机。
-  globalSendDelayMin: 2500,
-  globalSendDelayMax: 9000,
+  // 【2026-11-01 对齐 Cuckoo】改为 4000~10000（与 Cuckoo 的 pickDelay(4000,10000) 一致）
+  // 原 2500/9000 与历史响应时长相关，现在改为纯均匀随机后无需依赖 thinkRatio
+  globalSendDelayMin: 4000,
+  globalSendDelayMax: 10000,
+  // 【封号风险改造 2026-11-01】系统消息（工具回传/压缩/重命名/远程 IM）延迟区间。
+  // 原实现大量调用方硬编码 fixedDelay=300，节拍完全固定 → 机器指纹。
+  // 现统一改为 [systemMsgDelayMin, systemMsgDelayMax] 随机。
+  systemMsgDelayMin: 1500,
+  systemMsgDelayMax: 4000,
+  // 【封号风险改造 2026-11-01】限流冷静期截止时间戳（毫秒）；0 表示不在冷静期。
+  // 由 rate-limit-retry.js 在收到 lingya-ai-error(reason=rate_limit) 时设置，
+  // doSendToChat 开头检查此字段，> now 时丢弃自动发送。
+  rateLimitUntil: 0,
   adaptiveThreshold: 20000,
   // 当前项目目录（null 表示未初始化）
   currentProjectDir: null,

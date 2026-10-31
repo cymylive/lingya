@@ -626,9 +626,33 @@ function createWindow(profile) {
   mainWindow.on('resize', scheduleSaveBounds);
   mainWindow.on('move', scheduleSaveBounds);
 
-  // UA（作用于 AI view，避免被识别为第三方客户端）
-  const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
-  aiView.webContents.setUserAgent(userAgent);
+  // 【封号风险改造 2026-11-01】改为动态取真实内核版本 + 补齐 sec-ch-ua 请求头
+  // （原实现硬编码 Chrome/130，且 sec-ch-ua 缺 Google Chrome 品牌 → Electron 指纹命中）
+  const { buildChromeUserAgent, buildClientHintsHeaders } = require('./user-agent');
+  aiView.webContents.setUserAgent(buildChromeUserAgent());
+  try {
+    const ses = aiView.webContents.session;
+    if (!ses.__lingyaHintsInstalled) {
+      ses.__lingyaHintsInstalled = true;
+      const hints = buildClientHintsHeaders();
+      ses.webRequest.onBeforeSendHeaders((details, callback) => {
+        try {
+          const h = details.requestHeaders || {};
+          for (const k of Object.keys(h)) {
+            const lk = k.toLowerCase();
+            if (lk === 'sec-ch-ua' || lk === 'sec-ch-ua-mobile' || lk === 'sec-ch-ua-platform' ||
+                lk === 'sec-ch-ua-full-version' || lk === 'sec-ch-ua-full-version-list') {
+              delete h[k];
+            }
+          }
+          Object.assign(h, hints);
+        } catch (_) {}
+        callback({ requestHeaders: details.requestHeaders });
+      });
+    }
+  } catch (err) {
+    console.error('[LingYa] 注册 sec-ch-ua 请求头失败:', err && err.message);
+  }
 
   // 主标签的导航/会话监听（tab-manager 已负责标题/URL 同步）
   aiView.webContents.on('did-finish-load', () => {
@@ -1076,6 +1100,7 @@ const TABBAR_HEIGHT = 40;        // 顶部标签栏高度（壳页面绘制，AI
 const SPLIT_GAP = 0;             // 合并分屏时两视图之间的间隙（0 = 无缝贴合）
 const SPLIT_MIN_WIDTH = 800;     // 左右分屏时每个视图的最小宽度，超出走主窗口横向滚动
 const SPLIT_SCROLLBAR_H = 14;    // 底部横向滚动条高度
+const STATUS_HEIGHT = 28;        // 底部状态栏高度（壳页面绘制）
 
 /** 当前侧栏实际占宽：展开=自定义宽，收起=46 */
 function currentSidebarWidth(w) {
@@ -1091,7 +1116,7 @@ function layoutAIView(mainWindow) {
     const sw = currentSidebarWidth(mainWindow);
     const top = TABBAR_HEIGHT;
     const w = Math.max(0, b.width - sw);
-    let h = Math.max(0, b.height - top);
+    let h = Math.max(0, b.height - top - STATUS_HEIGHT);
 
     // 合并模式：宿主 active tab -> 附加面板（侧边栏 + AI 视图）
     const attached = ctx.attachedViews || [];
@@ -1824,7 +1849,7 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
       }
     } else if (dir === 'vertical' && hostWin && !hostWin.isDestroyed()) {
       const b = hostWin.getContentBounds();
-      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const h = Math.max(0, b.height - TABBAR_HEIGHT - STATUS_HEIGHT);
       const count = 1 + panels.length;
       const MIN_HEIGHT = 600;
       const viewH = Math.max(MIN_HEIGHT, Math.floor(h / count));
@@ -1866,7 +1891,7 @@ ipcMainForProfile.handle('window-split-scroll', async (event, { scrollX, scrollY
     }
 
     if (ctx.splitDirection === 'vertical') {
-      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const h = Math.max(0, b.height - TABBAR_HEIGHT - STATUS_HEIGHT);
       const MIN_HEIGHT = 600;
       const viewH = Math.max(MIN_HEIGHT, Math.floor(h / count));
       const contentH = viewH * count;
@@ -1920,7 +1945,7 @@ ipcMainForProfile.handle('focus-panel', async (event, { webContentsId } = {}) =>
       const b = hostWin.getContentBounds();
       const sw = currentSidebarWidth(hostWin);
       const w = Math.max(0, b.width - sw);
-      const h = Math.max(0, b.height - TABBAR_HEIGHT);
+      const h = Math.max(0, b.height - TABBAR_HEIGHT - STATUS_HEIGHT);
       const panels = ctx.attachedViews || [];
       const count = 1 + panels.length;
 

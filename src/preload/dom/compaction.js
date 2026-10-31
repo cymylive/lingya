@@ -66,7 +66,7 @@ function getSessionIdFromUrl() {
  */
 let cachedHeaders = null;
 try {
-  window.addEventListener('lingya-ds-headers', (ev) => {
+  window.addEventListener(require('./evt-names').DS_HEADERS, (ev) => {
     if (ev && ev.detail && ev.detail['authorization']) {
       cachedHeaders = ev.detail;
     }

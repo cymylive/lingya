@@ -123,8 +123,21 @@
   }
 
   /* ===== 侧栏容器 ===== */
+  /* ===== 底部状态栏 ===== */
+  .statusbar {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 28px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+    padding: 0 16px; background: var(--ck-bg-bar); border-top: 1px solid var(--ck-border);
+    z-index: 10000; font-size: 11.5px; color: var(--ck-text-2); user-select: none;
+  }
+  .statusbar .sb-item { display: flex; align-items: center; gap: 4px; }
+  .statusbar .sb-label { font-size: 11px; color: var(--ck-text-dim); }
+  .statusbar .sb-value { color: var(--ck-text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .statusbar .sb-item[title] { cursor: help; }
+  .statusbar .sb-spacer { flex: 1; }
+
   #lingya-sidebar-slot {
-    position: absolute; top: 40px; left: 0; bottom: 0; width: 0;
+    position: absolute; top: 40px; left: 0; bottom: 28px; width: 0;
     overflow: visible; display: flex;
     background: var(--ck-bg-solid);
     /* 注意：不做 width transition —— 主进程用 setBounds 瞬时重排 AI view（原生层），
@@ -325,6 +338,112 @@
   .sh-btn.primary { background: var(--ck-primary); border-color: var(--ck-primary); color: #fff; }
   .sh-list-item { padding: 8px; border: 1px solid var(--ck-border); border-radius: 8px; background: var(--ck-surface); margin-bottom: 6px; box-sizing: border-box; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; }
   .sh-empty { color: var(--ck-text-dim); font-size: 12px; text-align: center; padding: 16px; }
+  /* ===== 工作区视图（完全复刻 Cuckoo-Code 2026-11-01）===== */
+  .ck-ws-group { display: flex; flex-direction: column; }
+  .ck-ws-group + .ck-ws-group { margin-top: 6px; }
+  .ck-ws-group-title {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700; color: var(--ck-text-dim);
+    padding: 5px 6px; border-radius: 7px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: background .15s;
+  }
+  .ck-ws-group-title:hover { background: var(--ck-surface-hover); }
+  .ck-ws-group-title svg { width: 13px; height: 13px; flex-shrink: 0; opacity: .7; }
+  .ck-ws-gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .ck-ws-gacts { display: flex; align-items: center; gap: 2px; flex-shrink: 0; visibility: hidden; opacity: 0; transition: opacity .12s; }
+  .ck-ws-group-title:hover .ck-ws-gacts { visibility: visible; opacity: 1; }
+  .ck-ws-gact {
+    display: flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 5px;
+    color: var(--ck-text-dim); cursor: pointer;
+  }
+  .ck-ws-gact:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  .ck-ws-gact svg { width: 13px !important; height: 13px !important; opacity: 1 !important; }
+  .ck-ws-caret { width: 11px !important; height: 11px !important; transition: transform .15s; }
+  .ck-ws-group.open .ck-ws-caret { transform: rotate(90deg); }
+  .ck-ws-items { display: none; }
+  .ck-ws-group.open .ck-ws-items { display: block; }
+  .ck-ws-item {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px 7px 20px; border-radius: 8px;
+    cursor: pointer; transition: background .15s;
+  }
+  .ck-ws-item:hover { background: var(--ck-surface-hover); }
+  .ck-ws-item:active { transform: scale(.99); }
+  .ck-ws-name {
+    flex: 1; min-width: 0; font-size: 12px; color: var(--ck-text-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ck-ws-item:hover .ck-ws-name { color: var(--ck-text); }
+  .ck-ws-time { font-size: 10.5px; color: var(--ck-text-dim); flex-shrink: 0; }
+  .ck-ws-item.current { background: var(--ck-primary-soft); }
+  .ck-ws-item.current .ck-ws-name { color: var(--ck-primary); font-weight: 600; }
+  .ck-ws-acts {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    display: none; align-items: center; gap: 2px;
+  }
+  .ck-ws-item:hover .ck-ws-acts { display: flex; }
+  .ck-ws-item:hover .ck-ws-time { visibility: hidden; }
+  .ck-ws-act {
+    display: flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; flex-shrink: 0; border-radius: 5px;
+    color: var(--ck-text-dim); cursor: pointer;
+  }
+  .ck-ws-act:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  .ck-ws-act svg { width: 13px; height: 13px; }
+  .ck-ws-expand {
+    width: 14px; height: 14px; flex-shrink: 0; margin-left: -10px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ck-text-dim); transition: transform .12s; border-radius: 4px;
+  }
+  .ck-ws-expand svg { width: 10px; height: 10px; }
+  .ck-ws-expand.open { transform: rotate(90deg); }
+  .ck-ws-expand:hover { background: var(--ck-surface-hover); color: var(--ck-text); }
+  .ck-ws-expand-hidden { visibility: hidden; }
+  .ck-ws-item.sub { padding-left: 34px; }
+  .ck-ws-item.sub .ck-ws-name { color: var(--ck-text-dim); font-size: 11.5px; }
+  .ck-ws-item.sub.current .ck-ws-name { color: var(--ck-primary); }
+  .ck-ws-archived { margin-top: 2px; }
+  .ck-ws-archived-title {
+    display: flex; align-items: center;
+    padding: 5px 10px 5px 20px; border-radius: 7px;
+    font-size: 11px; color: var(--ck-text-dim); cursor: pointer;
+    transition: background .15s;
+  }
+  .ck-ws-archived-title:hover { background: var(--ck-surface-hover); }
+  .ck-ws-archived-title::before { content: '▸ '; margin-right: 2px; font-size: 9px; }
+  .ck-ws-archived.open .ck-ws-archived-title::before { content: '▾ '; }
+  .ck-ws-archived-items { display: none; }
+  .ck-ws-archived.open .ck-ws-archived-items { display: block; }
+  .ck-ws-archived-projects { margin-top: 10px; border-top: 1px solid var(--ck-border); padding-top: 6px; }
+  .ck-ws-archived-projects-title {
+    display: flex; align-items: center; padding: 6px 6px; border-radius: 7px;
+    font-size: 11px; color: var(--ck-text-dim); cursor: pointer; transition: background .15s;
+  }
+  .ck-ws-archived-projects-title:hover { background: var(--ck-surface-hover); }
+  .ck-ws-archived-projects-title::before { content: '▸ '; margin-right: 2px; font-size: 9px; }
+  .ck-ws-archived-projects.open .ck-ws-archived-projects-title::before { content: '▾ '; }
+  .ck-ws-archived-projects-items { display: none; }
+  .ck-ws-archived-projects.open .ck-ws-archived-projects-items { display: block; }
+  .ck-ws-tip {
+    position: fixed; z-index: 2147483647;
+    max-width: 300px; padding: 10px 12px;
+    background: var(--ck-bg-bar);
+    color: var(--ck-text);
+    border: 1px solid var(--ck-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    font-size: 12px; line-height: 1.6; pointer-events: none;
+    animation: ck-tip-in .12s ease;
+  }
+  @keyframes ck-tip-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+  .ck-ws-tip .ck-tip-name { font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+  .ck-ws-tip .ck-tip-path { word-break: break-all; opacity: .75; font-size: 11.5px; }
+  .ck-ws-tip .ck-tip-time { margin-top: 5px; opacity: .6; font-size: 11px; }
+  .ck-list { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .ck-list-empty { color: var(--ck-text-dim); font-size: 12px; text-align: center; padding: 16px 0; }
   /* ===== 活动栏网格 + 拖拽（v0.6.37）===== */
   .sh-ab-grid { display: grid; grid-template-columns: repeat(1, 52px); gap: 2px; padding: 4px; width: 100%; box-sizing: border-box; justify-content: center; }
   .sh-ab-grid[data-cols="2"] { grid-template-columns: repeat(2, 52px); }
@@ -512,6 +631,19 @@
     <div id="lingya-split-vscrollbar-thumb" style="position:absolute;width:8px;left:3px;border-radius:4px;background:rgba(120,120,120,0.7);cursor:grab;top:0;height:100px;"></div>
   </div>
 
+  <div class="statusbar" id="lingya-statusbar">
+    <div class="sb-spacer"></div>
+    <div class="sb-item" title="对话上下文：本会话当前占用的 token 总量">
+      <span class="sb-label">对话上下文:</span>
+      <span class="sb-value" id="sb-context">0</span>
+    </div>
+    <div class="sb-item" id="sb-tps-item" title="模型输出速度：tokens/秒（生成中实时更新，结束后保留最终值）">
+      <span class="sb-label">输出速度:</span>
+      <span class="sb-value" id="sb-tps">--</span>
+      <span class="sb-label">t/s</span>
+    </div>
+  </div>
+
   <div id="lingya-sidebar-slot" class="collapsed">
     <div id="lingya-activitybar">
       <div id="sh-ab-grid" class="sh-ab-grid" data-cols="1">
@@ -522,7 +654,7 @@
       <button class="sh-ab-item" data-view="security" title="安全增强"><span class="sh-ab-ico">&#128737;</span><span class="sh-ab-label">安全</span></button>
       <button class="sh-ab-item" data-view="schedule" title="定时任务"><span class="sh-ab-ico">&#9200;</span><span class="sh-ab-label">定时</span></button>
       <button class="sh-ab-item" data-view="comm" title="通信通道（飞书/微信/QQ）"><span class="sh-ab-ico">&#128225;</span><span class="sh-ab-label">通信</span></button>
-      <button class="sh-ab-item" data-view="sessions" title="会话列表"><span class="sh-ab-ico">&#128172;</span><span class="sh-ab-label">会话</span></button>
+      <button class="sh-ab-item" data-view="sessions" title="工作区列表"><span class="sh-ab-ico">&#128172;</span><span class="sh-ab-label">工作区</span></button>
       <button class="sh-ab-item" data-view="log" title="执行日志"><span class="sh-ab-ico">&#128220;</span><span class="sh-ab-label">日志</span></button>
       <button class="sh-ab-item" data-view="mcp" title="MCP 工具"><span class="sh-ab-ico">&#128268;</span><span class="sh-ab-label">MCP</span></button>
       <button class="sh-ab-item" data-view="plugins" title="插件系统"><span class="sh-ab-ico">&#129513;</span><span class="sh-ab-label">插件</span></button>

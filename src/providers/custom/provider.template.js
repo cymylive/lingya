@@ -88,22 +88,21 @@ module.exports = {
   // 不能 require 外部文件。hook 函数体在主世界独立执行，
   // 只能使用浏览器全局（window/document/fetch 等），不引用模块级变量。
   //
-  // getHookSource() 返回源码字符串，负责监听 fetch/XHR 的 SSE 流，并派发：
-  //   window.dispatchEvent(new CustomEvent('lingya-ai-response', {
-  //     detail: {
-  //       text: '<完整回复文本>',
-  //       finished: true,
-  //       // 可选：服务端 token 统计（面板会显示）
-  //       tokenUsage: { accumulatedTokens, insertedAt, updatedAt, modelType }
-  //     }
-  //   }));
+  // getHookSource(evtNames) 返回源码字符串，负责监听 fetch/XHR 的 SSE 流，并派发
+  // AI 回复事件（CustomEvent），detail 建议包含 { text, finished, tokenUsage? }。
   //
-  // 参考内置 provider 的 getHookSource()（deepseek.js / claude.js / chatgpt.js）。
+  // 【封号风险改造 2026-11-01】evtNames 是每会话随机后缀的事件名对象
+  // （AI_RESPONSE / AI_START / AI_ERROR / USER_MESSAGE / DS_HEADERS / HOOK_READY），
+  // 由 preload 注入。适配后事件名带随机后缀，页面脚本无法预埋监听器；
+  // 不适配（忽略该参数、继续用明文名）也能工作，向后兼容。
+  //
+  // 参考内置 provider 的 getHookSource(evtNames)（deepseek.js / claude.js / chatgpt.js）。
   //
   // useIntercept: true,
-  // getHookSource() {
-  //   return '(' + function () {
-  //     // 在此编写主世界拦截逻辑
-  //   }.toString() + ')();';
+  // getHookSource(evtNames) {
+  //   const N = evtNames || { AI_RESPONSE: 'lingya-ai-response', AI_START: 'lingya-ai-start' };
+  //   return '(' + function (names) {
+  //     // 在此编写主世界拦截逻辑，派发时使用 names.AI_RESPONSE / names.AI_START
+  //   }.toString() + ')(' + JSON.stringify(N) + ');';
   // },
 };
