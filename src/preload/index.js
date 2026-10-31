@@ -23,21 +23,51 @@ const useIntercept = !!(currentProvider && currentProvider.useIntercept);
 console.log('[LingYa] 平台=' + (currentProvider ? currentProvider.id : 'unknown') +
   ', 模式=' + (useIntercept ? '网络拦截' : 'DOM 抓取'));
 
-// ========== 主世界注入（拦截模式）==========
-// 必须在页面脚本执行前把 hook 注入到主世界，才能覆盖到 window.fetch / XHR。
-// preload 早于页面脚本执行，此处的 executeJavaScript 落在主世界。
+// ========== 回复捕获通道 ==========
+// 两条路，二选一：
+//  A. CDP 捕获（useCdp: true）—— 主进程 webContents.debugger 监听 Network 域，
+//     不碰页面 JS 环境。回复在流结束后由主进程解析并推事件回来。
+//  B. 主世界 hook（旧路径）—— 注入覆盖 window.fetch / XHR。
+//
+// 【为什么优先 A】hook 会改写页面的 window.fetch 和 XMLHttpRequest.prototype，
+// 页面内任意脚本执行 fetch.toString() 即可发现被劫持。CDP 不触碰页面运行时。
+// 【为什么能等价替换】hook 也只在 extractor.finished 时 dispatch 一次全文
+// （见 deepseek.js observeBody），本就不做流式增量处理，CDP 拿全量时机相同。
 if (useIntercept) {
-  try {
-    if (typeof currentProvider.getHookSource === 'function') {
-      webFrame.executeJavaScript(currentProvider.getHookSource()).then(
-        () => console.log('[LingYa] 主世界拦截器注入成功 (' + currentProvider.id + ')'),
-        (err) => console.error('[LingYa] 主世界拦截器注入失败:', err && err.message)
-      );
-    } else {
-      console.warn('[LingYa] 平台 ' + currentProvider.id + ' 未提供 getHookSource()');
+  const useCdp = currentProvider && currentProvider.useCdp === true;
+  if (useCdp) {
+    try {
+      const { ipcRenderer } = require('electron');
+      require('./dom/cdp-bridge').install();
+      ipcRenderer.invoke('lingya-cdp-enable', { providerId: currentProvider.id })
+        .then((r) => {
+          if (r && r.ok) {
+            console.log('[LingYa] CDP 捕获已启用 (' + currentProvider.id + ')');
+          } else {
+            console.error('[LingYa] CDP 捕获启用失败:', (r && r.error) || '未知原因');
+          }
+        })
+        .catch((err) => {
+          console.error('[LingYa] CDP 捕获启用异常:', err && err.message);
+        });
+    } catch (err) {
+      console.error('[LingYa] CDP 桥初始化失败:', err && err.message);
     }
-  } catch (err) {
-    console.error('[LingYa] 加载拦截器失败:', err);
+  } else {
+    // 旧路径：主世界 hook 注入。必须在页面脚本执行前完成，
+    // preload 早于页面脚本执行，此处 executeJavaScript 落在主世界。
+    try {
+      if (typeof currentProvider.getHookSource === 'function') {
+        webFrame.executeJavaScript(currentProvider.getHookSource()).then(
+          () => console.log('[LingYa] 主世界拦截器注入成功 (' + currentProvider.id + ')'),
+          (err) => console.error('[LingYa] 主世界拦截器注入失败:', err && err.message)
+        );
+      } else {
+        console.warn('[LingYa] 平台 ' + currentProvider.id + ' 未提供 getHookSource()');
+      }
+    } catch (err) {
+      console.error('[LingYa] 加载拦截器失败:', err);
+    }
   }
 }
 

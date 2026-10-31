@@ -1609,6 +1609,15 @@ function registerIpcHandlers() {
       return { success: false, error: err.message };
     }
   });
+
+  // ========== CDP 捕获（替代页面内 hook）==========
+  // 只在 provider 声明 useCdp: true 时生效（当前仅 deepseek）。
+  // 注册 lingya-cdp-enable / lingya-cdp-disable 两个 handler。
+  try {
+    require('./cdp-wiring').install(ipcMain);
+  } catch (err) {
+    console.error('[LingYa] cdp-wiring 安装失败:', err && err.message);
+  }
 }
 
 module.exports = { registerIpcHandlers };

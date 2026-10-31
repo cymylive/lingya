@@ -425,6 +425,11 @@ module.exports = {
     return url.includes('chat.deepseek.com');
   },
 
+  // 是否支持 CDP 捕获（替代页面内 hook）。
+  // 置 true 后 preload 走 cdp-bridge + 主进程 cdp-capture 路径，
+  // 不再向页面主世界注入 fetch/XHR hook。
+  useCdp: true,
+
   // 判断元素是否可见（offsetWidth/offsetHeight > 0）
   isElementVisible(el) {
     if (!el) return false;
