@@ -1,3 +1,4 @@
+
 'use strict';
 const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
@@ -189,3 +190,39 @@ test('dispatch 抛错返回 dispatch-failed 且不留 pending', async () => {
   assert.equal(rot._pendingSize(), 0);
 });
 
+
+
+
+// ===== Review Focus 1：目标窗口忙时等待 =====
+test('全池都忙时先等 targetBusyWaitMs 再重试，期间转空闲则成功', async () => {
+  rot.updateConfig({ enabled: true, pool: [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'B', enabled: true },
+  ], cursor: 0, targetBusyWaitMs: 50 });
+  let p2Calls = 0;
+  const deps = {
+    // p1 始终忙；p2 前 2 次忙（两遍扫描各一次），之后转空闲（模拟 AI 生成结束）
+    isAvailable: (pid) => {
+      if (pid === 'p1') return false;
+      p2Calls++;
+      return p2Calls > 2;
+    },
+    dispatch: async () => {},
+    onResult: () => {},
+  };
+  const r = await rot.submit('p1', 'A', {}, deps);
+  assert.equal(r.ok, true, '等待后应能选中 p2');
+  assert.equal(r.targetProfileId, 'p2');
+  assert.ok(p2Calls >= 3, '必须重试过');
+});
+
+test('等待期满仍全忙则返回 no-target', async () => {
+  rot.updateConfig({ enabled: true, pool: [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'B', enabled: true },
+  ], cursor: 0, targetBusyWaitMs: 30 });
+  const deps = { isAvailable: () => false, dispatch: async () => {}, onResult: () => {} };
+  const r = await rot.submit('p1', 'A', {}, deps);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-target');
+});

@@ -309,12 +309,30 @@ async function submit(sourceProfileId, sourceAccountTag, data, deps) {
   const dispatch = typeof depsObj.dispatch === 'function' ? depsObj.dispatch : async () => {};
   const onResult = typeof depsObj.onResult === 'function' ? depsObj.onResult : () => {};
 
-  const targetIndex = selectNextIndex(config.pool, config.cursor, isAvailable, {
+  const pickOpts = {
     preferDifferentAccount: config.preferDifferentAccount,
     sourceAccountTag,
-  });
+  };
+  let targetIndex = selectNextIndex(config.pool, config.cursor, isAvailable, pickOpts);
+
+  // Review Focus 1：目标窗口正忙时不能硬塞。等至多 targetBusyWaitMs，
+  // 期间只要有一个窗口转空闲就立刻派发；期满仍全忙才放弃（回落原地迁移）。
   if (targetIndex === -1) {
-    return { ok: false, reason: 'no-target' };
+    const waitMs = Math.max(0, Number(config.targetBusyWaitMs) || 0);
+    const deadline = Date.now() + waitMs;
+    const pollMs = 500;
+    while (waitMs > 0 && Date.now() < deadline) {
+      const sleepMs = Math.min(pollMs, Math.max(0, deadline - Date.now()));
+      await new Promise((r) => {
+        const t = setTimeout(r, sleepMs);
+        if (t && typeof t.unref === 'function') t.unref();
+      });
+      targetIndex = selectNextIndex(config.pool, config.cursor, isAvailable, pickOpts);
+      if (targetIndex !== -1) break;
+    }
+    if (targetIndex === -1) {
+      return { ok: false, reason: 'no-target' };
+    }
   }
 
   const target = config.pool[targetIndex];
