@@ -257,3 +257,153 @@ function selectNextIndex(pool, cursor, isAvailable, opts) {
 }
 
 module.exports.selectNextIndex = selectNextIndex;
+
+// ===== Task 3: 迁移中继与超时看门狗 =====
+
+/** ack 超时（毫秒） */
+const ACK_TIMEOUT_MS = 90000;
+
+/** 进行中的迁移请求：requestId → {sourceProfileId, targetProfileId, targetIndex, timer, onResult} */
+const pending = new Map();
+
+let requestSeq = 0;
+
+/** 生成 requestId：时间戳 + 自增序号 + 随机串，保证同毫秒内也不重复 */
+function makeRequestId() {
+  requestSeq = (requestSeq + 1) % 100000;
+  return Date.now() + '-' + requestSeq + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * 提交一次轮转迁移。
+ *
+ * @param {string} sourceProfileId 源窗口
+ * @param {string} sourceAccountTag 源窗口账号标识
+ * @param {object} data 迁移载荷（history / projectDir / oldSessionId / ...）
+ * @param {object} deps
+ *   - isAvailable(profileId): boolean 目标窗口是否可派发
+ *   - dispatch(profileId, requestId, data): Promise<void> 实际派发
+ *   - onResult(sourceProfileId, result): void 结果回告源窗口
+ * @returns {Promise<{ok:boolean, requestId?:string, targetProfileId?:string, reason?:string}>}
+ */
+async function submit(sourceProfileId, sourceAccountTag, data, deps) {
+  const config = readRaw();
+  if (config.enabled !== true) {
+    return { ok: false, reason: 'disabled' };
+  }
+
+  // 轮转次数上限（反目标 A3：不允许无限轮转）
+  if (rotationCount >= config.maxRotations) {
+    return { ok: false, reason: 'limit' };
+  }
+  // 会话时长上限
+  const now = Date.now();
+  if (sessionStartedAt == null) {
+    sessionStartedAt = now;
+  } else if (now - sessionStartedAt > config.maxSessionHours * 3600 * 1000) {
+    return { ok: false, reason: 'limit' };
+  }
+
+  const depsObj = deps && typeof deps === 'object' ? deps : {};
+  const isAvailable = typeof depsObj.isAvailable === 'function' ? depsObj.isAvailable : () => true;
+  const dispatch = typeof depsObj.dispatch === 'function' ? depsObj.dispatch : async () => {};
+  const onResult = typeof depsObj.onResult === 'function' ? depsObj.onResult : () => {};
+
+  const targetIndex = selectNextIndex(config.pool, config.cursor, isAvailable, {
+    preferDifferentAccount: config.preferDifferentAccount,
+    sourceAccountTag,
+  });
+  if (targetIndex === -1) {
+    return { ok: false, reason: 'no-target' };
+  }
+
+  const target = config.pool[targetIndex];
+  const requestId = makeRequestId();
+
+  // 登记 pending + 启动看门狗
+  const timer = setTimeout(() => {
+    if (!pending.has(requestId)) return;
+    pending.delete(requestId);
+    try {
+      onResult(sourceProfileId, { ok: false, requestId, reason: 'timeout' });
+    } catch (err) {
+      console.error('[Rotation] onResult 回调异常:', err.message);
+    }
+  }, ACK_TIMEOUT_MS);
+  // Node 环境下别让定时器挂着进程（Electron 主进程无影响，测试环境有用）
+  if (timer && typeof timer.unref === 'function') timer.unref();
+
+  pending.set(requestId, {
+    sourceProfileId,
+    targetProfileId: target.profileId,
+    targetIndex,
+    timer,
+    onResult,
+  });
+
+  try {
+    await dispatch(target.profileId, requestId, data);
+  } catch (err) {
+    console.error('[Rotation] 派发失败:', err.message);
+    if (pending.has(requestId)) {
+      pending.delete(requestId);
+      clearTimeout(timer);
+    }
+    return { ok: false, reason: 'dispatch-failed' };
+  }
+
+  return { ok: true, requestId, targetProfileId: target.profileId };
+}
+
+/**
+ * 目标窗口回执。
+ * @param {string} requestId
+ * @param {boolean} ok 是否承接成功
+ * @param {string} [error] 失败原因
+ * @returns {boolean} 是否命中一条进行中的请求
+ */
+function ack(requestId, ok, error) {
+  const entry = pending.get(requestId);
+  if (!entry) return false;
+  pending.delete(requestId);
+  clearTimeout(entry.timer);
+
+  if (ok === true) {
+    // 推进游标 + 累加轮转计数
+    rotationCount += 1;
+    updateConfig({ cursor: entry.targetIndex });
+  }
+
+  try {
+    entry.onResult(entry.sourceProfileId, {
+      ok: ok === true,
+      requestId,
+      targetProfileId: entry.targetProfileId,
+      error: error || undefined,
+    });
+  } catch (err) {
+    console.error('[Rotation] onResult 回调异常:', err.message);
+  }
+  return true;
+}
+
+/** 当前进行中的请求数（测试用） */
+function _pendingSize() {
+  return pending.size;
+}
+
+/** 清空 pending 与定时器（测试用） */
+function _clearPending() {
+  for (const [, entry] of pending) {
+    clearTimeout(entry.timer);
+  }
+  pending.clear();
+  rotationCount = 0;
+  sessionStartedAt = null;
+}
+
+module.exports.submit = submit;
+module.exports.ack = ack;
+module.exports._pendingSize = _pendingSize;
+module.exports._resetForTest = _clearPending;
+

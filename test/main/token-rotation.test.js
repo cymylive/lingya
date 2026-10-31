@@ -11,6 +11,7 @@ beforeEach(() => {
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   fs.mkdirSync(tmpDir, { recursive: true });
   rot.init(tmpDir);
+  rot._resetForTest();
 });
 afterEach(() => {
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -107,3 +108,84 @@ test('无可用窗口返回 -1', () => {
   assert.equal(rot.selectNextIndex(pool3, 0, () => false, { preferDifferentAccount: false }), -1);
   assert.equal(rot.selectNextIndex([], 0, allAvail, { preferDifferentAccount: false }), -1);
 });
+
+// ===== Task 3: submit / ack / 看门狗 =====
+test('submit 成功派发并推进 cursor（ack 后）', async () => {
+  rot.updateConfig({
+    enabled: true,
+    pool: [
+      { profileId: 'p1', accountTag: 'A', enabled: true },
+      { profileId: 'p2', accountTag: 'B', enabled: true },
+    ],
+    cursor: 0,
+  });
+  let dispatched = null;
+  const deps = {
+    isAvailable: () => true,
+    dispatch: async (pid, reqId, data) => { dispatched = { pid, reqId, data }; },
+    onResult: () => {},
+  };
+  const r = await rot.submit('p1', 'A', { history: 'h', oldSessionId: 's1' }, deps);
+  assert.equal(r.ok, true);
+  assert.equal(r.targetProfileId, 'p2');
+  assert.equal(dispatched.pid, 'p2');
+  assert.equal(rot.getConfig().cursor, 0, 'ack 前不推进');
+  rot.ack(r.requestId, true);
+  assert.equal(rot.getConfig().cursor, 1, 'ack 后推进到 p2');
+});
+
+test('ack(false) 不推进 cursor', async () => {
+  rot.updateConfig({
+    enabled: true,
+    pool: [
+      { profileId: 'p1', accountTag: 'A', enabled: true },
+      { profileId: 'p2', accountTag: 'B', enabled: true },
+    ],
+    cursor: 0,
+  });
+  const deps = { isAvailable: () => true, dispatch: async () => {}, onResult: () => {} };
+  const r = await rot.submit('p1', 'A', { history: 'h' }, deps);
+  rot.ack(r.requestId, false, 'target failed');
+  assert.equal(rot.getConfig().cursor, 0);
+  assert.equal(rot._pendingSize(), 0);
+});
+
+test('未启用时直接返回 disabled', async () => {
+  rot.updateConfig({ enabled: false });
+  const r = await rot.submit('p1', 'A', {}, { isAvailable: () => true, dispatch: async () => {}, onResult: () => {} });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'disabled');
+});
+
+test('无可用窗口返回 no-target', async () => {
+  rot.updateConfig({ enabled: true, pool: [{ profileId: 'p1', accountTag: 'A', enabled: true }] });
+  const r = await rot.submit('p1', 'A', {}, { isAvailable: () => false, dispatch: async () => {}, onResult: () => {} });
+  assert.equal(r.reason, 'no-target');
+});
+
+test('ack 超时后回告失败', async (t) => {
+  rot.updateConfig({ enabled: true, pool: [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'B', enabled: true },
+  ], cursor: 0 });
+  let result = null;
+  const deps = { isAvailable: () => true, dispatch: async () => {}, onResult: (sid, r) => { result = r; } };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const r = await rot.submit('p1', 'A', {}, deps);
+  t.mock.timers.tick(90001);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'timeout');
+  assert.equal(rot._pendingSize(), 0);
+});
+
+test('dispatch 抛错返回 dispatch-failed 且不留 pending', async () => {
+  rot.updateConfig({ enabled: true, pool: [
+    { profileId: 'p1', accountTag: 'A', enabled: true },
+    { profileId: 'p2', accountTag: 'B', enabled: true },
+  ], cursor: 0 });
+  const deps = { isAvailable: () => true, dispatch: async () => { throw new Error('boom'); }, onResult: () => {} };
+  const r = await rot.submit('p1', 'A', {}, deps);
+  assert.equal(r.reason, 'dispatch-failed');
+  assert.equal(rot._pendingSize(), 0);
+});
+
