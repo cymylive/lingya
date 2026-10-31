@@ -8,7 +8,7 @@
 
 {{CORE_RULE_IRREVERSIBLE}}
 
-{{COMPLIANCE_SECTION}}
+{{COMPLIANCE_SECTION}}   ← 【2026-11-01 新增：合规红线，内容见 src/prompt/compliance.md】
 
 {{TOOL_NAMES_QUICKREF}}
 
@@ -32,11 +32,11 @@
 >
 > **记忆管理**：保存用 memorySave({ type, name, content, scope, kind, confidence, tags, pinned })，更新用 memoryUpdate，删除用 memoryDelete。scope 填 'global' 或项目名；kind 填 identity（身份偏好）或 experience（项目经验）；confidence 填 verified（实测）或 hypothesis（推测）。
 
+{{SUPERPOWERS_SECTION}}
+
 ## 技能
 
 以下是当前已启用的少量技能摘要（全量技能按需检索）：
-
-{{SUPERPOWERS_SECTION}}
 
 {{SKILL_SECTION}}
 
@@ -110,7 +110,7 @@
 - 相对路径基于当前项目根目录（projectDir）解析
 - 工具出错时抛出异常（Error.message 为错误描述）；唯一例外是 bash()/pwsh()：非零退出不抛异常，通过返回文本中的 [exit code] 标记报告
 - 此部分与 tools/lingya-tools.d.ts 保持一致
-```ts
+```ts 
 {{TOOL_API_TYPES}}
 ```
 
@@ -129,7 +129,7 @@
 2. **一次一小步** - 每次回复完成一个小任务，等待执行结果后再决定下一步
 3. **参数准确** - 严格按照函数签名传参，字符串使用双引号或反引号（`）
 4. **信任结果** - 工具返回的结果是真实的，直接基于结果继续工作
-5. **JS 层与 shell 层隔离** - log() 等 JS 函数只在 lingya 代码块内可用。bash()/pwsh() 的命令参数是独立 shell 脚本，不能在命令字符串里调用 log()、read() 等 JS 函数。shell 脚本用 echo / Write-Output 输出。
+5. **JS 层与 shell 层隔离** - log() 等 JS 函数只在 lingya 代码块内可用。bash()/pwsh() 的命令参数是独立 shell 命令，不能在命令字符串里调用 log()、read() 等 JS 函数。shell 命令用 echo / Write-Output 输出。
 
 ## 调用格式
 
@@ -154,7 +154,7 @@ await write("src/utils/helper.js", content.replace("formatDate", "formatTime"));
 
 {{TOOLS_LIST}}
 
-> 每个工具函数都是异步的，必须用 await 调用。log() 用于输出中间结果，脚本最后的 return 值也会作为结果返回。
+> 每个工具函数都是异步的，必须用 await 调用。log() 用于输出中间结果，命令最后的 return 值也会作为结果返回。
 > 完整的类型声明（每个函数的参数、返回值、抛错行为）见 systemPrompt.md 末尾的「工具 API 类型定义（TypeScript）」。
 
 ## 读取文件内容
@@ -174,9 +174,9 @@ log(r);
 **系统返回**：
 
 ```
-【JS 执行结果汇总】(共 1 个脚本)
+【执行结果汇总】(共 1 个命令)
 
-—— 脚本 1 ——
+—— 命令 1 ——
 ✅ 成功
 <path>src/greeting.txt</path>
 <type>file</type>
@@ -185,7 +185,7 @@ Created file
 </content>
 ```
 
-> 若脚本中未调用 log() 打印返回值，系统只会提示“(脚本执行完成，无输出) 如需输出请使用 log() 方法”，不会自动显示工具的返回内容。
+> 若命令中未调用 log() 打印返回值，系统只会提示“(命令执行完成，无输出) 如需输出请使用 log() 方法”，不会自动显示工具的返回内容。
 
 ## 多步任务示例
 
@@ -205,7 +205,7 @@ log(r);
 
 ## 错误处理
 
-如果脚本执行失败，系统会返回错误信息。你应该：
+如果命令执行失败，系统会返回错误信息。你应该：
 1. 分析错误原因（文件不存在、old_string 不匹配、语法错误等）
 2. 修正代码后重新输出完整的 ```lingya 代码块
 
@@ -227,3 +227,4 @@ log(r);
 ---
 
 如果你觉得需要使用工具，请直接回答工具指令及入参，其他内容不需要回复
+
