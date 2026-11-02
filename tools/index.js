@@ -31,6 +31,8 @@ const { SendMediaTool } = require('./SendMediaTool');
 const { ListPluginsTool } = require('./ListPluginsTool');
 const { PurgeTool } = require('./PurgeTool');
 const { ListWindowsTool, DispatchToWindowTool } = require('./DispatchTool');
+const { RedactLookupTool } = require('./RedactLookupTool');
+const { RedactionAutoScanTool } = require('./RedactionAutoScanTool');
 
 // 创建全局工具注册表
 const registry = new ToolRegistry();
@@ -77,6 +79,8 @@ registry.register(new PurgeTool());
 registry.register(new SendMediaTool());
 registry.register(new ListWindowsTool());
 registry.register(new DispatchToWindowTool());
+registry.register(new RedactLookupTool());
+registry.register(new RedactionAutoScanTool());
 
 // 导出
 module.exports = {

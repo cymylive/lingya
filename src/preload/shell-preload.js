@@ -57,6 +57,13 @@ const api = {
   newChat: () => ipcRenderer.invoke('shell-new-chat'),
   runAction: (action) => ipcRenderer.invoke('shell-run-action', { action }),
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
+  // 【Harness 2026-11-02】纯净对话模式
+  toggleHarness: (show) => ipcRenderer.invoke('harness-toggle', { show }),
+  onHarnessMode: (cb) => {
+    const h = (_e, p) => cb(p);
+    ipcRenderer.on('shell-harness-mode', h);
+    return () => ipcRenderer.removeListener('shell-harness-mode', h);
+  },
   // 计划 / Todo
   getTodos: () => ipcRenderer.invoke('get-todos'),
   onAllTodosChanged: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-all-todos-changed',h); return ()=>ipcRenderer.removeListener('lingya-all-todos-changed',h); },
@@ -169,6 +176,15 @@ const api = {
   setAgent: (agentId) => ipcRenderer.invoke('agent-set', { agentId }),
   initProject: () => ipcRenderer.invoke('init-project', { skipPrompt: true }),
   getSecurityCtfPrompt: () => ipcRenderer.invoke('security-get-ctf-prompt'),
+  // ===== 脱敏规则（2026-11-02 新增）=====
+  redactionRulesList: () => ipcRenderer.invoke('redaction-rules-list'),
+  redactionRulesAdd: (rule) => ipcRenderer.invoke('redaction-rules-add', rule),
+  redactionRulesUpdate: (name, patch) => ipcRenderer.invoke('redaction-rules-update', { name, patch }),
+  redactionRulesDelete: (name) => ipcRenderer.invoke('redaction-rules-delete', { name }),
+  redactionAutoScan: () => ipcRenderer.invoke('redaction-auto-scan'),
+  redactionDeleteAllAuto: () => ipcRenderer.invoke('redaction-delete-all-auto'),
+  redactionPromoteAllAuto: () => ipcRenderer.invoke('redaction-promote-all-auto'),
+  redactionPromoteOne: (name) => ipcRenderer.invoke('redaction-promote-one', { name }),
   // ===== 提示词草稿管理（2026-11-01 新增）=====
   promptTplList: () => ipcRenderer.invoke('prompt-tpl-list'),
   promptTplCreate: (payload) => ipcRenderer.invoke('prompt-tpl-create', payload || {}),

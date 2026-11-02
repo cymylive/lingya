@@ -90,3 +90,8 @@ build/graphify-work-cli/
   
 # ���ر���Ŀ¼������⣩  
 beifen/ 
+
+# 本地备份目录（发版不带上）
+_bak*/
+src/prompt/_bak*/
+_*.js

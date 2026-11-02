@@ -39,6 +39,12 @@ function sanitizeToolOutput(text) {
     s = s.replace(ASAR_PATH_RE, '<internal>');
     s = s.replace(POSIX_ASAR_RE, '<internal>');
   } catch (_) { /* 正则异常时原样返回，绝不阻断发送 */ }
+  // 2026-11-02：工具输出里如果出现用户定义的真词，替换为 ⟦占位符⟧
+  // 目的：防止 read/bash 等工具的返回内容里带着敏感词回传给网页端
+  try {
+    const { redactText } = require('./redaction-filter');
+    s = redactText(s);
+  } catch (_) { /* 脱敏引擎不可用时不阻断 */ }
   return s;
 }
 

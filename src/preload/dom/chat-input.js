@@ -318,6 +318,24 @@ function onUserMessageSent(cb) {
   return () => { if (onUserMessageSentCb === cb) onUserMessageSentCb = null; };
 }
 
+// 【Harness 2026-11-02】消息已投递监听器
+// 与 onUserMessageSent 的区别：后者只对「非 auto 的用户消息」触发；
+// 这个对所有投递都触发（含工具结果回传、系统提示词），供 harness 显示「框架正在驱动」。
+const messageDeliveredListeners = new Set();
+function onMessageDelivered(cb) {
+  messageDeliveredListeners.add(cb);
+  return () => messageDeliveredListeners.delete(cb);
+}
+function emitMessageDelivered(info) {
+  if (messageDeliveredListeners.size === 0) return;
+  for (const cb of messageDeliveredListeners) {
+    try { cb(info); } catch (_) { /* ignore */ }
+  }
+}
+
+// 【Harness 2026-11-02】待发送定时器句柄（供 cancelPendingSend 立即取消）
+let pendingSendTimer = null;
+
 // ===== 自动消息合并缓冲（2026-10-29）=====
 // 实现抽到 ./send-merger.js：纯调度逻辑、sender 可注入、可单测。
 // 这里只负责把 doSendToChat 注入进去。
@@ -444,7 +462,16 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     }
   } else {
     // 短消息（或长消息上传失败）→ 直接填入文本
-    if (!(await setInputContent(input, msg))) {
+    // 【审计修复 2026-11-02】短消息也脱敏（之前漏了，绕过 file-upload 就泄露真词）
+    let safeMsg = msg;
+    try {
+      const { redactText } = require('./redaction-filter');
+      safeMsg = redactText(msg);
+      if (safeMsg !== msg) {
+        console.log('[LingYa][Redaction] 短消息脱敏：' + msg.length + ' → ' + safeMsg.length + ' 字符');
+      }
+    } catch (_) { /* 脱敏失败不阻断发送 */ }
+    if (!(await setInputContent(input, safeMsg))) {
       return false;
     }
   }
@@ -527,7 +554,9 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     });
   } catch (_) { /* 记录失败不影响发送 */ }
 
-  setTimeout(async function() {
+  pendingSendTimer = setTimeout(async function() {
+    // 【Harness 2026-11-02】定时器已触发，清空句柄（后续 cancelPendingSend 不再管它）
+    pendingSendTimer = null;
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
       console.log('[LingYa] 已停止，取消本次延迟发送');
@@ -599,6 +628,10 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
       } catch (_) {}
     }
     if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
+    // 【Harness 2026-11-02】派发「消息已投递」（含系统消息）
+    try {
+      emitMessageDelivered({ tag: String(tag || ''), isSystem: !!(opts && opts.auto) });
+    } catch (_) { /* 订阅方异常不阻断 */ }
     if (typeof afterSent === 'function') afterSent();
   }, sendDelay);
   return true;
@@ -650,6 +683,13 @@ function sendToolResultToChat(toolCall, result) {
     msg = '出错了：' + ((result && result.error) || '未知错误') + nl + '再试一下看看。';
   }
 
+  // 【审计修复 2026-11-02】工具结果回传前脱敏（真词 → 占位符，防泄露）
+  try {
+    const { redactText } = require('./redaction-filter');
+    const safe = redactText(msg);
+    if (safe !== msg) console.log('[LingYa][Redaction] 工具结果脱敏：' + msg.length + ' → ' + safe.length);
+    msg = safe;
+  } catch (_) {}
   console.log('[LingYa] 回传工具结果, 消息长度=' + msg.length);
   sendMessageToChat(msg, '工具=' + toolCall.toolName, { auto: true });
 }
@@ -695,6 +735,13 @@ function sendCombinedJsResultsToChat(results) {
     msg += sep + '（附了 ' + allImages.length + ' 张图，你看下。）';
   }
 
+  // 【审计修复 2026-11-02】JS 汇总结果回传前脱敏
+  try {
+    const { redactText } = require('./redaction-filter');
+    const safe = redactText(msg);
+    if (safe !== msg) console.log('[LingYa][Redaction] JS 汇总脱敏：' + msg.length + ' → ' + safe.length);
+    msg = safe;
+  } catch (_) {}
   console.log('[LingYa] 回传 JS 汇总执行结果, 消息长度=' + msg.length + ', 图片=' + allImages.length);
   // 先填文本（sendToChat 内部会 selectAll+delete 清空输入框），再注入图片附件；
   // 文本发送有 2-4s 延迟，注入的附件会在发送前附着。
@@ -1502,6 +1549,17 @@ ipcRenderer.on('initial-prompt', (_event, content) => {
 }
 
 
+/** 【Harness 2026-11-02】立即取消待发送消息（清除延迟定时器） */
+function cancelPendingSend() {
+  if (pendingSendTimer) {
+    try { clearTimeout(pendingSendTimer); } catch (_) {}
+    pendingSendTimer = null;
+    console.log('[LingYa] 已取消待发送消息');
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   initialDelay,
   setInputContent,
@@ -1519,4 +1577,6 @@ module.exports = {
   triggerSend,
   registerIpcListeners,
   onUserMessageSent,
+  onMessageDelivered,
+  cancelPendingSend,
 };

@@ -126,9 +126,18 @@ async function uploadContentInternal(content, input) {
   // 并发累积问题的正解是上面的 promise chain 串行锁，不是清 files。
   // 这里只在日志里提示，不做任何破坏性操作。
 
-  // 3. 构造并注入文件
+  // 3. 构造并注入文件（2026-11-02：先过脱敏）
   try {
-    const file = buildFile(content, fileName);
+    // 正向脱敏：把规则表里的真词替换为 ⟦占位符⟧，平台端看不到敏感词
+    let safeContent = content;
+    try {
+      const { redactText } = require('./redaction-filter');
+      safeContent = redactText(content);
+      if (safeContent !== content) {
+        console.log('[LingYa][Redaction] 上传前脱敏：' + content.length + ' → ' + safeContent.length + ' 字符');
+      }
+    } catch (_) { /* 脱敏失败不阻断上传 */ }
+    const file = buildFile(safeContent, fileName);
     const dt = new DataTransfer();
     dt.items.add(file);
     fileInput.files = dt.files;

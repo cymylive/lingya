@@ -50,8 +50,27 @@ function isSensitive(memory) {
   // 人工显式标记优先
   if (memory.sensitive === true) return true;
   const name = String(memory.name || '');
-  if (!name.trim()) return false;
-  return DEFAULT_RULES.some((r) => r.test(name));
+  const content = String(memory.content || '');
+  const tags = Array.isArray(memory.tags) ? memory.tags.join(' ') : '';
+  if (!name.trim() && !content.trim()) return false;
+  // 1) 内置 5 条规则（只看 name）
+  if (name && DEFAULT_RULES.some((r) => r.test(name))) return true;
+  // 2) 用户脱敏规则（含 auto）：命中 name/content/tags 任一即敏感
+  //    2026-11-02 新增：让 AI 自动扫描加的规则也能挡住敏感记忆外发
+  try {
+    const redaction = require('./redaction-store');
+    const rules = redaction.getActiveRules();
+    for (const r of rules) {
+      for (const w of (r.words || [])) {
+        if (!w) continue;
+        const word = String(w);
+        if (name.indexOf(word) !== -1) return true;
+        if (content.indexOf(word) !== -1) return true;
+        if (tags.indexOf(word) !== -1) return true;
+      }
+    }
+  } catch (_) { /* 规则加载失败时退化为只有内置规则生效 */ }
+  return false;
 }
 
 module.exports = { DEFAULT_RULES, isSensitive };

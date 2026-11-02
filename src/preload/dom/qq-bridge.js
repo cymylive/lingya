@@ -43,9 +43,13 @@ function initQqBridge() {
     });
   } catch (_) {}
   try {
-    if (window.electronAPI.getQqConfig) {
-      window.electronAPI.getQqConfig().then((r) => {
-        if (r && r.success && r.config) enabled = !!r.config.enabled;
+    // 【2026-11-01 修复】改用 getQqEnabled（走 qq-is-enabled，非敏感通道）。
+    // 原来用 getQqConfig → qq-get-config 在 ipc-guard 白名单里，
+    // AI 页面（https://chat.deepseek.com/）调用被拒 → enabled 恒为 false
+    // → onInterceptedResponse 第一行 return → AI 回复不上报 → 不回传 QQ。
+    if (window.electronAPI.getQqEnabled) {
+      window.electronAPI.getQqEnabled().then((r) => {
+        if (r) enabled = !!r.enabled;
       }).catch(() => {});
     }
   } catch (_) {}

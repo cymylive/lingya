@@ -85,24 +85,32 @@ test('不再存在慢请求自适应分支（thinkMs 相关代码应已删除）
   );
 });
 
-test('不再调用 computeThinkAdaptiveDelay（自适应延迟已废弃）', () => {
-  // 函数定义可能还在（向后兼容），但不应再被调用
-  const defIndex = SRC_CODE.indexOf('function computeThinkAdaptiveDelay');
-  // 计算函数定义的结束位置
-  let endIndex = defIndex + 200;
-  if (defIndex >= 0) {
-    const searchFrom = defIndex + 'function computeThinkAdaptiveDelay'.length;
-    const nextClosing = SRC_CODE.indexOf('\n}', searchFrom);
-    if (nextClosing > 0) endIndex = nextClosing + 2;
-  }
-  // 剔除函数定义区，剩下的代码不得调用它
-  const withoutDef = defIndex >= 0
-    ? SRC_CODE.slice(0, defIndex) + SRC_CODE.slice(endIndex)
-    : SRC_CODE;
+test('computeThinkAdaptiveDelay 只允许在 dual 分支调用（uniform 分支禁止）', () => {
+  // 2026-11-02 更新：6edee00 恢复了 dual 双策略模式，uniform 仍是默认。
+  // 契约：默认的均匀随机分支必须与历史响应时长完全无关；
+  //       computeThinkAdaptiveDelay 只能出现在 state.sendDelayMode === 'dual' 的分支里。
   assert.ok(
-    !/computeThinkAdaptiveDelay\s*\(/.test(withoutDef),
-    '不得再调用 computeThinkAdaptiveDelay（已在 2026-11-01 移除自适应策略）'
+    SRC_CODE.includes('function computeThinkAdaptiveDelay'),
+    '函数定义应保留（dual 模式仍需要）'
   );
+  // 断言：uniform 分支（else 块里的 pickGlobalDelay 调用）前后不得出现 computeThinkAdaptiveDelay
+  // 【2026-11-02 修复】原锚点是注释 `// 均匀随机（默认`，但 SRC_CODE 已 stripComments，永远找不到。
+  // 改用 branch 字符串特征 '均匀随机：区间'（在源码里是普通字符串，不受注释剥离影响）。
+  const uniformCall = SRC_CODE.indexOf('均匀随机：区间');
+  assert.ok(uniformCall >= 0, '找不到均匀随机分支');
+  const uniformBody = SRC_CODE.slice(uniformCall, uniformCall + 1200);
+  assert.ok(
+    !/computeThinkAdaptiveDelay\s*\(/.test(uniformBody),
+    '均匀随机分支不得调用 computeThinkAdaptiveDelay（默认策略必须与历史无关）'
+  );
+  // 断言：调用点必须在 dual 分支内
+  // 【2026-11-02 修复】原实现用 indexOf('computeThinkAdaptiveDelay()')，会先命中
+  // 函数定义 `function computeThinkAdaptiveDelay() {`（在 dual 判断之前），
+  // 导致 dualIdx < callIdx 永远 false。改用带赋值前缀的调用特征定位真实调用点。
+  const callIdx = SRC_CODE.indexOf('= computeThinkAdaptiveDelay()');
+  assert.ok(callIdx >= 0, 'dual 分支应调用 computeThinkAdaptiveDelay');
+  const dualIdx = SRC_CODE.indexOf("state.sendDelayMode === 'dual'");
+  assert.ok(dualIdx >= 0 && dualIdx < callIdx, '调用点必须位于 dual 分支之后');
 });
 
 test('必须支持新键 lingya-global-send-delay-min / -max', () => {
@@ -128,10 +136,14 @@ test('设置面板必须有两个输入框：最小 / 最大', () => {
 });
 
 test('设置面板保存时必须校验 min <= max', () => {
-  const i = SHELL.indexOf("ev('sh-set-think-save')");
-  assert.ok(i >= 0, '必须有保存按钮绑定');
-  const body = SHELL.slice(i, i + 3000);
-  assert.match(body, /最小值不能大于最大值/, '必须校验 min <= max');
+  // 2026-11-02 更新：保存按钮 id 实为 sh-set-send-save；
+  // 校验文案对齐当前实现（分 uniform / dual 两条）。
+  const i = SHELL.indexOf("ev('sh-set-send-save')");
+  assert.ok(i >= 0, '必须有保存按钮绑定（sh-set-send-save）');
+  const body = SHELL.slice(i, i + 4000);
+  assert.match(body, /0 ≤ min ≤ max/, '必须校验 min <= max（uniform 或 dual 分支）');
+  // dual 分支也要有校验
+  assert.match(body, /dmax<dmin/, 'dual 分支必须校验 dmax >= dmin');
 });
 
 test('设置面板回填必须读新键', () => {

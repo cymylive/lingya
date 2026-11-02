@@ -564,6 +564,134 @@ function createWindow(profile) {
   mainWindow.__aiView = aiView;
   layout();
 
+  // ========== 【Harness 2026-11-02】纯净对话模式 ==========
+  let harnessView = null;
+  {
+    const ctxForHarness = windowState.getWindowContext(mainWindow.id);
+    if (ctxForHarness) {
+      ctxForHarness.harnessView = null;
+      ctxForHarness.harnessVisible = false;
+    }
+  }
+
+  const ensureHarnessView = () => {
+    const curCtx = windowState.getWindowContext(mainWindow.id);
+    if (!curCtx) return null;
+    if (curCtx.harnessView && !curCtx.harnessView.webContents.isDestroyed()) {
+      return curCtx.harnessView;
+    }
+    const { WebContentsView } = require('electron');
+    const hv = new WebContentsView({
+      webPreferences: {
+        preload: path.join(__dirname, '..', 'preload', 'harness-preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        partition: profileData.partition,
+        additionalArguments: ['--lingya-user-data=' + app.getPath('userData')],
+      },
+    });
+    mainWindow.contentView.addChildView(hv);
+    hv.setBackgroundColor('#0f172a');
+    hv.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    curCtx.harnessView = hv;
+    harnessView = hv;
+    hv.webContents.loadFile(path.join(__dirname, '..', 'ui', 'harness.html'));
+    hv.webContents.on('did-finish-load', () => {
+      console.log('[LingYa Harness] 页面加载完成');
+      try {
+        const url = aiView.webContents.getURL();
+        hv.webContents.send('harness-state', { sessionId: url, harness: true });
+      } catch (_) {}
+    });
+    hv.webContents.on('did-fail-load', (_e, code, desc) => {
+      console.error('[LingYa Harness] 页面加载失败: ' + code + ' ' + desc);
+    });
+    hv.webContents.on('console-message', (_e, _l, msg) => {
+      console.log('[Harness Console] ' + msg);
+    });
+    hv.webContents.on('before-input-event', (_event, input) => {
+      if (input.control && !input.shift && (input.key === 'r' || input.key === 'R')) {
+        hv.webContents.reloadIgnoringCache();
+      }
+    });
+    return hv;
+  };
+
+  const toggleHarness = (show) => {
+    if (mainWindow.isDestroyed()) return;
+    const curCtx = windowState.getWindowContext(mainWindow.id);
+    if (!curCtx) return;
+    const next = typeof show === 'boolean' ? show : !curCtx.harnessVisible;
+    curCtx.harnessVisible = next;
+    if (next) {
+      const hv = ensureHarnessView();
+      if (hv) {
+        try { hv.setVisible(true); } catch (_) {}
+        // 隐藏 AI 视图（优先用 curCtx.tabs 的 active tab，回退到闭包里的 aiView）
+        let aiWcForHistory = null;
+        try {
+          const activeTab = curCtx.tabs ? curCtx.tabs.get(curCtx.activeTabId) : null;
+          if (activeTab && activeTab.view && !activeTab.view.webContents.isDestroyed()) {
+            aiWcForHistory = activeTab.view.webContents;
+            activeTab.view.setVisible(false);
+          } else if (aiView && !aiView.webContents.isDestroyed()) {
+            // 回退：用 createWindow 闭包里的主 AI 视图（首次进纯净模式时 activeTabId 可能未就绪）
+            aiWcForHistory = aiView.webContents;
+            aiView.setVisible(false);
+          }
+        } catch (_) {}
+        layout();
+        try { hv.webContents.focus(); } catch (_) {}
+        // 【Harness 历史 2026-11-02】页面加载完成后请求历史（若已加载立即发，否则等 did-finish-load）
+        try {
+          const sendReq = () => {
+            if (!aiWcForHistory) {
+              console.warn('[LingYa Harness] aiWcForHistory 为空，无法请求历史');
+              return;
+            }
+            if (aiWcForHistory.isDestroyed()) {
+              console.warn('[LingYa Harness] aiWcForHistory 已销毁，无法请求历史');
+              return;
+            }
+            aiWcForHistory.send('harness-request-history');
+            console.log('[LingYa Harness] 已请求历史');
+          };
+          // 1200ms：等 harness.html（2670 行）完成初始化 + onEvent 绑定
+          if (hv.webContents.isLoading && hv.webContents.isLoading()) {
+            hv.webContents.once('did-finish-load', () => {
+              setTimeout(sendReq, 1200);
+            });
+          } else {
+            setTimeout(sendReq, 1200);
+          }
+        } catch (_) {}
+      }
+    } else {
+      if (curCtx.harnessView && !curCtx.harnessView.webContents.isDestroyed()) {
+        try { curCtx.harnessView.setVisible(false); } catch (_) {}
+        try { curCtx.harnessView.setBounds({ x: 0, y: 0, width: 0, height: 0 }); } catch (_) {}
+      }
+      // 恢复 AI 视图
+      try {
+        const activeTab = curCtx.tabs ? curCtx.tabs.get(curCtx.activeTabId) : null;
+        if (activeTab && activeTab.view && !activeTab.view.webContents.isDestroyed()) {
+          activeTab.view.setVisible(true);
+        } else if (aiView && !aiView.webContents.isDestroyed()) {
+          aiView.setVisible(true);
+        }
+      } catch (_) {}
+      layout();
+    }
+    // 通知壳页面更新按钮文字
+    try { mainWindow.webContents.send('shell-harness-mode', { harness: next }); } catch (_) {}
+    // 通知 AI 页面（bridge 侧）
+    try { aiView.webContents.send('harness-mode-changed', { harness: next }); } catch (_) {}
+    console.log('[LingYa Harness] 切换: ' + (next ? '纯净模式' : '网页模式'));
+  };
+
+  mainWindow.__lingyaToggleHarness = toggleHarness;
+
   const winSession = aiView.webContents.session;
   sessionsToFlush.add(winSession);
 
@@ -999,6 +1127,21 @@ function setupAppMenu() {
     {
       label: '查看',
       submenu: [
+        {
+          label: '纯净对话模式',
+          accelerator: 'CmdOrCtrl+Shift+H',
+          click: (_item, focusedWindow) => {
+            const win = focusedWindow || BrowserWindow.getFocusedWindow() || windowState.getMainWindow();
+            if (!win) return;
+            try {
+              const raw = win.__rawWindow || win;
+              if (typeof raw.__lingyaToggleHarness === 'function') {
+                raw.__lingyaToggleHarness();
+              }
+            } catch (_) {}
+          }
+        },
+        { type: 'separator' },
         { role: 'resetZoom', label: '重置缩放' },
         { role: 'zoomIn', label: '放大' },
         { role: 'zoomOut', label: '缩小' },
@@ -1125,6 +1268,14 @@ function layoutAIView(mainWindow) {
     const top = TABBAR_HEIGHT;
     const w = Math.max(0, b.width - sw);
     let h = Math.max(0, b.height - top - STATUS_HEIGHT);
+
+    // 【Harness 2026-11-02】纯净模式可见时，harness 视图铺满 AI 区域
+    if (ctx.harnessVisible && ctx.harnessView && !ctx.harnessView.webContents.isDestroyed()) {
+      try {
+        ctx.harnessView.setBounds({ x: sw, y: top, width: w, height: h });
+      } catch (_) {}
+      // AI 视图仍保持原尺寸（隐藏状态），避免显示时位置跳变
+    }
 
     // 合并模式：宿主 active tab -> 附加面板（侧边栏 + AI 视图）
     const attached = ctx.attachedViews || [];

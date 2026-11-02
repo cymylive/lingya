@@ -2460,6 +2460,7 @@
       {id:'security', label:'网络安全'},
       {id:'ai-intercept', label:'AI 回复拦截'},
       {id:'prompt-tpl', label:'提示词管理'},
+      {id:'redaction', label:'脱敏规则'},
       {id:'logs', label:'日志'}
     ];
     var active = 'appearance';
@@ -2608,6 +2609,49 @@
               '<button class="sh-btn" id="sh-tpl-cancel">取消</button>' +
               '<button class="sh-btn primary" id="sh-tpl-save">保存</button>' +
             '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      // 脱敏规则（2026-11-02）
+      '<div class="ly-set-cat'+(active==='redaction'?' active':'')+'" data-cat="redaction">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">脱敏规则</div>' +
+          '<div class="ly-set-desc">' +
+            '把敏感真词替换成 ⟦占位符⟧ 再发给网页端。AI 侧看到的是占位符，工具执行前会自动还原成真词，不影响任务完成。<br>' +
+            '生效范围：长消息附件上传（>阈值）、工具结果回填。占位符建议用「项目A」「操作1」这种中性词。' +
+          '</div>' +
+          '<div class="ly-set-row" style="margin-top:8px;">' +
+            '<button class="sh-btn primary" id="sh-red-new">＋ 新增规则</button>' +
+            '<button class="sh-btn" id="sh-red-ai-scan" title="扫描全部记忆，自动识别敏感专有名词并加规则">🤖 AI 整理</button>' +
+            '<button class="sh-btn" id="sh-red-refresh">刷新</button>' +
+          '</div>' +
+          '<div class="ly-set-row" style="margin-top:6px;">' +
+            '<button class="sh-btn" id="sh-red-promote-all" title="把所有 AI 自动加的规则扩展到全局（影响用户输入侧）">⬆ 全部采纳</button>' +
+            '<button class="sh-btn" id="sh-red-del-all-auto" style="color:#f87171;" title="删除所有 AI 自动加的规则（保留手动加的）">🗑 全部撤销 AI 规则</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="sh-red-list" class="sh-empty" style="text-align:left;padding:8px 0;">加载中…</div>' +
+        '</div>' +
+        // 编辑器（默认隐藏）
+        '<div class="sh-card" id="sh-red-editor" style="display:none;">' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">占位符名（如 项目A，不带 ⟦ ⟧）</div>' +
+            '<input id="sh-red-name" type="text" class="ly-set-input" style="width:100%;margin-top:4px;" placeholder="项目A" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">真词列表（逗号分隔，多个词映射到同一占位符）</div>' +
+            '<input id="sh-red-words" type="text" class="ly-set-input" style="width:100%;margin-top:4px;" placeholder="bdwkup, bd_wkup" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">描述（给 AI 看的，不含真词）</div>' +
+            '<input id="sh-red-desc" type="text" class="ly-set-input" style="width:100%;margin-top:4px;" placeholder="一个 Python 自动化项目" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<label class="ly-set-toggle"><input type="checkbox" id="sh-red-enabled" checked /><span>启用</span></label>' +
+          '</div>' +
+          '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;">' +
+            '<button class="sh-btn" id="sh-red-cancel">取消</button>' +
+            '<button class="sh-btn primary" id="sh-red-save">保存</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -3056,6 +3100,197 @@
       }
       toast2('AI 回复拦截配置已保存（' + lines.length + ' 条正则）');
     });
+
+    // ===== 脱敏规则管理（2026-11-02）=====
+    (function(){
+      var editingName = null; // 正在编辑的规则名（null=新建）
+      function ev2(id){ return document.getElementById(id); }
+      function showEditor(show){ var el2 = ev2('sh-red-editor'); if(el2) el2.style.display = show ? '' : 'none'; }
+
+      function renderList(rules){
+        var box = ev2('sh-red-list');
+        if(!box) return;
+        if(!Array.isArray(rules)){
+          box.innerHTML = '<div style="padding:8px;color:#f87171;font-size:12px;">加载失败：' + esc(String((rules&&rules.error)||'未知错误')) + '</div>';
+          return;
+        }
+        if(rules.length === 0){
+          box.innerHTML = '<div style="padding:8px 0;color:var(--ck-text-dim);font-size:12px;">暂无规则，点上方「新增规则」开始</div>';
+          return;
+        }
+        var h = '';
+        var autoCount = 0;
+        for(var i=0;i<rules.length;i++){
+          var r = rules[i];
+          var enabled = r.enabled !== false;
+          var color = enabled ? 'var(--ck-primary)' : '#666';
+          var status = enabled ? '启用' : '停用';
+          var words = (r.words || []).join(' / ');
+          var isAuto = r.source === 'auto';
+          var isMemoryOnly = r.scope === 'memory-only';
+          if(isAuto) autoCount++;
+          // 来源标记
+          var sourceBadge = isAuto
+            ? '<span title="AI 自动添加" style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(139,92,246,0.2);color:#a78bfa;flex-shrink:0;">🤖' + (isMemoryOnly ? '仅记忆' : '') + '</span>'
+            : '<span title="手动添加" style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(34,197,94,0.15);color:#86efac;flex-shrink:0;">👤</span>';
+          // auto 且 memory-only 时，提供「扩展到全局」按钮
+          var promoteBtn = (isAuto && isMemoryOnly)
+            ? '<button class="sh-tpl-icon-btn" data-red-act="promote" data-red-name="' + esc(r.name) + '" title="扩展到全局（影响用户输入）">⬆</button>'
+            : '';
+          h += '<div class="sh-tpl-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px;overflow:hidden;">'
+            + sourceBadge
+            + '<span style="background:rgba(45,212,191,0.15);color:#2dd4bf;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;font-weight:600;flex-shrink:0;">⟦' + esc(r.name) + '⟧</span>'
+            + '<span style="color:#ddd;font-family:Consolas,monospace;flex-shrink:1;min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(words) + '">' + esc(words) + '</span>'
+            + '<span style="color:#999;font-style:italic;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(r.desc||'') + '">' + esc(r.desc || '（无描述）') + '</span>'
+            + '<span style="font-size:10px;color:' + color + ';flex-shrink:0;">' + status + '</span>'
+            + promoteBtn
+            + '<button class="sh-tpl-icon-btn" data-red-act="edit" data-red-name="' + esc(r.name) + '" title="编辑">✎</button>'
+            + '<button class="sh-tpl-icon-btn danger" data-red-act="delete" data-red-name="' + esc(r.name) + '" title="删除">🗑</button>'
+            + '</div>';
+        }
+        // 统计信息（放在列表前面）
+        var stats = '<div style="font-size:11px;color:var(--ck-text-dim);padding:4px 0;margin-bottom:4px;">共 ' + rules.length + ' 条规则（🤖 AI 自动 ' + autoCount + ' 条，👤 手动 ' + (rules.length - autoCount) + ' 条）</div>';
+        box.innerHTML = stats + h;
+        // 绑定行内按钮
+        var btns = box.querySelectorAll('button[data-red-act]');
+        for(var k=0;k<btns.length;k++){
+          (function(b){
+            b.addEventListener('click', function(){
+              var act = b.getAttribute('data-red-act');
+              var name = b.getAttribute('data-red-name');
+              if(act === 'edit') editRule(name);
+              else if(act === 'delete') deleteRule(name);
+              else if(act === 'promote') promoteRule(name);
+            });
+          })(btns[k]);
+        }
+      }
+
+      function loadList(){
+        if(!window.shellAPI || !window.shellAPI.redactionRulesList) return;
+        window.shellAPI.redactionRulesList().then(function(r){ renderList(r); })['catch'](function(){
+          var box = ev2('sh-red-list'); if(box) box.innerHTML = '<div style="padding:8px;color:#f87171;font-size:12px;">加载失败</div>';
+        });
+      }
+
+      function editRule(name){
+        // 先拉到当前列表，找到这条
+        window.shellAPI.redactionRulesList().then(function(rules){
+          var r = (rules||[]).filter(function(x){return x.name===name;})[0];
+          if(!r){ toast2('规则不存在'); return; }
+          editingName = name;
+          var nameEl = ev2('sh-red-name'); if(nameEl){ nameEl.value = r.name; nameEl.readOnly = true; }
+          var wordsEl = ev2('sh-red-words'); if(wordsEl) wordsEl.value = (r.words||[]).join(', ');
+          var descEl = ev2('sh-red-desc'); if(descEl) descEl.value = r.desc || '';
+          var enEl = ev2('sh-red-enabled'); if(enEl) enEl.checked = r.enabled !== false;
+          showEditor(true);
+        })['catch'](function(){ toast2('加载失败'); });
+      }
+
+      function deleteRule(name){
+        if(!confirm('确定删除规则「' + name + '」？')) return;
+        window.shellAPI.redactionRulesDelete(name).then(function(r){
+          if(r && r.error){ toast2('删除失败：' + r.error); return; }
+          toast2('已删除');
+          loadList();
+          // 通知 preload 侧刷新缓存
+          try { window.shellAPI.setSetting('redaction-refresh', Date.now()); } catch(_e){}
+        })['catch'](function(){ toast2('删除失败'); });
+      }
+
+      function promoteRule(name){
+        if(!confirm('把「' + name + '」扩展到全局？\n\n扩展后会同时影响：\n· 用户输入的上传附件\n· 工具结果回填\n\n确认前请确保这个词确实不该出现在网页端。')) return;
+        window.shellAPI.redactionPromoteOne(name).then(function(r){
+          if(r && r.success){ toast2('已扩展到全局'); loadList(); }
+          else toast2('失败：' + ((r && r.error) || '未知'));
+        })['catch'](function(){ toast2('失败'); });
+      }
+
+      // AI 自动整理
+      var aiScan = ev2('sh-red-ai-scan');
+      if(aiScan) aiScan.addEventListener('click', function(){
+        aiScan.disabled = true;
+        aiScan.textContent = '扫描中…';
+        window.shellAPI.redactionAutoScan().then(function(r){
+          aiScan.disabled = false;
+          aiScan.textContent = '🤖 AI 整理';
+          if(!r || !r.success){ toast2('扫描失败：' + ((r && r.error) || '未知')); return; }
+          var msg = '扫描 ' + r.totalScanned + ' 条记忆，自动加 ' + (r.added||[]).length + ' 条规则';
+          if(r.added && r.added.length > 0){
+            msg += '\n' + r.added.map(function(x){return '⟦' + x.name + '⟧ ← ' + x.words.join(',');}).join('\n');
+          }
+          alert(msg);
+          loadList();
+        })['catch'](function(){ aiScan.disabled = false; aiScan.textContent = '🤖 AI 整理'; toast2('扫描失败'); });
+      });
+
+      // 全部采纳（auto 规则扩展到全局）
+      var promoteAll = ev2('sh-red-promote-all');
+      if(promoteAll) promoteAll.addEventListener('click', function(){
+        if(!confirm('把所有 AI 自动加的规则扩展到全局？\n\n扩展后会影响用户输入侧和工具回填。')) return;
+        window.shellAPI.redactionPromoteAllAuto().then(function(r){
+          if(r && r.success){ toast2('已采纳 ' + r.promoted + ' 条'); loadList(); }
+          else toast2('失败：' + ((r && r.error) || '未知'));
+        })['catch'](function(){ toast2('失败'); });
+      });
+
+      // 全部撤销 AI 规则
+      var delAllAuto = ev2('sh-red-del-all-auto');
+      if(delAllAuto) delAllAuto.addEventListener('click', function(){
+        if(!confirm('删除所有 AI 自动加的规则？手动加的规则不受影响。')) return;
+        window.shellAPI.redactionDeleteAllAuto().then(function(r){
+          if(r && r.success){ toast2('已删除 ' + r.deleted + ' 条 AI 规则'); loadList(); }
+          else toast2('失败：' + ((r && r.error) || '未知'));
+        })['catch'](function(){ toast2('失败'); });
+      });
+
+      var nb = ev2('sh-red-new');
+      if(nb) nb.addEventListener('click', function(){
+        editingName = null;
+        var nameEl = ev2('sh-red-name'); if(nameEl){ nameEl.value = ''; nameEl.readOnly = false; }
+        var wordsEl = ev2('sh-red-words'); if(wordsEl) wordsEl.value = '';
+        var descEl = ev2('sh-red-desc'); if(descEl) descEl.value = '';
+        var enEl = ev2('sh-red-enabled'); if(enEl) enEl.checked = true;
+        showEditor(true);
+        if(nameEl) nameEl.focus();
+      });
+
+      var rf = ev2('sh-red-refresh');
+      if(rf) rf.addEventListener('click', loadList);
+
+      var cb = ev2('sh-red-cancel');
+      if(cb) cb.addEventListener('click', function(){ showEditor(false); });
+
+      var sb = ev2('sh-red-save');
+      if(sb) sb.addEventListener('click', function(){
+        var name = ((ev2('sh-red-name')||{}).value || '').trim();
+        var wordsRaw = ((ev2('sh-red-words')||{}).value || '').trim();
+        var desc = ((ev2('sh-red-desc')||{}).value || '').trim();
+        var enabled = !!((ev2('sh-red-enabled')||{}).checked);
+        if(!name){ toast2('占位符名不能为空'); return; }
+        if(!wordsRaw){ toast2('真词列表不能为空'); return; }
+        var words = wordsRaw.split(/[,，、\n]+/).map(function(w){return w.trim();}).filter(Boolean);
+        if(words.length === 0){ toast2('真词列表不能为空'); return; }
+        var payload = { name: name, words: words, desc: desc, enabled: enabled };
+        if(editingName){
+          window.shellAPI.redactionRulesUpdate(editingName, payload).then(function(r2){
+            if(r2 && r2.error){ toast2('保存失败：' + r2.error); return; }
+            toast2('已更新');
+            showEditor(false);
+            loadList();
+          })['catch'](function(){ toast2('保存失败'); });
+        } else {
+          window.shellAPI.redactionRulesAdd(payload).then(function(r2){
+            if(r2 && r2.error){ toast2('新增失败：' + r2.error); return; }
+            toast2('已新增：' + name);
+            showEditor(false);
+            loadList();
+          })['catch'](function(){ toast2('新增失败'); });
+        }
+      });
+
+      loadList();
+    })();
   }
 
   // 绑定视图按钮 + 活动栏网格/拖拽
@@ -3907,6 +4142,42 @@
     if (backBtn) backBtn.addEventListener('click', function(){ window.shellAPI.tabBack()['catch'](function(){}); });
     if (fwdBtn) fwdBtn.addEventListener('click', function(){ window.shellAPI.tabForward()['catch'](function(){}); });
     if (reloadBtn) reloadBtn.addEventListener('click', function(){ window.shellAPI.tabReload()['catch'](function(){}); });
+
+    // 【Harness 2026-11-02】纯净对话模式切换按钮
+    var harnessBtn = document.getElementById('lingya-harness-toggle');
+    if (harnessBtn) {
+      harnessBtn.addEventListener('click', function(){
+        if (window.shellAPI && window.shellAPI.toggleHarness) {
+          window.shellAPI.toggleHarness().then(function(r){
+            if (r && r.success) {
+              toast2(r.harness ? '已进入纯净模式' : '已切回网页模式');
+            } else {
+              toast2('切换失败：' + ((r && r.error) || '未知'));
+            }
+          })['catch'](function(){ toast2('切换失败'); });
+        }
+      });
+    }
+    // 快捷键 Ctrl+Shift+H
+    document.addEventListener('keydown', function(e){
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
+        e.preventDefault();
+        if (window.shellAPI && window.shellAPI.toggleHarness) {
+          window.shellAPI.toggleHarness().then(function(r){
+            if (r && r.success) toast2(r.harness ? '已进入纯净模式' : '已切回网页模式');
+          })['catch'](function(){});
+        }
+      }
+    });
+    // 监听主进程的 harness 模式变化（更新按钮文字）
+    if (window.shellAPI && window.shellAPI.onHarnessMode) {
+      window.shellAPI.onHarnessMode(function(payload){
+        if (harnessBtn) {
+          harnessBtn.textContent = (payload && payload.harness) ? '原' : '净';
+          harnessBtn.title = (payload && payload.harness) ? '切回网页模式 (Ctrl+Shift+H)' : '切换纯净对话模式 (Ctrl+Shift+H)';
+        }
+      });
+    }
 
     // ===== 标签列表下拉 =====
     var tabsMenuBtn = document.getElementById('lingya-tabs-menu');

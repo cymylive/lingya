@@ -102,7 +102,8 @@ test('播种：已存在的插件目录只补齐缺失文件，不覆盖用户�
   host.init(seedRoot);
 
   const pluginsDir = path.join(seedRoot, 'plugins');
-  const target = 'refusal-rewriter';
+  // 【2026-11-02 修复】refusal-rewriter 已在 v0.6.129 剥离，改用现存的 task-watcher
+  const target = 'task-watcher';
   const dstDir = path.join(pluginsDir, target);
   assert.ok(fs.existsSync(dstDir), '自带插件应被首次播种');
 

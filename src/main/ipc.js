@@ -907,6 +907,81 @@ function registerIpcHandlers() {
   });
 
   // 执行工具
+  // 2026-11-02：preload 侧的脱敏引擎需要拉取规则表
+  ipcMain.handle('get-redaction-rules', async (_e, scope) => {
+    try {
+      return require('./redaction-store').getActiveRules(scope || null);
+    } catch (err) {
+      console.warn('[Redaction] 拉取规则失败:', err.message);
+      return [];
+    }
+  });
+
+  // 脱敏规则 CRUD（供侧边栏面板使用）
+  ipcMain.handle('redaction-rules-list', async () => {
+    try {
+      return require('./redaction-store').listRules();
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-rules-add', async (_e, rule) => {
+    try {
+      return require('./redaction-store').addRule(rule);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-rules-update', async (_e, { name, patch }) => {
+    try {
+      return require('./redaction-store').updateRule(name, patch);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-rules-delete', async (_e, { name }) => {
+    try {
+      return require('./redaction-store').deleteRule(name);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  // 2026-11-02：自动扫描 + 批量操作
+  ipcMain.handle('redaction-auto-scan', async () => {
+    try {
+      const store = require('./redaction-store');
+      const memoryStore = require('./memory-store');
+      const result = store.autoScanMemories(() => memoryStore.getAllMemories());
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-delete-all-auto', async () => {
+    try {
+      const count = require('./redaction-store').deleteAllAutoRules();
+      return { success: true, deleted: count };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-promote-all-auto', async () => {
+    try {
+      const count = require('./redaction-store').promoteRecentAutoToGlobal();
+      return { success: true, promoted: count };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-promote-one', async (_e, { name }) => {
+    try {
+      const r = require('./redaction-store').promoteToGlobal(name);
+      return { success: true, rule: r };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('execute-tool', async (event, { toolName, params, callId }) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     const store = ctx ? ctx.sessionStore : null;
@@ -933,8 +1008,12 @@ function registerIpcHandlers() {
       const tlId = toolLifecycle.register(sessionKey, toolName);
       const holder = { data: null, output: null, images: null };
       try {
+        // 2026-11-02：AI 传进来的参数里如果有 ⟦占位符⟧，先还原成真词，
+        // 否则工具拿到的路径/关键词都是占位符，会导致"文件找不到"之类的问题。
+        const redactionStore = require('./redaction-store');
+        const restoredParams = redactionStore.unredactDeep(params);
         const result = await toolRegistry.execute(toolName, {
-          ...params,
+          ...restoredParams,
           profileId,
           sessionId,
           projectDir: selectedDir,
@@ -1776,6 +1855,251 @@ function registerIpcHandlers() {
   } catch (err) {
     console.error('[LingYa] cdp-wiring 安装失败:', err && err.message);
   }
+
+  // ==================== 【Harness 2026-11-02】纯净对话模式 IPC ====================
+
+  /** 找发起事件的窗口上下文（含 harness 视图、AI 视图） */
+  function getHarnessInfo(event) {
+    let ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) {
+      // 可能是从 harness 视图本身发起
+      const all = windowState.getAllContexts();
+      for (const c of all) {
+        if (c.harnessView && !c.harnessView.webContents.isDestroyed() && c.harnessView.webContents === event.sender) {
+          ctx = c;
+          break;
+        }
+      }
+    }
+    if (!ctx) return null;
+    const activeTab = ctx.tabs ? ctx.tabs.get(ctx.activeTabId) : null;
+    const aiWc = (activeTab && activeTab.view && !activeTab.view.webContents.isDestroyed())
+      ? activeTab.view.webContents
+      : (ctx.view && !ctx.view.webContents.isDestroyed() ? ctx.view.webContents : null);
+    return { ctx, aiWc };
+  }
+
+  ipcMain.handle('harness-toggle', async (event, { show } = {}) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info) return { success: false, error: '窗口不存在' };
+      const rawWin = info.ctx.rawWin;
+      if (!rawWin || typeof rawWin.__lingyaToggleHarness !== 'function') {
+        return { success: false, error: '切换函数未就绪' };
+      }
+      rawWin.__lingyaToggleHarness(show);
+      return { success: true, harness: !!info.ctx.harnessVisible };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-send', async (event, { text } = {}) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.aiWc) return { success: false, error: 'AI 视图不可用' };
+      info.aiWc.send('harness-user-message', { text: String(text || '') });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-exit', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info) return { success: false, error: '窗口不存在' };
+      const rawWin = info.ctx.rawWin;
+      if (rawWin && typeof rawWin.__lingyaToggleHarness === 'function') {
+        rawWin.__lingyaToggleHarness(false);
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-stop', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.aiWc) return { success: false, error: 'AI 视图不可用' };
+      info.aiWc.send('harness-stop-signal');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-reload', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.ctx.harnessView) return { success: false, error: 'harness 未创建' };
+      info.ctx.harnessView.webContents.reloadIgnoringCache();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-new-conversation', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.aiWc) return { success: false, error: 'AI 视图不可用' };
+      info.aiWc.send('lingya-new-chat-request');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.handle('harness-get-state', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info) return { success: false, error: '窗口不存在' };
+      const store = info.ctx.sessionStore;
+      const projectDir = store && store.state ? store.state.selectedProjectDir : null;
+      // Cuckoo harness 期待 { needInit }：无项目目录时为 true
+      const needInit = !projectDir;
+      return {
+        success: true,
+        needInit,
+        projectDir: projectDir || '',
+        harness: !!info.ctx.harnessVisible,
+      };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  // 列出可用工具与技能（供 harness 斜杠菜单）
+  ipcMain.handle('harness-list-tools', async () => {
+    try {
+      const descs = toolRegistry.getDescriptions ? toolRegistry.getDescriptions() : [];
+      const tools = (descs || []).map((t) => ({
+        name: t.name,
+        description: t.description || '',
+      }));
+      let skills = [];
+      try {
+        const allSkills = skillStore.getAllSkills ? skillStore.getAllSkills() : [];
+        skills = (allSkills || []).filter((s) => s.enabled !== false).map((s) => ({
+          name: s.name,
+          description: s.description || '',
+          path: s.localPath || '',
+        }));
+      } catch (_) {}
+      return { success: true, tools, skills };
+    } catch (err) {
+      return { success: false, error: err && err.message, tools: [], skills: [] };
+    }
+  });
+
+  ipcMain.handle('harness-init-project', async (event) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info) return { success: false, error: '窗口不存在' };
+      await initProject(false, info.ctx, null, false);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  // 【Harness 2026-11-02】附件上传：CDP executeJavaScript 注入（对齐 Cuckoo）
+  // 把文件转为 DataTransfer + File 对象，注入到 AI 页面的 input[type=file] 上
+  ipcMain.handle('harness-attach', async (event, { files } = {}) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.aiWc) return { success: false, error: 'AI 视图不可用' };
+      const arr = Array.isArray(files) ? files : [];
+      if (arr.length === 0) return { success: false, error: '无文件' };
+
+      // 构造注入脚本（每个文件依次上传）
+      // 核心逻辑参考 Cuckoo src/app/ipc/harness.ts 的 attachFn：
+      //   1. base64 → Uint8Array → File
+      //   2. 找 input[type=file]（找不到则尝试点击上传按钮触发）
+      //   3. DataTransfer 注入 + dispatchEvent('change')
+      const uploadFn = `(async function(filesData) {
+        function findInput() { return document.querySelector('input[type=file]'); }
+        let input = findInput();
+        if (!input) {
+          // 尝试点击上传按钮触发 input 出现
+          const keys = ['attach','upload','paperclip','file','image','图片','文件','上传','添加'];
+          const cands = document.querySelectorAll('button, [role=button], [class*=attach], [class*=upload], [class*=file], [class*=plus], [class*=add]');
+          for (let ci = 0; ci < cands.length; ci++) {
+            const b = cands[ci];
+            if (!b || b.offsetWidth === 0) continue;
+            const sig = String(b.className || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '');
+            const low = sig.toLowerCase();
+            for (let ki = 0; ki < keys.length; ki++) {
+              if (low.indexOf(keys[ki].toLowerCase()) !== -1) { b.click(); break; }
+            }
+            input = findInput();
+            if (input) break;
+          }
+          if (!input) {
+            const dl = Date.now() + 2500;
+            while (Date.now() < dl && !input) {
+              await new Promise(function(r) { setTimeout(r, 120); });
+              input = findInput();
+            }
+          }
+        }
+        if (!input) return { success: false, error: '未找到文件上传输入框' };
+        const results = [];
+        for (let i = 0; i < filesData.length; i++) {
+          const fd = filesData[i];
+          try {
+            const bin = atob(fd.data);
+            const bytes = new Uint8Array(bin.length);
+            for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+            const file = new File([bytes], fd.name, { type: fd.mime || 'application/octet-stream' });
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            results.push({ name: fd.name, ok: true });
+            await new Promise(function(r) { setTimeout(r, 400); });
+          } catch (err) {
+            results.push({ name: fd.name, ok: false, error: err.message });
+          }
+        }
+        return { success: results.some(function(x) { return x.ok; }), results: results };
+      })(` + JSON.stringify(arr) + `)`;
+
+      const result = await info.aiWc.executeJavaScript(uploadFn, true);
+      if (!result || !result.success) {
+        return { success: false, error: (result && result.error) || '注入上传失败', results: (result && result.results) || [] };
+      }
+      // 上传完成后，发一条提示消息给 AI（引导它查看附件）
+      try {
+        const names = arr.map((f) => f.name).filter(Boolean).join('、');
+        if (names) info.aiWc.send('harness-user-message', { text: '我上传了附件：' + names });
+      } catch (_) {}
+      return { success: true, results: result.results };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  // bridge 上报事件 → 转发给 harness 视图
+  ipcMain.handle('harness-event-report', async (event, payload) => {
+    try {
+      const info = getHarnessInfo(event);
+      if (!info || !info.ctx.harnessView) return { success: true, dropped: true };
+      const hv = info.ctx.harnessView;
+      if (hv.webContents.isDestroyed()) return { success: true, dropped: true };
+      hv.webContents.send('harness-event', payload || {});
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err && err.message };
+    }
+  });
+
+  ipcMain.on('harness-set-busy', () => { /* 预留 */ });
+  ipcMain.on('harness-ready', () => { /* 预留 */ });
+
+  // ==================== Harness IPC 结束 ====================
 }
 
 /**

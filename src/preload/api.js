@@ -48,6 +48,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
   // 劫持 getItem / setItem / removeItem。只改 'lingya-*' 键，其他键（含 DeepSeek 自己的）原样透传。
   const LS = window.localStorage;
+  if (!LS) return; // 测试桩 / 禁用存储环境无 localStorage，跳过劫持
   const origGet = LS.getItem.bind(LS);
   const origSet = LS.setItem.bind(LS);
   const origRemove = LS.removeItem.bind(LS);
@@ -99,6 +100,12 @@ let electronAPI = {
   // 内存诊断 / 手动回收
   memoryStatus: () => ipcRenderer.invoke('memory-status'),
   memoryCollect: () => ipcRenderer.invoke('memory-collect'),
+  // 2026-11-02：脱敏规则（preload 侧脱敏引擎用）
+  getRedactionRules: (scope) => ipcRenderer.invoke('get-redaction-rules', scope || null),
+  redactionRulesList: () => ipcRenderer.invoke('redaction-rules-list'),
+  redactionRulesAdd: (rule) => ipcRenderer.invoke('redaction-rules-add', rule),
+  redactionRulesUpdate: (name, patch) => ipcRenderer.invoke('redaction-rules-update', { name, patch }),
+  redactionRulesDelete: (name) => ipcRenderer.invoke('redaction-rules-delete', { name }),
   toolLifecycleStats: () => ipcRenderer.invoke('tool-lifecycle-stats'),
   toolLifecycleSweep: (sessionKey) => ipcRenderer.invoke('tool-lifecycle-sweep', { sessionKey }),
   clearAbort: () => {
@@ -361,6 +368,12 @@ let electronAPI = {
     return ipcRenderer.invoke('weixin-report', payload);
   },
   // ========== QQ 通道 API ==========
+  // 【2026-11-01 修复】轻量启用状态查询。
+  // qq-get-config 在 ipc-guard 的敏感白名单里，AI 页面（http 来源）调用会被拒，
+  // 导致 bridge 拿不到 enabled → AI 回复不上报 → 不回传 QQ。这个通道只返回布尔值，不敏感。
+  getQqEnabled: () => {
+    return ipcRenderer.invoke('qq-is-enabled');
+  },
   getQqConfig: () => {
     return ipcRenderer.invoke('qq-get-config');
   },

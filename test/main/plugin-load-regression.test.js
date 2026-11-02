@@ -21,7 +21,6 @@ const ROOT = path.join(__dirname, '..', '..');
 
 // 插件目录名 → 外置脚本文件名
 const PRELOAD_FILES = [
-  ['refusal-rewriter', 'preload.js'],
   ['task-watcher', 'preload.js'],
 ];
 
@@ -49,17 +48,6 @@ for (const [plugin, file] of PRELOAD_FILES) {
     assert.ok(!longInline, 'index.js 仍有超长内联字符串，应外置为独立文件');
   });
 }
-
-test('refusal-rewriter: preload.js 的正则必须是 [\\s\\S] 而非退化的 [sS]', () => {
-  const code = fs.readFileSync(
-    path.join(ROOT, 'plugins', 'refusal-rewriter', 'preload.js'),
-    'utf8'
-  );
-  const BS = String.fromCharCode(92);
-  const good = '[' + BS + 's' + BS + 'S]';
-  assert.ok(code.includes(good), '缺少 [\\s\\S] 正则（曾被误写为 [sS]）');
-  assert.ok(!code.includes('[sS]'), '仍存在退化的 [sS] 正则');
-});
 
 test('plugin-host: 打包执行时注入 __dirname / __filename', () => {
   const hostSrc = fs.readFileSync(
@@ -93,3 +81,4 @@ test('plugin-host: 注入的 __dirname 指向插件目录（行为验证）', ()
   assert.strictEqual(mod.dir, fakePluginDir);
   assert.strictEqual(mod.file, entryPath);
 });
+

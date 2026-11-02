@@ -394,9 +394,29 @@ async function processInterceptedResponse(text, force, interrupted) {
     try { taskState.setQueued(false); } catch (_) {}
     // 状态机：进入工具执行阶段（超时阈值 720s，覆盖 JsRunner 的 660s deadline）
     try { taskState.transition(taskState.STATES.EXECUTING); } catch (_) {}
-    emitToolCall({ phase: 'start' });
+    // 【Harness 2026-11-02】把实际执行的 JS 代码传给监听器，供 harness 显示工具名和参数
+    const combinedCode = jsBlocks.join(String.fromCharCode(10) + String.fromCharCode(10));
+    emitToolCall({ phase: 'start', code: combinedCode });
     const results = await executeJsBlocksWithRetry(jsBlocks);
-    emitToolCall({ phase: 'end', success: results.some((r) => r && r.result && r.result.success) });
+    // 结果拼成文本传给 end 事件
+    let endOutput = '';
+    let endSuccess = false;
+    try {
+      const outLines = [];
+      for (const r of (results || [])) {
+        if (r && r.result) {
+          if (r.result.success) {
+            endSuccess = true;
+            const d = r.result.data;
+            outLines.push(typeof d === 'string' ? d : JSON.stringify(d));
+          } else {
+            outLines.push('❌ ' + (r.result.error || '失败'));
+          }
+        }
+      }
+      endOutput = outLines.join(String.fromCharCode(10) + String.fromCharCode(10));
+    } catch (_) {}
+    emitToolCall({ phase: 'end', success: endSuccess, output: endOutput, code: combinedCode });
     if (results.length > 0) {
       if (state.stopped) {
         console.log('[LingYa][拦截] 已停止，丢弃 JS 结果回传');
@@ -514,6 +534,8 @@ async function processInterceptedResponse(text, force, interrupted) {
     // 防误催由 state.awaitingUserInput 负责（supervisor 会先检查它）。
     try { taskState.reset('AI 在向用户提问'); } catch (_) {}
     try { markTaskDone(); } catch (_) { /* 显示为待交互 */ }
+    // 【Harness 2026-11-02】任务空闲信号（AI 在等用户）
+    try { emitTaskIdle(); } catch (_) {}
     return;
   }
   // 计划已完成 / 本就无计划 → 收尾
@@ -542,6 +564,8 @@ async function processInterceptedResponse(text, force, interrupted) {
   } catch (e) { /* ignore */ }
   // 任务完成标志：悬浮球转绿 + 提示（飞书由 feishu-bridge 独立上报 task-done）
   try { markTaskDone(); } catch (e) { /* ignore */ }
+  // 【Harness 2026-11-02】任务空闲信号（一轮 Agent 循环正常结束）
+  try { emitTaskIdle(); } catch (_) {}
 }
 
 // 工具调用监听器（供飞书同步等订阅工具 start/end 状态）
@@ -561,6 +585,49 @@ function onToolCall(cb) {
 function emitToolCall(ev) {
   if (toolCallListeners.size === 0) return;
   for (const cb of toolCallListeners) {
+    try { cb(ev); } catch (_) { /* ignore */ }
+  }
+}
+
+// ===== Harness（纯净模式）用的事件派发 =====
+// 2026-11-02 新增：为 harness 页面提供流式增量、任务空闲、AI 错误三个事件。
+// 不改动现有 Agent 循环，纯新增回调通道（无监听者时零开销）。
+const streamListeners = new Set();
+const taskIdleListeners = new Set();
+const aiErrorListeners = new Set();
+
+function onStream(cb) {
+  streamListeners.add(cb);
+  return () => streamListeners.delete(cb);
+}
+
+function emitStream(ev) {
+  if (streamListeners.size === 0) return;
+  for (const cb of streamListeners) {
+    try { cb(ev); } catch (_) { /* ignore */ }
+  }
+}
+
+function onTaskIdle(cb) {
+  taskIdleListeners.add(cb);
+  return () => taskIdleListeners.delete(cb);
+}
+
+function emitTaskIdle() {
+  if (taskIdleListeners.size === 0) return;
+  for (const cb of taskIdleListeners) {
+    try { cb(); } catch (_) { /* ignore */ }
+  }
+}
+
+function onAiError(cb) {
+  aiErrorListeners.add(cb);
+  return () => aiErrorListeners.delete(cb);
+}
+
+function emitAiError(ev) {
+  if (aiErrorListeners.size === 0) return;
+  for (const cb of aiErrorListeners) {
     try { cb(ev); } catch (_) { /* ignore */ }
   }
 }
@@ -673,8 +740,22 @@ function startInterceptObserver() {
       const d = (ev && ev.detail) || {};
       tpsMeter.update(d.text || '', !!d.finished, typeof d.accumulatedTokens === 'number' ? d.accumulatedTokens : null);
       pushTps();
+      // 【Harness 2026-11-02】流式增量派发（无监听者时零开销）
+      emitStream({ text: d.text || '', think: d.think || d.thinking || '', finished: !!d.finished });
     } catch (_) {}
   });
+
+  // 【Harness 2026-11-02】AI 错误事件派发（供 harness 复位忙碌状态）
+  try {
+    if (evtNames.AI_ERROR) {
+      window.addEventListener(evtNames.AI_ERROR, (ev) => {
+        try {
+          const d = (ev && ev.detail) || {};
+          emitAiError(d);
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
 
   window.addEventListener(evtNames.AI_START, () => {
     try {
@@ -1033,4 +1114,4 @@ function resetGenerating() {
   if (getFabState() === 'generating') setFabState('idle');
 }
 
-module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, onInterceptedResponse, onToolCall, resetGenerating, getQueueState, DONE_HINT_RE };
+module.exports = { startInterceptObserver, processInterceptedResponse, getLastInterceptedText, getLastProcessedText, onInterceptedResponse, onToolCall, onStream, onTaskIdle, onAiError, resetGenerating, getQueueState, DONE_HINT_RE };

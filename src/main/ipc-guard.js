@@ -30,7 +30,11 @@ const SENSITIVE_CHANNELS = new Set([
   // 技能系统（读任意目录）
   'skill-import-folder',
   // 插件系统（加载任意代码、打开任意目录）
-  'plugin-import', 'plugin-open-dir', 'plugin-export-skill', 'plugin-preloads',
+  // 【2026-11-01 修复】移出 'plugin-preloads'：它只返回「要注入的脚本文本」，
+  // 不读写用户目录、不加载任意代码（加载在 plugin-import 那步已完成）。
+  // AI 页面必须能拿它来执行插件 preload（如 task-watcher 的定时监听），
+  // 列在白名单里会直接让所有插件的 preload 失效。
+  'plugin-import', 'plugin-open-dir', 'plugin-export-skill',
   // DSH 插件（外部生态）
   'dsh-open-dir',
   // 安全配置（CTF 注入、破甲规则）

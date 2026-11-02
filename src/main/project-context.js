@@ -342,25 +342,27 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   //   - experience 记忆只给【当前项目】的标题，限 5 条
   //   - 一条检索指令，要求模型主动 memoryRecall 再回答
   // 完整记忆仍可通过 memoryRecall / memoryGet 按需取用。
+  // 【2026-11-02 改造】初始化模板已不再预加载记忆条目（改为“按需查询”模式）。
+  // 这里保留变量定义以兼容 placeholders 映射，但不再调用 buildMemoryDigest，
+  // 避免无谓的性能开销和日志噪音。如需恢复预加载，取消下方注释即可。
   let memorySection = '';
-  try {
-    memorySection = memoryStore.buildMemoryDigest({ projectDir: selectedDir });
-    console.log('[LingYa] 记忆摘要长度(digest):', memorySection.length);
-  } catch (err) {
-    console.error('[LingYa] 构建记忆摘要失败:', err.message);
-  }
+  // try {
+  //   memorySection = memoryStore.buildMemoryDigest({ projectDir: selectedDir });
+  //   console.log('[LingYa] 记忆摘要长度(digest):', memorySection.length);
+  // } catch (err) {
+  //   console.error('[LingYa] 构建记忆摘要失败:', err.message);
+  // }
 
   // 技能注入块
-  //
-  // 同样用全量版：173 个本地技能全部进索引（名称 + 首句简介 + 相对路径），
-  // 正文仍靠 read SKILL.md 按需取。实测约 15K 字符。
+  // 【2026-11-02 改造】初始化模板已不再预加载技能列表（改为“按需查询”模式），
+  // 同上，保留变量定义但不再调用 buildSkillSection。
   let skillSection = '';
-  try {
-    skillSection = skillStore.buildSkillSection({ projectDir: selectedDir });
-    console.log('[LingYa] 技能注入块长度(full):', skillSection.length);
-  } catch (err) {
-    console.error('[LingYa] 构建技能注入块失败:', err.message);
-  }
+  // try {
+  //   skillSection = skillStore.buildSkillSection({ projectDir: selectedDir });
+  //   console.log('[LingYa] 技能注入块长度(full):', skillSection.length);
+  // } catch (err) {
+  //   console.error('[LingYa] 构建技能注入块失败:', err.message);
+  // }
 
   // Superpowers 开发流程注入块（强制路由 + 13 个方法论 skill 全文路径）
   // 内置在 src/prompt/superpowers/，与项目无关，任何项目都注入。

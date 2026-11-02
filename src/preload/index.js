@@ -8,6 +8,17 @@ console.log('[LingYa] Preload script 开始执行');
 // 暴露 electronAPI 到渲染进程（contextBridge + window 兜底）
 require('./api');
 
+// 2026-11-02：初始化时拉取一次脱敏规则，后续 redactText 同步可用
+try {
+  require('./dom/redaction-filter').refreshRules().then(() => {
+    console.log('[LingYa] 脱敏规则已就绪');
+  }).catch((err) => {
+    console.warn('[LingYa] 脱敏规则加载失败:', err && err.message);
+  });
+} catch (err) {
+  console.warn('[LingYa] 脱敏引擎初始化异常:', err && err.message);
+}
+
 const { webFrame } = require('electron');
 
 // ========== 主世界指纹修正（最早注入，先于 hook/页面脚本）==========
@@ -225,6 +236,14 @@ function init() {
     // UI 失败只影响显示，核心执行链路（第 1 层）已在前面独立启动，不受影响
     console.error('[LingYa] UI 初始化失败（不影响工具执行）:', err);
     try { ui.forceShowOverlay(); } catch (_) {}
+  }
+
+  // ===== 第 2.5 层：Harness 桥接（纯净模式，独立于 UI）=====
+  // 只挂监听器，不阻塞任何流程。harness 视图不存在时上报会被主进程丢弃。
+  try {
+    require('./harness-bridge').initHarnessBridge();
+  } catch (err) {
+    console.error('[LingYa] Harness bridge 初始化失败:', err && err.message);
   }
 
   // ===== 第 3 层：其余子系统（各自独立，任一失败不拖累其他）=====
