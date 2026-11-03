@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.175",
+  "version": "0.6.182",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -23,6 +23,7 @@
     "build:local": "electron-builder --publish never",
     "prebuild:win:local": "node scripts/sync-version.js",
     "build:win:local": "electron-builder --win --publish never",
+    "prebuild:win:nsis:local": "node scripts/sync-version.js",
     "build:win:nsis:local": "electron-builder --win --config.win.target=nsis --publish never",
     "prebuild:win:portable:local": "node scripts/sync-version.js",
     "build:win:portable:local": "electron-builder --win --config.win.target=portable --publish never",
@@ -127,7 +128,7 @@
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.170"
+      "unpackDirName": "LingYa-runtime-0.6.182"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",

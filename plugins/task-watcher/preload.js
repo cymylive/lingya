@@ -47,12 +47,22 @@
       if (st.awaitingUserInput) return;          // AI 在等用户回答
       if (st.awaitingNextInitialChunk) return;   // 初始化分批发送中
       if (st.taskDeclaredDone) return;           // AI 已声明完成
+      // initializationDone 才是「初始提示全部分段发完」的可靠标志。
+      // awaitingNextInitialChunk 在第一片发出前和最后一片发完后都是 false，
+      // 单靠它判断会在首片发出前抢跑（schedule-bridge 里有同样的教训）。
+      if (st.initializationDone === false) return;
+      // 有工具/JS 脚本正在执行：AI 在干活，不是停滞。
+      // 工具执行期间 lastActivityAt 不会更新，只能靠这个标志区分。
+      if (st.toolExecuting) return;
 
       var idleMs = Date.now() - (st.lastActivityAt || 0);
       if (idleMs < c.thresholdSec * 1000) return;
 
       return api.getTodos().then(function (r) {
         if (!r) return;
+        // 会话一致性校验：首页（新会话 URL 尚未生成）时主进程查待办会回退到
+        // 上一个会话，可能读到别的会话残留的未完成项。不一致就跳过本轮。
+        if ((r.sessionId || null) !== (st.sessionId || null)) return;
         if (c.requirePlan) {
           if (r.archived) return;
           if (unfinishedCount(r.todos) === 0) return;

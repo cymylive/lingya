@@ -90,6 +90,7 @@ async function handleJsToolScript(code) {
     return { code, result: { success: false, error: '任务已被用户停止' } };
   }
   isExecuting = true;
+  state.beginToolExec(); // 计数 +1：插件据此判断「在干活，不是停滞」
   notifyJsScriptDetected(code);
   setTaskStatus(true);
   showToast('开始执行命令');
@@ -182,6 +183,7 @@ async function handleJsToolScript(code) {
     return { code, result: { success: false, error: (err.message || String(err)) } };
   } finally {
     isExecuting = false;
+    state.endToolExec(); // 计数 -1
     try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
     // 【状态机复位】工具跑完就该切出 EXECUTING，不能等 AI 回复来推动。
@@ -217,6 +219,7 @@ async function handleToolCall(toolCall) {
   console.log('[LingYa] 执行工具: ' + toolName, params);
 
   isExecuting = true;
+  state.beginToolExec(); // 计数 +1：插件据此判断「在干活，不是停滞」
   // 执行前先出卡片：用户能立刻看到哪个工具在跑
   renderResultCard(callId || ('tool_' + toolName + '_' + Date.now()), toolName, params, 'running', '执行中…');
   // 状态条显示具体工具名（比「正在执行工具」有信息量）
@@ -333,6 +336,7 @@ async function handleToolCall(toolCall) {
     }
   } finally {
     isExecuting = false;
+    state.endToolExec(); // 计数 -1
     try { setTaskbarDetail(''); } catch (_) {}
     setTaskStatus(false);
     // 同 handleJsToolScript：工具跑完必须切出 EXECUTING，否则状态机会挂到

@@ -95,3 +95,10 @@ beifen/
 _bak*/
 src/prompt/_bak*/
 _*.js
+
+# Python cache (spec-kit scripts)
+__pycache__/
+*.pyc
+
+# Local redaction rules (contains private project descriptions)
+lingya-redaction.json

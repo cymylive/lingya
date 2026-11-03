@@ -37,6 +37,8 @@ function getToolRegistry() {
 const loaded = new Map();
 // 插件目录（由 init 设置）
 let PLUGINS_DIR = null;
+// 最近一次使用的源目录 override（测试用；同时让 isBundledId 在测试环境也能找到源目录）
+let _lastSourceOverride = null;
 // 插件注册的 IPC 处理器：fullChannel(=pluginId:channel) -> { pluginId, channel, handler }
 const pluginIpcHandlers = new Map();
 // 插件注册的视图：viewKey(=pluginId:viewId) -> { pluginId, viewId, icon, label, render }
@@ -69,31 +71,109 @@ function init(storeDir) {
 }
 
 /**
- * 把应用自带的 plugins/ 目录复制到 userData/plugins/（仅当目标不存在时）。
- * 用于：开发时把源码根 plugins/ 里的示例插件带到用户目录；打包后同理。
- * 不覆盖用户已修改的同名插件。
+ * 比较两个语义化版本号。
+ * @returns {number} a > b 返回 1，a < b 返回 -1，相等返回 0
  */
-function seedBundledPlugins() {
-  // 候选源目录：打包后在 resources/plugins；开发时在项目根 plugins/
+function compareVersion(a, b) {
+  if (a === b) return 0;
+  const pa = String(a || '0').split('.').map(Number);
+  const pb = String(b || '0').split('.').map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = isNaN(pa[i]) ? 0 : pa[i];
+    const nb = isNaN(pb[i]) ? 0 : pb[i];
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+/**
+ * 探测应用自带插件源目录。
+ * 打包后在 resources/plugins；开发时在项目根 plugins/。
+ * @param {string} [srcDirOverride] 测试用，强制指定源目录
+ * @returns {string|null} 存在的目录路径，找不到返回 null
+ */
+function findBundledSourceDir(srcDirOverride) {
+  if (srcDirOverride) _lastSourceOverride = srcDirOverride;
+  // 显式指定 override 但它不存在时直接返回 null，不回退到真实目录 ——
+  // 保证测试可以模拟「源目录被裁掉」而不被真实项目 plugins/ 干扰。
+  if (_lastSourceOverride && !fs.existsSync(_lastSourceOverride)) return null;
   const candidates = [
+    _lastSourceOverride,
     path.join(process.resourcesPath || '', 'plugins'),
     path.join(__dirname, '..', '..', 'plugins'),
   ];
-  let srcDir = null;
   for (const p of candidates) {
-    try { if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) { srcDir = p; break; } } catch (_) {}
+    try { if (p && fs.existsSync(p) && fs.statSync(p).isDirectory()) return p; } catch (_) {}
   }
+  return null;
+}
+
+/**
+ * 判断某个插件是否为应用内置插件（源目录中存在同名子目录）。
+ * 源目录找不到时一律返回 false —— 测试/打包异常环境下宁可当作普通插件。
+ * @param {string} pluginId
+ * @returns {boolean}
+ */
+function isBundledId(pluginId) {
+  if (!pluginId) return false;
+  const srcDir = findBundledSourceDir();
+  if (!srcDir) return false;
+  try {
+    return fs.existsSync(path.join(srcDir, pluginId)) &&
+      fs.statSync(path.join(srcDir, pluginId)).isDirectory();
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * 把应用自带的 plugins/ 目录复制到 userData/plugins/。
+ * 规则：
+ * 1. 目标不存在 -> 全量复制
+ * 2. 目标存在，且内置插件版本号大于目标版本号 -> 强制覆盖（修复升级后旧版插件缓存不更新的问题）
+ * 3. 目标存在，版本相同 -> 只补齐缺失文件，不覆盖用户改动
+ * 4. 带墓碑（用户主动删除）的内置插件 -> 跳过，不播种
+ * @param {string} [srcDirOverride] 测试用，强制指定源目录
+ */
+function seedBundledPlugins(srcDirOverride) {
+  const srcDir = findBundledSourceDir(srcDirOverride);
   if (!srcDir) return;
   let items = [];
   try { items = fs.readdirSync(srcDir, { withFileTypes: true }); } catch (_) { return; }
   for (const ent of items) {
     if (!ent.isDirectory()) continue;
+    // 【墓碑】用户主动删除过的内置插件不再播种，否则重启会复活
+    if (pluginStore.isDeleted(ent.name)) {
+      console.log('[PluginHost] 跳过带墓碑的插件:', ent.name);
+      continue;
+    }
     const src = path.join(srcDir, ent.name);
     const dst = path.join(PLUGINS_DIR, ent.name);
     if (fs.existsSync(dst)) {
-      // 目录已存在：只补齐缺失文件（老用户升级场景），不覆盖用户改动
-      try { mergeDirRecursive(src, dst); } catch (err) {
-        console.error('[PluginHost] 补齐插件文件失败 (' + ent.name + '):', err.message);
+      let srcVer = null;
+      let dstVer = null;
+      try {
+        const srcMf = path.join(src, 'manifest.json');
+        if (fs.existsSync(srcMf)) srcVer = JSON.parse(fs.readFileSync(srcMf, 'utf8')).version;
+        const dstMf = path.join(dst, 'manifest.json');
+        if (fs.existsSync(dstMf)) dstVer = JSON.parse(fs.readFileSync(dstMf, 'utf8')).version;
+      } catch (_) {}
+
+      if (srcVer && dstVer && compareVersion(srcVer, dstVer) > 0) {
+        console.log('[PluginHost] 插件有新版本，执行强制覆盖升级:', ent.name, dstVer, '->', srcVer);
+        try {
+          fs.rmSync(dst, { recursive: true, force: true });
+          copyDirRecursive(src, dst);
+        } catch (err) {
+          console.error('[PluginHost] 覆盖升级插件失败 (' + ent.name + '):', err.message);
+        }
+      } else {
+        // 版本相同或无法解析：只补齐缺失文件（老用户升级场景），不覆盖用户改动
+        try { mergeDirRecursive(src, dst); } catch (err) {
+          console.error('[PluginHost] 补齐插件文件失败 (' + ent.name + '):', err.message);
+        }
       }
       continue;
     }
@@ -180,6 +260,7 @@ function scanPlugins() {
       manifest,
       enabled: pluginStore.isEnabled(manifest.id, true),
       pinned: pluginStore.isPinned(manifest.id),
+      bundled: isBundledId(manifest.id),
     });
   }
   return out;
@@ -799,7 +880,16 @@ async function importPlugin(buf) {
 
 /**
  * 删除插件目录（连带卸载）
+ *
+ * 内置插件（源目录中存在同名目录）走墓碑流程：
+ *   - 删目录，写 deleted 标记，**保留 config/enabled/pinned**
+ *   - 下次启动播种时跳过，不会复活
+ *   - 可通过 restoreBundledPlugins() 一键恢复（配置原样还在）
+ *
+ * 普通插件维持原行为：删目录 + removeRecord。
+ *
  * @param {string} pluginId
+ * @returns {{ success: boolean, bundled?: boolean, error?: string }}
  */
 function deletePlugin(pluginId) {
   if (loaded.has(pluginId)) unloadPlugin(pluginId);
@@ -808,17 +898,51 @@ function deletePlugin(pluginId) {
   if (!resolved.startsWith(path.resolve(PLUGINS_DIR) + path.sep)) {
     return { success: false, error: '非法插件 id' };
   }
+  const bundled = isBundledId(pluginId);
   // 必须先停止监听，否则 Windows 下文件被锁无法删除
   stopWatching();
   try {
     if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
-    pluginStore.removeRecord(pluginId);
-    return { success: true };
+    if (bundled) {
+      pluginStore.markDeleted(pluginId);
+    } else {
+      pluginStore.removeRecord(pluginId);
+    }
+    return { success: true, bundled };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, bundled, error: err.message };
   } finally {
     startWatching();
   }
+}
+
+/**
+ * 恢复全部被删除的内置插件：清墓碑 + 重新播种 + 加载。
+ * 源目录不存在时不做任何破坏性操作（不清墓碑），返回失败。
+ * @returns {Promise<{ success: boolean, restored?: string[], error?: string }>}
+ */
+async function restoreBundledPlugins() {
+  const srcDir = findBundledSourceDir();
+  if (!srcDir) {
+    return { success: false, error: '未找到应用内置插件目录' };
+  }
+  const pending = pluginStore.listDeleted();
+  if (!pending.length) {
+    return { success: true, restored: [] };
+  }
+  pluginStore.clearDeleted();
+  seedBundledPlugins();
+  try {
+    await loadAllEnabled();
+  } catch (err) {
+    console.error('[PluginHost] 恢复后加载插件失败:', err.message);
+  }
+  return { success: true, restored: pending };
+}
+
+/** 测试用：清掉源目录 override，避免影响其他用例 */
+function resetBundledSourceOverride() {
+  _lastSourceOverride = null;
 }
 
 /**
@@ -845,6 +969,7 @@ module.exports = {
   getPluginPromptSections,
   getPluginsDir,
   seedBundledPlugins,
+  compareVersion,
   scanPlugins,
   loadPlugin,
   unloadPlugin,
@@ -862,5 +987,9 @@ module.exports = {
   exportPlugin,
   importPlugin,
   deletePlugin,
+  restoreBundledPlugins,
+  isBundledId,
+  findBundledSourceDir,
+  resetBundledSourceOverride,
   pluginEvents,
 };

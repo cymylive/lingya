@@ -101,6 +101,9 @@ module.exports = {
   lastActivityAt: Date.now(),
   // 本会话是否执行过工具（任务型会话标记）
   sessionHadToolExecution: false,
+  // 当前正在执行的工具/JS 脚本数量（并发计数，> 0 表示有工具在跑）。
+  // 工具执行期间 lastActivityAt 不再更新，插件据此判断「不是停滞，是在干活」。
+  activeToolCount: 0,
   // AI 最近一条回复是否在向用户提问/等决策。
   awaitingUserInput: false,
   // AI 是否已明确声明「任务已完成」。下次 AI 调用工具（markToolExecuted）时自动复位。
@@ -124,6 +127,16 @@ module.exports = {
 
   /** 打一次活动点（AI 响应、工具执行、发送消息时调用） */
   touch() { this.lastActivityAt = Date.now(); },
+  /** 工具开始执行：计数 +1 并打活动点 */
+  beginToolExec() {
+    this.activeToolCount = (this.activeToolCount || 0) + 1;
+    this.lastActivityAt = Date.now();
+  },
+  /** 工具执行结束：计数 -1（不落到负数）并打活动点 */
+  endToolExec() {
+    this.activeToolCount = Math.max(0, (this.activeToolCount || 0) - 1);
+    this.lastActivityAt = Date.now();
+  },
   /** 标记本会话执行过工具 + 打活动点。有新工具执行 = 任务又开始了，清掉「已声明完成」 */
   markToolExecuted() {
     this.sessionHadToolExecution = true;

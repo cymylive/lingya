@@ -15,6 +15,7 @@ const securityStore = require('./security-store');
 const agentStore = require('./agent-store');
 const { getAgent } = require('./agents');
 const pluginHost = require('./plugin-host');
+const { applyCoreRuleFallback } = require('./core-rule-fallback');
 
 // 初始提示分批发送的参数
 // 单段目标字符数：每段不超过这个值，接近人类粘贴长文的量级。
@@ -508,6 +509,15 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   } catch (err) {
     console.error('[LingYa] 收集插件自定义 section 失败:', err.message);
   }
+  // 【兜底】自定义模板可能漏写 {{CORE_RULE_REPORT}} 等保留占位符。
+  // 这些 key 被 RESERVED_SECTION_KEYS 排除在通用通道外，缺占位符 = 内容静默丢弃。
+  // 这里把缺失的保留段并入 pluginCustomSection，保证规则一定落在提示词里。
+  pluginCustomSection = applyCoreRuleFallback(templateContent, pluginCustomSection, {
+    CORE_RULE_REPORT: coreRuleReport,
+    CORE_RULE_AMBIGUOUS: coreRuleAmbiguous,
+    CORE_RULE_IRREVERSIBLE: coreRuleIrreversible,
+  });
+
   if (coreRulesEnabled) {
     console.log('[LingYa] 核心规则已由插件加载: REPORT=' + coreRuleReport.length +
       ' AMBIGUOUS=' + coreRuleAmbiguous.length +
@@ -796,8 +806,9 @@ function splitPromptIntoChunks(text, targetSize, maxChunks) {
   return chunks.length > 0 ? chunks : [src.slice(0, target)];
 }
 
+
 module.exports = {
-  PROMPT_DIR, initProject, splitPromptIntoChunks,
+  PROMPT_DIR, initProject, splitPromptIntoChunks, applyCoreRuleFallback,
   // 测试用：清空节流记录
   _resetInitPromptThrottle: function () { lastInitPromptSentAt.clear(); initBatchSeq = 0; },
   INIT_PROMPT_MIN_INTERVAL_MS,

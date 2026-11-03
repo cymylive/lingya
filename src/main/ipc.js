@@ -384,7 +384,7 @@ function registerIpcHandlers() {
   });
 
   // 读取项目文件树（只读，供 UI 文件页签浏览）
-  ipcMain.handle('get-file-tree', async (event, { maxNodes = 5000 } = {}) => {
+  ipcMain.handle('get-file-tree', async (event, { maxNodes } = {}) => {
     try {
       const ctx = windowState.getContextByWebContents(event.sender);
       const store = ctx ? ctx.sessionStore : null;
@@ -1561,9 +1561,18 @@ function registerIpcHandlers() {
   const pluginHost = require('./plugin-host');
 
   // 列出所有插件（含启用/加载状态）
+  ipcMain.handle('plugin-restore-bundled', async () => {
+    try {
+      const res = await pluginHost.restoreBundledPlugins();
+      return Object.assign({ plugins: pluginHost.listPlugins(), dir: pluginHost.getPluginsDir(), deletedCount: 0 }, res);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('plugin-list', async () => {
     try {
-      return { success: true, plugins: pluginHost.listPlugins(), dir: pluginHost.getPluginsDir() };
+      return { success: true, plugins: pluginHost.listPlugins(), dir: pluginHost.getPluginsDir(), deletedCount: require('./plugin-store').listDeleted().length };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -2083,6 +2092,93 @@ function registerIpcHandlers() {
   });
 
   // bridge 上报事件 → 转发给 harness 视图
+  // ===== 自定义数据目录 =====
+  // 配置文件固定存在 appData 下（<appData>/<SESSION_DIR>/data-location.json），
+  // 不随数据目录本身变化 —— 否则改了路径后下次启动就找不到配置了。
+  function _getDataLocCfgPath() {
+    const _path = require('path');
+    const SESSION_DIR = process.env.LINGYA_SESSION_DIR || 'lingya-ai-pro-session';
+    return _path.join(app.getPath('appData'), SESSION_DIR, 'data-location.json');
+  }
+
+  // 读取当前数据目录信息
+  ipcMain.handle('data-path-get', async () => {
+    try {
+      const _path = require('path');
+      const fs = require('fs');
+      const cfgPath = _getDataLocCfgPath();
+      let customDir = null;
+      if (fs.existsSync(cfgPath)) {
+        try { customDir = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')).customDir || null; } catch (_) {}
+      }
+      return {
+        success: true,
+        currentDir: app.getPath('userData'),
+        customDir: customDir,
+        defaultDir: _path.join(_path.dirname(process.execPath), 'LingYa-Data'),
+        appDataDir: app.getPath('appData'),
+        configPath: cfgPath,
+      };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 设置自定义数据目录（写入配置，重启后生效）
+  ipcMain.handle('data-path-set', async (_e, { dir } = {}) => {
+    try {
+      const _path = require('path');
+      const fs = require('fs');
+      const target = String(dir || '').trim();
+      if (!target) return { success: false, error: '路径不能为空' };
+      const resolved = _path.resolve(target);
+      // 可写性探测
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+        const probe = _path.join(resolved, '.lingya-write-probe-' + Date.now());
+        fs.writeFileSync(probe, 'ok');
+        fs.unlinkSync(probe);
+      } catch (e) {
+        return { success: false, error: '目录不可写: ' + e.message };
+      }
+      const cfgPath = _getDataLocCfgPath();
+      fs.mkdirSync(_path.dirname(cfgPath), { recursive: true });
+      fs.writeFileSync(cfgPath, JSON.stringify({ customDir: resolved, updatedAt: new Date().toISOString() }, null, 2), 'utf-8');
+      return { success: true, dir: resolved, needRestart: true };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 恢复默认（删除配置文件，重启后回到 exe 同目录 LingYa-Data）
+  ipcMain.handle('data-path-reset', async () => {
+    try {
+      const fs = require('fs');
+      const cfgPath = _getDataLocCfgPath();
+      if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
+      return { success: true, needRestart: true };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 弹目录选择框
+  ipcMain.handle('data-path-choose', async (event) => {
+    try {
+      const { BrowserWindow } = require('electron');
+      const win = (event.sender && BrowserWindow.fromWebContents(event.sender)) || null;
+      const r = await dialog.showOpenDialog(win || undefined, {
+        title: '选择 LingYa 数据保存目录',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (r.canceled || !r.filePaths || r.filePaths.length === 0) return { success: false, canceled: true };
+      return { success: true, dir: r.filePaths[0] };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 重启应用使数据目录变更生效
+  ipcMain.handle('data-path-restart', async () => {
+    try {
+      app.relaunch();
+      setTimeout(() => app.exit(0), 200);
+      return { success: true };
+    } catch (err) { return { success: false, error: err.message }; }
+  });
+
   ipcMain.handle('harness-event-report', async (event, payload) => {
     try {
       const info = getHarnessInfo(event);

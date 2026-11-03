@@ -290,6 +290,8 @@ const BOOTSTRAP = [
   "    return await __call('dispatchToWindow', { target: target, instruction: instruction, allowBusy: allowBusy });",
   "  };",
 "",
+"  // 供 JsRunner 注入插件工具 wrapper 复用（与内置工具完全相同的调用语义）",
+  "  globalThis.__callTool = __call;",
 "  if (!globalThis.projectDir) {",
 "    globalThis.log('[提示] 尚未初始化项目目录，相对路径将基于系统目录解析。可点击覆盖层“初始化项目”。');",
 "  }",
@@ -553,6 +555,54 @@ class JsRunner {
       vm.runInContext(BOOTSTRAP, context, { filename: 'lingya-js-api.js' });
     } catch (err) {
       return { success: false, error: '沙箱初始化失败: ' + (err.message || String(err)) };
+    }
+
+    // ★ 动态注入插件工具到沙箱 globalThis
+    // 根因：BOOTSTRAP 只硬编码了内置工具的 globalThis.xxx；插件工具（speckit_*、gq_* 等）
+    // 虽已注册进 registry、__hostBridge 也调得通，但 AI 拿不到函数名，调用一律 undefined。
+    // 注意：不使用沙箱内 eval/Function（codeGeneration 已禁用），代码在宿主侧拼好后注入。
+    try {
+      const exposed = new Set(vm.runInContext('Object.getOwnPropertyNames(globalThis)', context));
+      const defs = [];
+      for (const name of this.registry.listNames()) {
+        if (!name || exposed.has(name)) continue;
+        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) continue;
+        const t = this.registry.get(name);
+        if (!t) continue;
+        // 参数名：标准 JSON Schema 取 properties；插件里也有直接写 {k:{type}} 的简写形式
+        const p = t.parameters;
+        let keys = [];
+        if (p && p.properties) {
+          keys = Object.keys(p.properties);
+        } else if (p && !p.type && typeof p === 'object') {
+          keys = Object.keys(p);
+        }
+        defs.push({ name, keys: keys.filter((k) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k)) });
+      }
+      if (defs.length > 0) {
+        const helper = [
+          '  globalThis.__pluginCall = async function (name, keys, a) {',
+          '    var args = {};',
+          '    if (a.length === 1 && a[0] && typeof a[0] === \'object\' && !Array.isArray(a[0])) {',
+          '      args = a[0];',
+          '    } else {',
+          '      for (var i = 0; i < keys.length && i < a.length; i++) args[keys[i]] = a[i];',
+          '    }',
+          '    return await globalThis.__callTool(name, args);',
+          '  };'
+        ].join('\n');
+        const wrappers = defs.map((d) => (
+          '  globalThis[' + JSON.stringify(d.name) + '] = async function () {\n' +
+          '    return await globalThis.__pluginCall(' + JSON.stringify(d.name) + ', ' + JSON.stringify(d.keys) + ', arguments);\n' +
+          '  };'
+        )).join('\n');
+        vm.runInContext('(function () {\n' + helper + '\n' + wrappers + '\n})();', context, {
+          filename: 'lingya-plugin-tools.js'
+        });
+      }
+    } catch (err) {
+      // 注入失败不影响内置工具，只记录
+      console.warn('[JsRunner] 插件工具注入失败:', err && err.message ? err.message : String(err));
     }
 
     // 包装为 async IIFE：支持顶层 await、return 返回值

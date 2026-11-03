@@ -2,8 +2,8 @@
 // 目标：让 AI 开发/修 bug 时主动查知识图谱，而不是默认先 grep。
 // 三层能力：提示词注入、六个 gq_* 工具、启动时自动建图。
 
-const __plugin_name = 'graphify-proactive'
-const __plugin_inject = []
+export const name = 'graphify-proactive'
+export const inject = []
 
 const DEFAULT_PROMPT = [
   '## 图谱优先（Graphify）',
@@ -20,7 +20,7 @@ const DEFAULT_PROMPT = [
   '图谱过期时先调 `gq_build` 重建，不要基于旧图下结论。',
 ].join('\n')
 
-function apply(ctx) {
+export function apply(ctx) {
   const path = require('path')
   const fs = require('fs')
   const { spawnSync, spawn } = require('child_process')
@@ -454,9 +454,3 @@ function apply(ctx) {
     }, 5000)
   } catch (_) {}
 }
-
-module.exports = {
-  name: __plugin_name,
-  inject: __plugin_inject,
-  apply,
-};

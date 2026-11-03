@@ -62,10 +62,114 @@ function buildUserAgentDataFix() {
     '}catch(e){}})();';
 }
 
+/**
+ * 主世界脚本：补齐 window.chrome 对象（runtime / loadTimes / csi / app）。
+ *
+ * 背景：Electron 的 window.chrome 是空壳（Object.keys 返回 []），
+ * 真实 Chrome 至少有 loadTimes / csi / app / runtime 四个成员。
+ * FingerprintJS 一行代码就能判红。此处补结构，不实现功能。
+ *
+ * 注意：普通网页（非扩展上下文）里 chrome.runtime 本身也是"存在但不可用"，
+ * connect/sendMessage 会抛「Receiving end does not exist」——此处保持同样的行为。
+ */
+function buildChromeObjectFix() {
+  return '(function(){try{' +
+    'if(!window.chrome)window.chrome={};' +
+    // runtime：空壳 + 抛错方法，对齐真实 Chrome 无扩展上下文时的表现
+    'if(!window.chrome.runtime){window.chrome.runtime={' +
+      'id:undefined,' +
+      'connect:function(){throw new Error("Could not establish connection. Receiving end does not exist.");},' +
+      'sendMessage:function(){throw new Error("Could not establish connection. Receiving end does not exist.");},' +
+      'onMessage:{addListener:function(){},removeListener:function(){},hasListener:function(){return false;},hasListeners:function(){return false;}}' +
+    '};}' +
+    // loadTimes：从 performance.timing 派生，避免全 0 被判定为伪造
+    'if(typeof window.chrome.loadTimes!=="function"){window.chrome.loadTimes=function(){' +
+      'var t=(window.performance&&performance.timing)||{};' +
+      'return{' +
+        'requestTime:(t.navigationStart||0)/1000,' +
+        'startLoadTime:(t.navigationStart||0)/1000,' +
+        'commitLoadTime:(t.responseStart||0)/1000,' +
+        'finishDocumentLoadTime:(t.domContentLoadedEventEnd||0)/1000,' +
+        'finishLoadTime:(t.loadEventEnd||0)/1000,' +
+        'firstPaintTime:0,firstPaintAfterLoadTime:0,' +
+        'navigationType:"Other",wasFetchedViaSpdy:false,wasNpnNegotiated:false,' +
+        'npnNegotiatedProtocol:"unknown",wasAlternateProtocolAvailable:false,connectionInfo:"unknown"' +
+      '};};}' +
+    // csi：真实 Chrome 返回 startE/onloadT/pageT/tran 四个字段
+    'if(typeof window.chrome.csi!=="function"){window.chrome.csi=function(){' +
+      'return{startE:Date.now(),onloadT:Date.now(),pageT:0,tran:15};};}' +
+    // app：完整结构
+    'if(!window.chrome.app){window.chrome.app={' +
+      'isInstalled:false,' +
+      'InstallState:{DISABLED:"disabled",INSTALLED:"installed",NOT_INSTALLED:"not_installed"},' +
+      'RunningState:{CANNOT_RUN:"cannot_run",READY_TO_RUN:"ready_to_run",RUNNING:"running"},' +
+      'getDetails:function(){return null;},' +
+      'getIsInstalled:function(){return false;},' +
+      'installState:function(){return "not_installed";},' +
+      'runningState:function(){return "cannot_run";}' +
+    '};}' +
+  '}catch(e){}})();';
+}
+
+/**
+ * 主世界脚本：修正 navigator.permissions.query 的返回值。
+ *
+ * 背景：Electron 对 notifications/geolocation/camera/microphone 全部返回 granted，
+ * 真实 Chrome 默认是 prompt（用户从未授权过）。全 granted 是「异常」特征，
+ * 比「机器人」更严重——风控会判定客户端行为不符合任何已知浏览器。
+ *
+ * 实现：只对已知 name 返回符合 Chrome 默认策略的状态，未知 name 回退原实现。
+ * 不修改 Notification.permission，那是独立的一项（见 buildNotificationFix）。
+ */
+function buildPermissionsFix() {
+  return '(function(){try{' +
+    'var D={' +
+      'notifications:"prompt",geolocation:"prompt",camera:"prompt",microphone:"prompt",' +
+      '"clipboard-read":"prompt","clipboard-write":"granted",' +
+      '"background-sync":"granted","persistent-storage":"prompt",' +
+      'midi:"prompt",push:"prompt","screen-wake-lock":"granted",' +
+      '"storage-access":"prompt","window-management":"prompt","local-fonts":"prompt",' +
+      'accelerometer:"granted",gyroscope:"granted",magnetometer:"granted"' +
+    '};' +
+    'var P=navigator.permissions;if(!P||typeof P.query!=="function")return;' +
+    'var orig=P.query.bind(P);' +
+    'function mk(n,s){var o={name:n,state:s,onchange:null};' +
+      'o.addEventListener=function(){};o.removeEventListener=function(){};' +
+      'o.dispatchEvent=function(){return true;};return o;}' +
+    'P.query=function(d){try{' +
+      'var n=d&&d.name;' +
+      'if(n&&Object.prototype.hasOwnProperty.call(D,n))return Promise.resolve(mk(n,D[n]));' +
+    '}catch(e){}return orig(d);};' +
+  '}catch(e){}})();';
+}
+
+/**
+ * 主世界脚本：修正 Notification.permission。
+ *
+ * 背景：Electron 默认 granted，真实 Chrome 首次访问是 default（用户从未授权）。
+ * granted 会让检测器判定「自动化环境预设授权」，是典型的非正常浏览器信号。
+ */
+function buildNotificationFix() {
+  return '(function(){try{' +
+    'if(typeof Notification==="undefined")return;' +
+    'try{Object.defineProperty(Notification,"permission",{get:function(){return "default";},configurable:true});}catch(e){}' +
+    'try{if(typeof Notification.requestPermission==="function"){' +
+      'Notification.requestPermission=function(cb){' +
+        'var p=Promise.resolve("default");' +
+        'if(typeof cb==="function")p.then(cb);' +
+        'return p;' +
+      '};' +
+    '}}catch(e){}' +
+  '}catch(e){}})();';
+}
+
 module.exports = {
   buildChromeUserAgent,
   buildClientHintsHeaders,
   buildUserAgentDataFix,
+  buildChromeObjectFix,
+  buildPermissionsFix,
+  buildNotificationFix,
   chromeMajor,
   chromeFullVersion,
 };

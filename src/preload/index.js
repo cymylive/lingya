@@ -28,11 +28,29 @@ const { webFrame } = require('electron');
 // 两者都是 Electron 应用默认特征，会被 DeepSeek 等平台的风控识别。
 // 必须在页面脚本执行前（preload 阶段）注入到主世界，否则会被页面抢先读到默认值。
 try {
-  const { buildUserAgentDataFix } = require('../main/user-agent');
-  webFrame.executeJavaScript(buildUserAgentDataFix()).then(
-    () => console.log('[LingYa] 主世界指纹修正已注入'),
-    (err) => console.warn('[LingYa] 主世界指纹修正注入失败:', err && err.message)
-  );
+  const {
+    buildUserAgentDataFix,
+    buildChromeObjectFix,
+    buildPermissionsFix,
+    buildNotificationFix,
+  } = require('../main/user-agent');
+  // 2026-11-02：三项反检测补丁（基于实测指纹体检报告）
+  //  - window.chrome 空壳（Electron keys:[]）→ 补 runtime/loadTimes/csi/app
+  //  - permissions.query 全部 granted → 按 Chrome 默认策略返回 prompt/denied
+  //  - Notification.permission granted → default
+  // 均通过 webFrame.executeJavaScript 注入主世界，先于页面任何脚本。
+  const fixes = [
+    ['userAgentData', buildUserAgentDataFix()],
+    ['chrome',        buildChromeObjectFix()],
+    ['permissions',   buildPermissionsFix()],
+    ['notification',  buildNotificationFix()],
+  ];
+  for (const [name, code] of fixes) {
+    webFrame.executeJavaScript(code).then(
+      () => console.log('[LingYa] 主世界指纹修正已注入: ' + name),
+      (err) => console.warn('[LingYa] 主世界指纹修正注入失败(' + name + '):', err && err.message)
+    );
+  }
 } catch (err) {
   console.warn('[LingYa] 主世界指纹修正异常:', err && err.message);
 }

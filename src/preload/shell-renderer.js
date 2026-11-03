@@ -864,7 +864,16 @@
       '</div>'+
       '<div style="display:flex;gap:6px;margin-bottom:12px;">'+
         '<button class="sh-btn" id="sh-plug-refresh" style="flex:1;font-size:11.5px;">刷新列表</button>'+
-      '</div>';
+      '</div>'+
+      // 内置插件墓碑提示条：仅当存在被删除的内置插件时显示
+      (function(){
+        var delCount = typeof data.deletedCount === 'number' ? data.deletedCount : 0;
+        if(!delCount) return '';
+        return '<div id="sh-plug-tombstone" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:12px;border:1px dashed var(--ck-border);border-radius:6px;background:var(--ck-surface);">'+
+          '<span style="flex:1;font-size:11.5px;color:var(--ck-text-dim);">已删除 '+delCount+' 个内置插件</span>'+
+          '<button class="sh-btn" id="sh-plug-restore-bundled" style="font-size:11px;">恢复内置插件</button>'+
+        '</div>';
+      })();
       // DSH 区块移到最顶部
       html+='<div class="sh-card" style="margin-bottom:12px;">'+
         '<div style="font-size:12px;font-weight:600;color:var(--ck-title);margin-bottom:4px;">DSH 外部插件（npm）</div>'+
@@ -901,7 +910,7 @@
           '<div style="display:flex;align-items:center;gap:8px;">'+
             '<span style="font-size:18px;">'+esc(p.icon||'🔌')+'</span>'+
             '<div style="flex:1;min-width:0;">'+
-              '<div style="font-size:12.5px;font-weight:600;color:var(--ck-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name)+' <span style="font-weight:400;color:var(--ck-text-dim);font-size:10.5px;">v'+esc(p.version)+'</span></div>'+
+              '<div style="font-size:12.5px;font-weight:600;color:var(--ck-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name)+(p.bundled?' <span style="font-weight:500;font-size:10px;padding:0 4px;border-radius:3px;background:var(--ck-primary);color:#fff;">内置</span>':'')+' <span style="font-weight:400;color:var(--ck-text-dim);font-size:10.5px;">v'+esc(p.version)+'</span></div>'+
               '<div style="font-size:11px;color:var(--ck-text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="'+attr(p.id)+'">'+esc(p.id)+(p.loaded?' · 已加载':'')+'</div>'+
             '</div>'+
             '<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;flex-shrink:0;" title="置顶插件"><input type="checkbox" class="sh-plug-pin" data-pid="'+esc(p.id)+'" '+(p.pinned?'checked':'')+' /> 📌</label>'+
@@ -967,10 +976,15 @@
       for(var d2=0;d2<dels.length;d2++){ (function(btn){
         btn.addEventListener('click',function(){
           var pid=btn.getAttribute('data-pid');
-          if(!confirm('确定删除插件 '+pid+' ？\n（会移除插件目录，不可恢复）')) return;
+          var isBundled=false;
+          for(var pi=0;pi<ps.length;pi++){ if(ps[pi].id===pid){ isBundled=!!ps[pi].bundled; break; } }
+          var msg = isBundled
+            ? '确定删除内置插件 '+pid+' ？\n\n删除后可通过插件面板顶部的「恢复内置插件」找回。'
+            : '确定删除插件 '+pid+' ？\n（会移除插件目录，不可恢复）';
+          if(!confirm(msg)) return;
           if(!window.shellAPI||!window.shellAPI.pluginDelete) return;
           window.shellAPI.pluginDelete(pid).then(function(r){
-            if(r&&r.success){ toast2('已删除'); draw({success:true,plugins:r.plugins,dir:data.dir}); }
+            if(r&&r.success){ toast2('已删除'); load(); }
             else toast2('删除失败：'+((r&&r.error)||'未知'));
           })['catch'](function(){ toast2('删除失败'); });
         });
@@ -994,6 +1008,21 @@
           else if(r&&r.error==='已取消'){ /* 用户取消，静默 */ }
           else toast2('导入失败：'+((r&&r.error)||'未知'));
         })['catch'](function(){ im.disabled=false; toast2('导入失败'); });
+      });
+      var rsBtn=document.getElementById('sh-plug-restore-bundled');
+      if(rsBtn) rsBtn.addEventListener('click',function(){
+        if(!window.shellAPI||!window.shellAPI.pluginRestoreBundled) return;
+        if(!confirm('恢复所有被删除的内置插件？\n原有配置（如核心规则内容）会被保留。')) return;
+        rsBtn.disabled=true;
+        window.shellAPI.pluginRestoreBundled().then(function(r){
+          rsBtn.disabled=false;
+          if(r&&r.success){
+            var n=(r.restored||[]).length;
+            toast2(n?'已恢复 '+n+' 个内置插件':'没有需要恢复的插件');
+            load();
+            if(typeof mountPluginViews==='function') mountPluginViews();
+          } else toast2('恢复失败：'+((r&&r.error)||'未知'));
+        })['catch'](function(){ rsBtn.disabled=false; toast2('恢复失败'); });
       });
       var od=document.getElementById('sh-plug-opendir');
       if(od) od.addEventListener('click',function(){ if(window.shellAPI&&window.shellAPI.pluginOpenDir) window.shellAPI.pluginOpenDir()['catch'](function(){}); });
@@ -2454,6 +2483,7 @@
   function renderSettingsView(el){
     var NAV = [
       {id:'appearance', label:'外观'},
+      {id:'data-dir', label:'数据目录'},
       {id:'retry', label:'失败自动重试'},
       {id:'send', label:'发送延迟'},
       {id:'attach', label:'附件上传间隔'},
@@ -2658,6 +2688,22 @@
       // 日志
       '<div class="ly-set-cat'+(active==='logs'?' active':'')+'" data-cat="logs">' +
         '<div class="sh-card"><div class="ly-set-field"><div class="ly-set-label">执行日志</div><div class="ly-set-desc">历史执行记录、工具调用、命令输出。可通过「日志」页签查看完整内容。</div></div></div>' +
+      '</div>' +
+      // 数据目录
+      '<div class="ly-set-cat'+(active==='data-dir'?' active':'')+'" data-cat="data-dir">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">当前数据目录</div>' +
+          '<div class="ly-set-desc" id="sh-set-data-current" style="word-break:break-all;font-family:monospace;">加载中...</div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">自定义保存路径</div>' +
+          '<div class="ly-set-desc">修改后需重启 LingYa 才能生效。<br>旧数据不会自动迁移，如需保留请手动复制到新路径。</div>' +
+          '<div class="ly-set-row" style="margin-top:6px;"><input id="sh-set-data-custom" type="text" class="ly-set-input" placeholder="留空表示使用默认路径" style="flex:1;" /><button class="sh-btn" id="sh-set-data-choose">选择...</button></div>' +
+          '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;">' +
+            '<button class="sh-btn" id="sh-set-data-reset">恢复默认</button>' +
+            '<button class="sh-btn primary" id="sh-set-data-save">保存并重启</button>' +
+          '</div>' +
+        '</div></div>' +
       '</div>';
 
     el.innerHTML = panel('设置',
@@ -2705,6 +2751,49 @@
     var hf=ev('sh-set-hidefloat'); if(hf) hf.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-floating', hf.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-floating', hf.checked); toast2(hf.checked?'已隐藏悬浮元素':'已显示悬浮元素'); });
     var hp=ev('sh-set-hideplan'); if(hp) hp.addEventListener('change',function(){ try{localStorage.setItem('lingya-hide-plan-float', hp.checked?'1':'0');}catch(_e){} if(window.shellAPI&&window.shellAPI.setSetting) window.shellAPI.setSetting('hide-plan-float', hp.checked); toast2(hp.checked?'已隐藏计划卡':'已显示计划卡'); });
     var acs=ev('sh-set-acsave'); if(acs) acs.addEventListener('click',function(){ if(!window.shellAPI||!window.shellAPI.setSetting) return; var en=!!((ev('sh-set-acen')||{}).checked); var th=Number((ev('sh-set-acth')||{}).value)||80; try{ localStorage.setItem('sh-acen', en?'1':'0'); localStorage.setItem('sh-acth', String(th)); }catch(_e){} window.shellAPI.setSetting('auto-compact-enabled',en); window.shellAPI.setSetting('auto-compact-threshold',th); toast2('自动压缩已保存'); });
+
+    // ===== 数据目录 =====
+    (function(){
+      var elCur = ev('sh-set-data-current');
+      var elInput = ev('sh-set-data-custom');
+      function loadDataPath(){
+        if(!window.shellAPI || !window.shellAPI.dataPathGet) return;
+        window.shellAPI.dataPathGet().then(function(r){
+          if(r && r.success){
+            if(elCur) elCur.textContent = r.currentDir || '(未知)';
+            if(elInput) elInput.value = r.customDir || '';
+          }
+        })['catch'](function(){});
+      }
+      loadDataPath();
+      var btnChoose = ev('sh-set-data-choose');
+      if(btnChoose) btnChoose.addEventListener('click', function(){
+        if(!window.shellAPI || !window.shellAPI.dataPathChoose) return;
+        window.shellAPI.dataPathChoose().then(function(r){
+          if(r && r.success && r.dir && elInput) elInput.value = r.dir;
+        })['catch'](function(){});
+      });
+      var btnReset = ev('sh-set-data-reset');
+      if(btnReset) btnReset.addEventListener('click', function(){
+        if(!confirm('确定恢复默认数据目录吗？重启后生效。')) return;
+        if(!window.shellAPI || !window.shellAPI.dataPathReset) return;
+        window.shellAPI.dataPathReset().then(function(r){
+          if(r && r.success) { toast2('已恢复默认，重启后生效'); if(elInput) elInput.value = ''; }
+        })['catch'](function(){});
+      });
+      var btnSave = ev('sh-set-data-save');
+      if(btnSave) btnSave.addEventListener('click', function(){
+        var dir = elInput ? elInput.value.trim() : '';
+        if(!dir) { toast2('请先选择或输入路径'); return; }
+        if(!window.shellAPI || !window.shellAPI.dataPathSet) return;
+        window.shellAPI.dataPathSet(dir).then(function(r){
+          if(r && r.success){
+            toast2('已保存，即将重启...');
+            if(window.shellAPI.dataPathRestart) window.shellAPI.dataPathRestart();
+          } else { toast2('保存失败: ' + (r && r.error || '未知错误')); }
+        })['catch'](function(){ toast2('保存失败'); });
+      });
+    })();
 
     // ===== 失败自动重试：回填 + 保存 =====
     function _num(v, def){ var n = parseFloat(v); return isFinite(n) ? n : def; }

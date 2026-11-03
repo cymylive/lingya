@@ -1,8 +1,8 @@
 {
   "id": "core-rules",
   "name": "核心规则",
-  "version": "1.0.0",
-  "description": "为 LingYa 注入三段核心行为约束：需求先汇报等确认、不可逆操作二次确认、模糊指令先追问。支持自定义规则文案。",
+  "version": "2.1.0",
+  "description": "管理多条核心行为铁律：可新增、删除、编辑、启用/禁用、调整顺序。规则按顺序注入系统提示词。",
   "icon": "📜",
   "entry": "index.js",
   "apiVersion": 1

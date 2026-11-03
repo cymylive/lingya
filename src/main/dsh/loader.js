@@ -156,6 +156,10 @@ async function bundlePlugin(entryFile) {
     format: 'cjs',
     platform: 'node',
     logLevel: 'silent',
+    // electron 由宿主运行时提供，不能打进 bundle。
+    // 不标记的话，插件里 require('electron') 会打包失败（Could not resolve "electron"），
+    // 整个插件加载不成功（历史事故：graphify-proactive 的 gq_* 工具全不可用）。
+    external: ['electron'],
     plugins: [{
       name: 'lingya-dsh-shim',
       setup(build) {

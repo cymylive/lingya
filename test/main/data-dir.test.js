@@ -159,6 +159,71 @@ test('LINGYA_NO_MIGRATE → 跳过迁移', () => {
   assert.strictEqual(r.migrated, false);
 });
 
+// ===== 自定义数据目录（设置面板「数据目录」）=====
+
+test('customDir 优先于默认 exe 同目录 LingYa-Data', () => {
+  const appData = tmp();
+  const exeDir = tmp();
+  const customDir = tmp();
+  const r = resolveDataDir({
+    appDataPath: appData, execPath: path.join(exeDir, 'LingYa.exe'),
+    env: {}, fs, sessionDir: 'sess', customDir: customDir,
+  });
+  assert.strictEqual(r.dir, path.resolve(customDir));
+  assert.strictEqual(r.customDirApplied, true);
+  assert.strictEqual(r.portable, false);
+});
+
+test('customDir 不迁移旧数据（用户自行决定是否搬）', () => {
+  const appData = tmp();
+  const legacy = path.join(appData, 'sess');
+  fs.mkdirSync(legacy, { recursive: true });
+  fs.writeFileSync(path.join(legacy, 'old.json'), 'x');
+  const customDir = tmp();
+  const r = resolveDataDir({
+    appDataPath: appData, execPath: path.join(tmp(), 'LingYa.exe'),
+    env: {}, fs, sessionDir: 'sess', customDir: customDir,
+  });
+  assert.strictEqual(r.migrated, false, '自定义目录不应自动迁移旧数据');
+  assert.ok(!fs.existsSync(path.join(r.dir, 'old.json')));
+});
+
+test('customDir 为空白字符串时视为未设置', () => {
+  const appData = tmp();
+  const exeDir = tmp();
+  for (const v of ['', '   ', null, undefined]) {
+    const r = resolveDataDir({
+      appDataPath: appData, execPath: path.join(exeDir, 'LingYa.exe'),
+      env: {}, fs, sessionDir: 'sess', customDir: v,
+    });
+    assert.strictEqual(r.dir, path.join(exeDir, 'LingYa-Data'), '空值应回落到默认路径: ' + JSON.stringify(v));
+  }
+});
+
+test('环境变量 LINGYA_USER_DATA_DIR 优先于 customDir', () => {
+  const envDir = tmp();
+  const customDir = tmp();
+  const r = resolveDataDir({
+    appDataPath: tmp(), execPath: path.join(tmp(), 'LingYa.exe'),
+    env: { LINGYA_USER_DATA_DIR: envDir }, fs, sessionDir: 'sess', customDir: customDir,
+  });
+  assert.strictEqual(r.dir, path.resolve(envDir), '环境变量优先级最高');
+});
+
+test('customDir 不可写时回落到默认便携路径', () => {
+  const appData = tmp();
+  const exeDir = tmp();
+  // 用一个文件挡住同名的目录路径，模拟不可写
+  const blocker = path.join(tmp(), 'blocker-file');
+  fs.writeFileSync(blocker, 'x');
+  const r = resolveDataDir({
+    appDataPath: appData, execPath: path.join(exeDir, 'LingYa.exe'),
+    env: {}, fs, sessionDir: 'sess', customDir: path.join(blocker, 'sub'),
+  });
+  assert.strictEqual(r.dir, path.join(exeDir, 'LingYa-Data'), '不可写的自定义路径应被放弃');
+  assert.ok(!r.customDirApplied);
+});
+
 test('isEmptyDir 对不存在/空/非空判断正确', () => {
   const d = tmp();
   assert.strictEqual(isEmptyDir(path.join(d, 'nope'), fs), true);

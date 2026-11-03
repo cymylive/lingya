@@ -56,6 +56,8 @@ export function apply(ctx) {
 
 **播种规则**（`seedBundledPlugins`）：遍历项目根 `plugins/` 下的每个子目录，若 `<userData>/plugins/<同名>` **不存在**才复制。已存在则跳过 —— 尊重用户已安装/修改的版本。
 
+**墓碑机制**：用户在插件面板删除内置插件后，`<userData>/lingya-plugins.json` 里该插件记录会被打上 `deleted: true` 标记（墓碑），播种时跳过。**重启后不会复活**。插件面板顶部会出现「恢复内置插件」按钮，点击后清除全部墓碑并重新播种。删除内置插件时**不会清除其 config**（如核心规则的规则列表），恢复后原配置原样还在。
+
 > **坑 1**：改完项目根 `plugins/` 里的代码，如果用户目录已有同名插件，**改动不会生效**。开发期要么删掉 `<userData>/plugins/<id>`，要么直接在用户目录里改。
 
 > **坑 2**：`<userData>` 在便携版是程序同目录下的 `LingYa-Data`（详见 `data-dir.js`），非便携版是 `%APPDATA%\lingya-ai-pro-session\`。

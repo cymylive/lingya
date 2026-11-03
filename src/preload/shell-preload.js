@@ -203,6 +203,7 @@ const api = {
   pluginExport: (id) => ipcRenderer.invoke('plugin-export', { id }),
   pluginExportSkill: () => ipcRenderer.invoke('plugin-export-skill'),
   pluginDelete: (id) => ipcRenderer.invoke('plugin-delete', { id }),
+  pluginRestoreBundled: () => ipcRenderer.invoke('plugin-restore-bundled'),
   pluginViews: () => ipcRenderer.invoke('plugin-views'),
   pluginInvoke: (pluginId, channel, args) => ipcRenderer.invoke('plugin-invoke', { pluginId, channel, args }),
   // DSH 兼容层（外部 npm 插件）
@@ -231,6 +232,12 @@ const api = {
   tabForward: () => ipcRenderer.invoke('lingya-tab-forward', {}),
   tabReload: () => ipcRenderer.invoke('lingya-tab-reload', {}),
   onTabsUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-tabs-updated',h); return ()=>ipcRenderer.removeListener('lingya-tabs-updated',h); },
+  // ===== 用户数据自定义目录 =====
+  dataPathGet: () => ipcRenderer.invoke('data-path-get'),
+  dataPathSet: (dir) => ipcRenderer.invoke('data-path-set', { dir }),
+  dataPathReset: () => ipcRenderer.invoke('data-path-reset'),
+  dataPathChoose: () => ipcRenderer.invoke('data-path-choose'),
+  dataPathRestart: () => ipcRenderer.invoke('data-path-restart'),
 };
 
 try {

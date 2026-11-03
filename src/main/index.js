@@ -37,12 +37,30 @@ const petLoader = require('./pet-loader');
 // 见 data-dir.js：便携版数据与程序同目录，换电脑/搬目录配置不丢。
 const { resolveDataDir, resolveInstanceDir } = require('./data-dir');
 const SESSION_DIR = process.env.LINGYA_SESSION_DIR || 'lingya-ai-pro-session';
+
+// 读取用户自定义数据目录。
+// 配置文件固定在 appData 下（不随数据目录变化），避免「鸡生蛋」问题：
+// 若配置跟着数据目录走，改了路径后下次启动就找不到配置了。
+let _customDataDir = null;
+try {
+  const _cfgPath = path.join(app.getPath('appData'), SESSION_DIR, 'data-location.json');
+  if (fs.existsSync(_cfgPath)) {
+    const _cfg = JSON.parse(fs.readFileSync(_cfgPath, 'utf-8'));
+    if (_cfg && typeof _cfg.customDir === 'string' && _cfg.customDir.trim()) {
+      _customDataDir = _cfg.customDir.trim();
+    }
+  }
+} catch (err) {
+  console.warn('[LingYa] 读取自定义数据目录配置失败:', err.message);
+}
+
 const dataDirInfo = resolveDataDir({
   appDataPath: app.getPath('appData'),
   execPath: process.execPath,
   env: process.env,
   fs,
   sessionDir: SESSION_DIR,
+  customDir: _customDataDir,
 });
 const USER_DATA_DIR = dataDirInfo.dir;
 
@@ -2506,6 +2524,10 @@ if (_shouldQuit) {
 
   // 强制禁用 Windows 11 原生覆盖滚动条，否则自定义 CSS 无法生效
 app.commandLine.appendSwitch('disable-features', 'OverlayScrollbar,OverlayScrollbars,WindowsOverlayScrollbar');
+
+// 关闭硬件加速，解决 Intel 核显等 GPU 驱动崩溃问题
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
 
 app.whenReady().then(() => {
     setupAppMenu();

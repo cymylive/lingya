@@ -19,8 +19,8 @@ const IGNORE_DIRS = new Set([
   '.DS_Store',                                 // 系统文件
 ]);
 
-const MAX_NODES = 5000;
-const MAX_DEPTH = 12;
+const MAX_NODES = 1000000; // 实质上无上限，防止极端情况内存溢出
+const MAX_DEPTH = 50;      // 实质上无上限，防止极深目录死递归
 
 /**
  * 递归构建目录树

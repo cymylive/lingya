@@ -89,15 +89,28 @@ function isEmptyDir(dir, fs) {
  * @param {object} options.env         process.env
  * @param {object} options.fs          fs 模块
  * @param {string} options.sessionDir  安装版默认子目录名
+ * @param {string} [options.customDir] 用户在设置中自定义的数据目录（优先级高于默认便携路径）
  * @returns {{dir: string, portable: boolean, legacyDir: string, migrated: boolean}}
  */
 function resolveDataDir(options) {
-  const { appDataPath, execPath, env = {}, fs, sessionDir } = options;
+  const { appDataPath, execPath, env = {}, fs, sessionDir, customDir } = options;
   const legacyDir = path.join(appDataPath, sessionDir);
 
+  // 优先级 1：环境变量显式覆盖
   const explicit = (env.LINGYA_USER_DATA_DIR || '').trim();
   if (explicit) {
     return { dir: path.resolve(explicit), portable: false, legacyDir, migrated: false };
+  }
+
+  // 优先级 2：用户在设置面板中选择的自定义数据目录
+  if (customDir && String(customDir).trim()) {
+    const target = path.resolve(String(customDir).trim());
+    if (!isDirWritable(target, fs)) {
+      // 自定义路径不可写 -> 放弃自定义，回退到默认便携逻辑，并携带回退原因
+      console.warn('[LingYa] 自定义数据目录不可写，回退到默认便携路径:', target);
+    } else {
+      return { dir: target, portable: false, legacyDir, migrated: false, customDirApplied: true };
+    }
   }
 
   // 统一策略：数据默认放 exe 同目录的 LingYa-Data（便携版和安装版一致）。

@@ -2,10 +2,14 @@
  * 插件启用状态存储（全局共享，JSON 持久化）
  * 存储文件：<userData>/lingya-plugins.json
  *
- * 结构：{ "<pluginId>": { enabled: boolean } }
+ * 结构：{ "<pluginId>": { enabled: boolean, pinned?: boolean, config?: object, deleted?: boolean, deletedAt?: string } }
  *
  * 说明：插件本体在 <userData>/plugins/<id>/ 目录（manifest.json + index.js）。
  * 本 store 只负责"用户是否启用"这一状态；扫描/加载由 plugin-host.js 完成。
+ *
+ * 墓碑（tombstone）：内置插件被用户删除后写入 deleted: true。
+ * plugin-host 播种时跳过带墓碑的目录，重启后不再复活。
+ * 墓碑与 enabled/pinned/config 共存 —— 恢复插件后配置原样还在。
  */
 const fs = require('fs');
 const path = require('path');
@@ -131,4 +135,77 @@ function getPluginConfig(pluginId) {
   return (rec && typeof rec === 'object' && rec.config) ? rec.config : {};
 }
 
-module.exports = { init, getStoreFile, isEnabled, setEnabled, isPinned, setPinned, removeRecord, savePluginConfig, getPluginConfig };
+// ========== 墓碑 API（内置插件删除持久化） ==========
+
+/**
+ * 标记插件为「已删除」。只写 deleted/deletedAt 字段，
+ * 保留 enabled / pinned / config —— 恢复插件后用户配置不丢。
+ * @param {string} pluginId
+ * @returns {boolean} 是否写入成功
+ */
+function markDeleted(pluginId) {
+  if (!pluginId) throw new Error('pluginId 不能为空');
+  const data = { ...readRaw() };
+  const rec = (data[pluginId] && typeof data[pluginId] === 'object') ? { ...data[pluginId] } : {};
+  rec.deleted = true;
+  rec.deletedAt = new Date().toISOString();
+  data[pluginId] = rec;
+  writeRaw(data);
+  return true;
+}
+
+/**
+ * 插件是否被标记为已删除。
+ * @param {string} pluginId
+ * @returns {boolean}
+ */
+function isDeleted(pluginId) {
+  if (!pluginId) return false;
+  const rec = readRaw()[pluginId];
+  return !!(rec && rec.deleted === true);
+}
+
+/**
+ * 清除全部墓碑（恢复内置插件时调用）。
+ * 只删 deleted/deletedAt 字段，config / enabled / pinned 全部保留。
+ * @returns {string[]} 被清除墓碑的插件 id 列表
+ */
+function clearDeleted() {
+  const data = { ...readRaw() };
+  const cleared = [];
+  let changed = false;
+  for (const id of Object.keys(data)) {
+    const rec = data[id];
+    if (rec && typeof rec === 'object' && rec.deleted === true) {
+      const next = { ...rec };
+      delete next.deleted;
+      delete next.deletedAt;
+      data[id] = next;
+      cleared.push(id);
+      changed = true;
+    }
+  }
+  if (changed) writeRaw(data);
+  return cleared;
+}
+
+/**
+ * 列出所有带墓碑的插件 id。
+ * @returns {string[]}
+ */
+function listDeleted() {
+  const data = readRaw();
+  return Object.keys(data).filter((id) => {
+    const rec = data[id];
+    return !!(rec && typeof rec === 'object' && rec.deleted === true);
+  });
+}
+
+module.exports = {
+  init, getStoreFile,
+  isEnabled, setEnabled,
+  isPinned, setPinned,
+  removeRecord,
+  savePluginConfig, getPluginConfig,
+  markDeleted, isDeleted, clearDeleted, listDeleted,
+};

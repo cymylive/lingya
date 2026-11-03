@@ -52,7 +52,9 @@ function install() {
      *   awaitingUserInput: boolean,
      *   awaitingNextInitialChunk: boolean,
      *   taskDeclaredDone: boolean,
-     *   lastActivityAt: number
+     *   lastActivityAt: number,
+     *   toolExecuting: boolean,
+     *   initializationDone: boolean
      * }}
      */
     getRuntimeState() {
@@ -63,6 +65,12 @@ function install() {
         awaitingNextInitialChunk: !!state.awaitingNextInitialChunk,
         taskDeclaredDone: !!state.taskDeclaredDone,
         lastActivityAt: state.lastActivityAt || 0,
+        // 有工具在跑时 lastActivityAt 不再刷新（工具可能跑几分钟），
+        // 插件必须靠这个标志区分「在干活」和「真停滞」。
+        toolExecuting: (state.activeToolCount || 0) > 0,
+        // initializationDone 才是「初始提示全部分段发完」的可靠标志；
+        // awaitingNextInitialChunk 在首片发出前和末片发完后都是 false。
+        initializationDone: !!state.initializationDone,
         lastUserMessage: state.lastUserMessage || '',
         lastUserMessageAt: state.lastUserMessageAt || 0,
       };
@@ -79,16 +87,23 @@ function install() {
 
     /**
      * 读取当前会话的待办列表。
-     * @returns {Promise<{todos: Array, archived: boolean}>} 失败时返回空列表
+     * 返回的 sessionId 是主进程实际用来查待办的键：首页（URL 尚未生成会话 ID）时
+     * 主进程会回退到 sessionStore 里的上一个会话，可能与 getRuntimeState().sessionId
+     * 不一致。调用方应比对二者，不一致就忽略这批待办。
+     * @returns {Promise<{todos: Array, archived: boolean, sessionId: string|null}>} 失败时返回空列表
      */
     async getTodos() {
       try {
         const r = await window.electronAPI.getTodos();
         if (r && r.success) {
-          return { todos: Array.isArray(r.todos) ? r.todos : [], archived: !!r.archived };
+          return {
+            todos: Array.isArray(r.todos) ? r.todos : [],
+            archived: !!r.archived,
+            sessionId: r.sessionId || null,
+          };
         }
       } catch (_) { /* IPC 不可用：当作无待办 */ }
-      return { todos: [], archived: false };
+      return { todos: [], archived: false, sessionId: null };
     },
   };
 

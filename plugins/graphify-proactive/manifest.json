@@ -1,7 +1,7 @@
 {
   "id": "graphify-proactive",
   "name": "图谱优先（Graphify Proactive）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "让 AI 在开发/修 bug 时主动查知识图谱而非盲目 grep；图缺失或过期时自动重建。支持自定义触发规则。",
   "icon": "🕸️",
   "entry": "index.js",
