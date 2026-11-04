@@ -9,6 +9,8 @@ on:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -18,9 +20,9 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
       - name: Upload coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         continue-on-error: true
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.lcov
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
