@@ -2,9 +2,9 @@ name: Coverage
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   coverage:
@@ -18,6 +18,8 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
       - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        continue-on-error: true
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.lcov
