@@ -146,6 +146,24 @@ function getContextByWebContents(webContents) {
   return null;
 }
 
+/**
+ * 查找某个视图当前所在的宿主窗口上下文。
+ * 窗口合并后，视图的原始 ctx 已从 windows 移除（源窗口销毁），
+ * 但视图被搬到宿主窗口的 attachedViews 里 —— 靠这里找回宿主。
+ * @param {object} webContents 视图的 webContents
+ * @returns {object|null}
+ */
+function findHostContextForView(webContents) {
+  if (!webContents) return null;
+  for (const ctx of windows.values()) {
+    const list = ctx.attachedViews || [];
+    for (const p of list) {
+      if (p && p.view && p.view.webContents === webContents) return ctx;
+    }
+  }
+  return null;
+}
+
 /** 按 webContents 精确定位到 tab（返回 { ctx, tab }，找不到 tab 时 tab 为 null） */
 function getTabByWebContents(webContents) {
   if (!webContents) return { ctx: null, tab: null };
@@ -244,6 +262,7 @@ module.exports = {
   removeWindow,
   getWindowContext,
   getContextByWebContents,
+  findHostContextForView,
   getTabByWebContents,
   getView,
   getViewWebContents,

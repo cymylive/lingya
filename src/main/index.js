@@ -2000,10 +2000,20 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
     if (!ctx) return { success: false, error: '找不到窗口' };
     const panels = ctx.attachedViews || [];
+    const profileManager = require('./profile-manager');
     const list = panels.map(p => {
       let title = '窗口';
       try { title = p.view.webContents.getTitle() || title; } catch (_) {}
-      return { webContentsId: p.view.webContents.id, title };
+      // 取附加视图的窗口号（从原 ctx 的 profileId 反查 profile.number）
+      let winNo = null;
+      try {
+        const ownerCtx = windowState.getContextByWebContents(p.view.webContents);
+        if (ownerCtx && ownerCtx.profileId) {
+          const prof = profileManager.getProfileById(ownerCtx.profileId);
+          if (prof && typeof prof.number === 'number') winNo = prof.number;
+        }
+      } catch (_) {}
+      return { webContentsId: p.view.webContents.id, title, winNo };
     });
 
     // 滚动信息
@@ -2036,7 +2046,25 @@ ipcMainForProfile.handle('window-split-state', async (event) => {
       }
     }
 
-    return { success: true, direction: dir, views: list, scroll, vscroll };
+    // 主视图的 webContentsId + 窗口号：供壳页面把主视图也纳入分栏（views 里只有附加视图）
+    let mainViewId = null;
+    let mainWinNo = null;
+    try {
+      if (ctx.profileId) {
+        const prof = require('./profile-manager').getProfileById(ctx.profileId);
+        if (prof && typeof prof.number === 'number') mainWinNo = prof.number;
+      }
+      if (ctx.view && ctx.view.webContents) {
+        mainViewId = ctx.view.webContents.id;
+      } else if (ctx.tabs && ctx.activeTabId) {
+        // 兼容多标签页架构：视图挂在 tab 上，ctx.view 可能为空
+        const activeTab = ctx.tabs.get(ctx.activeTabId);
+        if (activeTab && activeTab.view && activeTab.view.webContents) {
+          mainViewId = activeTab.view.webContents.id;
+        }
+      }
+    } catch (_) {}
+    return { success: true, direction: dir, views: list, mainViewId, mainWinNo, scroll, vscroll };
   } catch (err) { return { success: false, error: err.message }; }
 });
 

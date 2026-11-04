@@ -658,12 +658,12 @@
   </div>
 
   <!-- 分屏横向滚动条（仅左右分屏且内容溢出时显示） -->
-  <div id="lingya-split-scrollbar" style="display:none;position:fixed;left:0;right:0;bottom:0;height:14px;background:rgba(45, 212, 191, 0.1);z-index:9999;align-items:center;">
+  <div id="lingya-split-scrollbar" style="display:none;position:fixed;left:0;right:0;bottom:28px;height:14px;background:rgba(45, 212, 191, 0.1);z-index:10001;align-items:center;">
     <div id="lingya-split-scrollbar-thumb" style="position:absolute;height:8px;top:3px;border-radius:4px;background:rgba(45, 212, 191, 0.85);cursor:grab;left:0;width:100px;"></div>
   </div>
 
   <!-- 分屏纵向滚动条（仅上下分屏且内容溢出时显示） -->
-  <div id="lingya-split-vscrollbar" style="display:none;position:fixed;top:40px;right:0;bottom:0;width:14px;background:rgba(0,0,0,0.15);z-index:9999;align-items:center;">
+  <div id="lingya-split-vscrollbar" style="display:none;position:fixed;top:40px;right:0;bottom:28px;width:14px;background:rgba(0,0,0,0.15);z-index:10001;align-items:center;">
     <div id="lingya-split-vscrollbar-thumb" style="position:absolute;width:8px;left:3px;border-radius:4px;background:rgba(120,120,120,0.7);cursor:grab;top:0;height:100px;"></div>
   </div>
 
@@ -793,6 +793,7 @@
     </div>
   </div>
   <script src="../preload/shell-utils.js"></script>
+  <script src="../preload/shell-token-utils.js"></script>
   <script src="../preload/shell-renderer.js"></script>
 </body>
 </html>

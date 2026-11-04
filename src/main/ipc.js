@@ -780,19 +780,40 @@ function registerIpcHandlers() {
   // AI 页面推送 token / TPS → 主进程转发给壳页面
   ipcMain.handle('update-token-usage', async (event, payload) => {
     try {
-      const ctx = windowState.getContextByWebContents(event.sender);
-      if (ctx && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
-        try { ctx.rawWin.webContents.send('shell-token-updated', payload || {}); } catch (_) {}
+      // 常规：事件来源就是某个窗口的壳/AI 视图
+      let ctx = windowState.getContextByWebContents(event.sender);
+      // 合并后：来源视图的原始 ctx 的壳窗口已销毁，需找回它当前所在的宿主窗口
+      if (!ctx || !ctx.rawWin || ctx.rawWin.isDestroyed()) {
+        const host = typeof windowState.findHostContextForView === 'function'
+          ? windowState.findHostContextForView(event.sender)
+          : null;
+        if (host) ctx = host;
       }
+      if (!ctx || !ctx.rawWin || ctx.rawWin.isDestroyed()) {
+        return { success: false, error: '找不到可接收 token 更新的窗口' };
+      }
+      const out = Object.assign({}, payload || {});
+      // 带上视图标识，让壳页面按视图分别记录用量（多视图分屏时各显示各的）
+      try { out.viewKey = String(event.sender.id); } catch (_) {}
+      ctx.rawWin.webContents.send('shell-token-updated', out);
     } catch (_) {}
     return { success: true };
   });
   ipcMain.handle('update-tps', async (event, { text } = {}) => {
     try {
-      const ctx = windowState.getContextByWebContents(event.sender);
-      if (ctx && ctx.rawWin && !ctx.rawWin.isDestroyed()) {
-        try { ctx.rawWin.webContents.send('shell-tps-updated', { tps: String(text || '') }); } catch (_) {}
+      let ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx || !ctx.rawWin || ctx.rawWin.isDestroyed()) {
+        const host = typeof windowState.findHostContextForView === 'function'
+          ? windowState.findHostContextForView(event.sender)
+          : null;
+        if (host) ctx = host;
       }
+      if (!ctx || !ctx.rawWin || ctx.rawWin.isDestroyed()) {
+        return { success: false, error: '找不到可接收 tps 更新的窗口' };
+      }
+      const out = { tps: String(text || '') };
+      try { out.viewKey = String(event.sender.id); } catch (_) {}
+      ctx.rawWin.webContents.send('shell-tps-updated', out);
     } catch (_) {}
     return { success: true };
   });

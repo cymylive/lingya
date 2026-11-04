@@ -4512,29 +4512,177 @@
     window.__lyRenderTabsDropdown = renderTabsDropdown;
   })();
 
-  // ===== 底部状态栏订阅（对齐 Cuckoo 2026-11-01）=====
+  // ===== 底部状态栏订阅（对齐 Cuckoo 2026-11-01；多视图分栏 2026-11-04）=====
   (function initStatusBar() {
     var ctxEl = document.getElementById('sb-context');
     var tpsEl = document.getElementById('sb-tps');
+    var barEl = document.getElementById('lingya-statusbar');
     if (!ctxEl || !tpsEl || !window.shellAPI) return;
-    function formatTokenCount(n) {
-      if (!isFinite(n) || n < 0) return '0';
-      if (n >= 100000000) return (n / 100000000).toFixed(2) + '亿';
-      if (n >= 10000) return (n / 10000).toFixed(2) + '万';
-      return String(Math.round(n));
+    var tokenUtils = (typeof window !== 'undefined' && window.__lyShellTokenUtils) ? window.__lyShellTokenUtils : null;
+    if (!tokenUtils) {
+      console.error('[LingYa StatusBar] window.__lyShellTokenUtils 未定义！');
+      return;
     }
+    var formatTokenCount = tokenUtils.formatTokenCount;
+
+    // 单视图时沿用 #sb-context（保持原视觉）；多视图时动态生成分栏。
+    var tokenByView = new Map();   // viewKey -> number
+    var tpsByView = new Map();     // viewKey -> string
+    var viewInfoByKey = new Map(); // viewKey -> window number
+
+    /** 当前需要展示的视图集合。单视图 = ['']；多视图 = attachedViews + 主视图的 viewKey */
+    function activeViewKeys() {
+      // 优先使用分屏状态（主进程能给出准确的视图清单）
+      if (window.__lySplitViewKeys && Array.isArray(window.__lySplitViewKeys)) {
+        return window.__lySplitViewKeys.slice();
+      }
+      // 未分屏：只关心「默认栏」
+      return [];
+    }
+
+    function renderTokens() {
+      if (!barEl || !ctxEl) return;
+      var keys = activeViewKeys();
+      // 单视图 / 未分屏：维持原样，只显示默认栏
+      if (keys.length <= 1) {
+        var single = keys.length === 1 ? tokenByView.get(keys[0]) : undefined;
+        ctxEl.textContent = formatTokenCount(typeof single === 'number' ? single : (tokenByView.get('') || 0));
+        // 清理动态分栏（若之前是分屏状态）
+        var extras = barEl.querySelectorAll('[data-sb-multi]');
+        for (var i = 0; i < extras.length; i++) extras[i].remove();
+        var singleItem = ctxEl.parentNode;
+        if (singleItem && singleItem.style) singleItem.style.display = '';
+        var tpsItem2 = document.getElementById('sb-tps-item');
+        if (tpsItem2 && tpsItem2.style) tpsItem2.style.display = '';
+        return;
+      }
+
+      // 多视图：隐藏默认栏和默认 tps 栏（速度已并入各分栏），按视图生成
+      var singleParent = ctxEl.parentNode;
+      if (singleParent && singleParent.style) singleParent.style.display = 'none';
+      var tpsItem = document.getElementById('sb-tps-item');
+      if (tpsItem && tpsItem.style) tpsItem.style.display = 'none';
+      // 移除旧的分栏
+      var old = barEl.querySelectorAll('[data-sb-multi]');
+      for (var j = 0; j < old.length; j++) old[j].remove();
+
+      // 逐个视图插入分栏：x号窗口 对话上下文:x 输出速度:x
+      var anchor = tpsItem || null;
+      for (var k = 0; k < keys.length; k++) {
+        var vk = keys[k];
+        var val = tokenByView.get(vk);
+        var tps = tpsByView.get(vk);
+        var winNo = viewInfoByKey.get(vk);
+        var item = document.createElement('div');
+        item.className = 'sb-item';
+        item.setAttribute('data-sb-multi', '1');
+        item.setAttribute('title', '窗口' + (winNo != null ? winNo : '?') + ' 的对话上下文与输出速度');
+        // 窗口号
+        if (winNo != null) {
+          var wLbl = document.createElement('span');
+          wLbl.style.cssText = 'font-size:11px;color:var(--ck-text);font-weight:600;margin-right:6px;';
+          wLbl.textContent = winNo + '号窗口';
+          item.appendChild(wLbl);
+        }
+        // 对话上下文
+        var lbl = document.createElement('span');
+        lbl.className = 'sb-label';
+        lbl.textContent = '对话上下文:';
+        var v = document.createElement('span');
+        v.className = 'sb-value';
+        v.textContent = formatTokenCount(typeof val === 'number' ? val : 0);
+        item.appendChild(lbl);
+        item.appendChild(v);
+        // 输出速度
+        var tLbl = document.createElement('span');
+        tLbl.className = 'sb-label';
+        tLbl.style.marginLeft = '8px';
+        tLbl.textContent = '输出速度:';
+        var tV = document.createElement('span');
+        tV.className = 'sb-value';
+        tV.textContent = (tps && tps !== '--') ? tps : '--';
+        item.appendChild(tLbl);
+        item.appendChild(tV);
+        if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(item, anchor);
+        else barEl.appendChild(item);
+      }
+    }
+
     if (window.shellAPI.onTokenUpdated) {
       window.shellAPI.onTokenUpdated(function (d) {
-        if (d && typeof d.context === 'number') {
-          ctxEl.textContent = formatTokenCount(d.context);
-        }
+        if (!d || typeof d.context !== 'number') return;
+        var key = d.viewKey ? String(d.viewKey) : '';
+        tokenByView = tokenUtils.upsertTokenEntry(tokenByView, key, d.context);
+        renderTokens();
       });
     }
     if (window.shellAPI.onTpsUpdated) {
       window.shellAPI.onTpsUpdated(function (d) {
         tpsEl.textContent = (d && d.tps) ? String(d.tps) : '--';
+        if (d && d.viewKey) {
+          var key = String(d.viewKey);
+          tpsByView.set(key, (d.tps ? String(d.tps) : '--'));
+          // 多视图时重绘分栏，单视图无需重绘（tpsEl 已直写）
+          if (window.__lySplitViewKeys && window.__lySplitViewKeys.length > 1) {
+            renderTokens();
+          }
+        }
       });
     }
+
+    // 分屏状态变化时：更新活跃视图集合并清理已拆走的条目
+    function refreshViews() {
+      if (!window.shellAPI.getSplitState) return;
+      window.shellAPI.getSplitState().then(function (r) {
+        if (!r || !r.success) {
+          window.__lySplitViewKeys = [];
+          tokenByView = tokenUtils.pruneTokenEntries(tokenByView, ['']);
+          renderTokens();
+          return;
+        }
+        // 主视图 + 附加视图 → viewKey 列表 + 窗口号映射
+        var keys = [];
+        var infoMap = new Map();
+        try {
+          if (r.mainViewId != null) {
+            var mk = String(r.mainViewId);
+            keys.push(mk);
+            if (r.mainWinNo != null) infoMap.set(mk, r.mainWinNo);
+          }
+          if (r.views && r.views.length) {
+            for (var i = 0; i < r.views.length; i++) {
+              var v = r.views[i];
+              var wcId = v && v.webContentsId != null ? v.webContentsId : v;
+              if (wcId != null) {
+                var vk = String(wcId);
+                keys.push(vk);
+                if (v && v.winNo != null) infoMap.set(vk, v.winNo);
+              }
+            }
+          }
+        } catch (_) {}
+        viewInfoByKey = infoMap;
+        
+        // 调试日志
+        console.log('[LingYa StatusBar] refreshViews keys=' + JSON.stringify(keys) + ', scroll=' + JSON.stringify(r.scroll));
+
+        // 未分屏时 keys 只有主视图一个 → renderTokens 走单栏分支
+        window.__lySplitViewKeys = keys;
+        // 多视图保留 "" 作为旧数据兼容键（旧版本 payload 可能不带 viewKey）
+        tokenByView = tokenUtils.pruneTokenEntries(tokenByView, keys.concat(['']));
+        renderTokens();
+      })['catch'](function () {});
+    }
+    if (window.shellAPI.onSplitChanged) {
+      try { window.shellAPI.onSplitChanged(function () { setTimeout(refreshViews, 80); }); } catch (_) {}
+    }
+    window.addEventListener('resize', function () { setTimeout(refreshViews, 120); });
+    setTimeout(refreshViews, 300);
+    // 【兜底】每 2 秒主动拉取一次，确保合并/拆分时 UI 绝对能同步（防止事件丢失）
+    if (!window.__lyStatusBarTimer) {
+      window.__lyStatusBarTimer = setInterval(refreshViews, 2000);
+    }
+    window.__lyRefreshStatusTokens = refreshViews;
   })();
 
   // ===== 分屏横向滚动条 =====
@@ -4578,6 +4726,7 @@
         viewportW = r.scroll.viewportWidth || 0;
         contentW = r.scroll.contentWidth || 0;
         scrollX = r.scroll.scrollX || 0;
+        // console.log('[LingYa Scrollbar] H-scroll enabled:', viewportW, contentW);
         render();
       })['catch'](function(){});
     }
