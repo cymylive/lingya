@@ -13,6 +13,7 @@
  */
 const { onInterceptedResponse, onToolCall } = require('./intercept-observer');
 const { sendToChat, onUserMessageSent } = require('./chat-input');
+const { hasToolBlocks } = require('./js-detector');
 
 /** 移除文本中的 lingya/js 工具代码块（工具调用另行上报，飞书只显示对话） */
 function stripToolBlocks(text) {
@@ -81,7 +82,7 @@ function initFeishuBridge() {
     // 不能因 !text 直接 return，否则纯思考轮次的思考内容会丢失。
     if (!enabled) return;
     const clean = stripToolBlocks(text);
-    const hasTool = /\`\`\`(?:lingya|javascript|js)/i.test(text);
+    const hasTool = hasToolBlocks(text);
     // 【2026-10-30】不再塞占位文本。空回复由主进程判断是否推送。
     report({ type: 'ai-reply', text: clean, hasTool: hasTool, thinking: String(thinking || '') });
     // 无后续工具 → 任务收尾，单独上报"完成"标志

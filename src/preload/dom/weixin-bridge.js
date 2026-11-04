@@ -7,6 +7,7 @@
  */
 const { onInterceptedResponse, onToolCall } = require('./intercept-observer');
 const { sendToChat, onUserMessageSent } = require('./chat-input');
+const { hasToolBlocks } = require('./js-detector');
 
 /** 移除文本中的 lingya/js 工具代码块（工具调用另行上报） */
 function stripToolBlocks(text) {
@@ -81,7 +82,7 @@ function initWeixinBridge() {
     // thinking 可能与 text 同时存在，也可能只有 thinking（纯思考轮次）。
     if (!enabled) return;
     const clean = stripToolBlocks(text);
-    const hasTool = /```(?:lingya|javascript|js)/i.test(text);
+    const hasTool = hasToolBlocks(text);
     // 【2026-10-30】不再塞占位文本。空回复由主进程判断是否推送。
     report({ type: 'ai-reply', text: clean, hasTool: hasTool, thinking: String(thinking || '') });
     if (!hasTool) report({ type: 'task-done' });

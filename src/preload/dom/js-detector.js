@@ -146,6 +146,27 @@ function extractLingyaTags(text) {
   return blocks;
 }
 
+/**
+ * 判定一条 AI 回复中是否存在「会被执行层执行的工具调用块」。
+ *
+ * 【2026-11-04 修复】三个 IM bridge（QQ/微信/飞书）原来用粗正则
+ * /(三反引号)(?:lingya|javascript|js)/i 判 hasTool，与执行层 extractJsToolBlocks
+ * 的精确判定不一致 —— 只要正文出现 js 示例代码块就误判为「还要调工具」，
+ * 导致最终报告被扣住不发 task-done，报告丢失。
+ *
+ * 本函数直接复用执行层的提取结果，保证「上报层的判断」= 「执行层会不会执行」。
+ *
+ * @param {string} text AI 回复原文
+ * @returns {boolean} true = 有真实工具调用块，本轮不应发 task-done
+ */
+function hasToolBlocks(text) {
+  try {
+    return extractJsToolBlocks(text).length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 module.exports = {
   BT,
   FENCE,
@@ -155,4 +176,5 @@ module.exports = {
   hasOnlyFences,
   extractJsToolBlocks,
   extractLingyaTags,
+  hasToolBlocks,
 };
