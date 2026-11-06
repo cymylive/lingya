@@ -427,6 +427,11 @@ let electronAPI = {
     ipcRenderer.on('remote-user-message', handler);
     return () => ipcRenderer.removeListener('remote-user-message', handler);
   },
+  onRemoteFileUploaded: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('remote-file-uploaded', handler);
+    return () => ipcRenderer.removeListener('remote-file-uploaded', handler);
+  },
   // ========== 通道窗口绑定 API ==========
   getWeixinBinding: () => ipcRenderer.invoke('weixin-get-binding'),
   bindWeixinUser: (userId, userName) => ipcRenderer.invoke('weixin-bind-user', { userId, userName }),
