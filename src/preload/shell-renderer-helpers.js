@@ -41,7 +41,7 @@ function renderSessionItemHtml(s, opts) {
     ' data-session-id="' + attr(s.sessionId) + '"' +
     ' data-profile-id="' + attr(s.profileId || '') + '"' +
     ' data-name="' + attr(label) + '"' +
-    ' title="' + attr(s.sessionId) + '">' +
+    ' title="' + attr(label) + '">' +
     caret +
     '<span class="ck-ws-name">' + esc(label) + '</span>' +
     badge +

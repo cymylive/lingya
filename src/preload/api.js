@@ -195,6 +195,10 @@ let electronAPI = {
   trustedClick: (x, y) => {
     return ipcRenderer.invoke('trusted-click', { x: x, y: y });
   },
+  // 可信鼠标移动（只发 mouseMove 不发 down/up）：用于补足页面级 mousemove 密度
+  trustedMouseMove: (x, y) => {
+    return ipcRenderer.invoke('trusted-mouse-move', { x: x, y: y });
+  },
   trustedInsertText: (text) => {
     return ipcRenderer.invoke('trusted-insert-text', { text: text });
   },

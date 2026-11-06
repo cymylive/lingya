@@ -32,6 +32,13 @@ const DEFAULT_CONFIG = {
   // 两者可同时启用（purge 提供强指令块，ctf 提供安全测试工作流）
   purgeEnabled: false,
   purgeRuleset: 'default',
+  // ===== 性能 / 反检测 =====
+  // 是否禁用硬件加速（兼容模式）。
+  // 默认 false = 开启硬件加速：WebGL 渲染器为真实 GPU，指纹更接近普通用户。
+  // 设为 true 时保持旧行为：app.disableHardwareAcceleration() + disable-gpu，
+  // 修复部分 Intel 核显的 GPU 驱动崩溃问题，但 WebGL 会 fallback 到 SwiftShader。
+  // 参考：DeepSeek 数美风控 fp.min.js 采集 UNMASKED_RENDERER_WEBGL。
+  disableGpu: false,
 };
 
 let STORE_FILE = null;
@@ -103,7 +110,7 @@ function updateConfig(patch) {
       // 分片大小范围独立：下限 2000（太小会切出上百段），上限 100000（再大平台必拒收）。
       // 不能用 normalizePositiveInt —— 那个上限硬编码 10000，会把 15000~100000 的值全压成 10000。
       next[key] = normalizeChunkSize(patch[key], DEFAULT_CONFIG[key]);
-    } else if (key === 'ctfInjectionEnabled' || key === 'purgeEnabled') {
+    } else if (key === 'ctfInjectionEnabled' || key === 'purgeEnabled' || key === 'disableGpu') {
       next[key] = patch[key] === true;
     } else {
       next[key] = String(patch[key] == null ? '' : patch[key]);

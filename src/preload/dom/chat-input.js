@@ -8,6 +8,7 @@ const { BT } = require('./js-detector');
 const { getProviderByUrl } = require('../../../src/providers');
 const taskState = require('./task-state');
 const { decideInitialPromptAccept, markBatchHandled } = require('./initial-prompt-guard');
+const replyPhrases = require('./reply-phrases');
 
 /**
  * 根据当前 URL 获取 provider
@@ -218,6 +219,40 @@ async function trustedPressEnter(target) {
   return false;
 }
 /**
+ * 可信鼠标移动（P1 拟人化）：只移动不点击。
+ *
+ * 用于在 Enter 发送前补一段鼠标轨迹，增加页面级 mousemove 密度。
+ * 数美 fp.min.js 会采集 256 个 mousemove 点的 (x+y)&0xff 作为设备指纹，
+ * 真人页面一定有大量 mousemove；lingya 原本只在点击时产生约 10 点。
+ *
+ * 点击发送按钮的路径不需要调它 —— trustedClickElement 已自带贝塞尔轨迹。
+ *
+ * @param {Element} el 目标元素（取中心坐标）
+ * @returns {Promise<boolean>} 是否成功
+ */
+let _lastMouseTrace = null; // { at, x, y, points, ok } 供历史面板展示
+async function trustedMouseMoveTo(el) {
+  if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+  let r;
+  try { r = el.getBoundingClientRect(); } catch (_) { return false; }
+  if (!r || r.width <= 0 || r.height <= 0) return false;
+  const x = Math.round(r.left + r.width / 2);
+  const y = Math.round(r.top + r.height / 2);
+  const api = window.electronAPI;
+  if (!api || typeof api.trustedMouseMove !== 'function') return false;
+  try {
+    const res = await api.trustedMouseMove(x, y);
+    const ok = !!(res && res.success);
+    _lastMouseTrace = { at: Date.now(), x: x, y: y, points: (res && res.points) || 0, ok: ok };
+    return ok;
+  } catch (err) {
+    console.warn('[灵鸦] 可信鼠标移动异常:', err && err.message);
+    _lastMouseTrace = { at: Date.now(), x: x, y: y, points: 0, ok: false, error: err && err.message };
+    return false;
+  }
+}
+
+/**
  * 选中输入框全部内容（不删除，只建选区）。
  *
  * 之后调 Input.insertText 时，浏览器内核会用新文本替换选区，
@@ -261,7 +296,23 @@ async function setInputContent(input, msg) {
     const isEditable = input.isContentEditable || input.getAttribute('contenteditable') === 'true';
     if (!isTextLike && !isEditable) return false;
 
-    try { input.focus(); } catch (_) { /* 聚焦失败仍继续尝试 */ }
+    // P3 拟人化（2026-11-06）：优先用真实鼠标点击聚焦，失败再回退 focus()。
+    // 为什么：JS 的 focus() 不产生任何鼠标事件，而真人点输入框一定有 mousemove + down/up。
+    // trustedClickElement 内部已含贝塞尔轨迹，所以点击成功时不需要再调 trustedMouseMoveTo。
+    let _focusedByClick = false;
+    if (typeof input.getBoundingClientRect === 'function') {
+      let _r = null;
+      try { _r = input.getBoundingClientRect(); } catch (_) {}
+      if (_r && _r.width > 0 && _r.height > 0) {
+        _focusedByClick = await trustedClickElement(input);
+      }
+    }
+    if (!_focusedByClick) {
+      // 点击聚焦失败（或元素不可点击）：先补一段鼠标轨迹，再 focus()。
+      // 顺序：先移鼠标再聚焦，符合真人「鼠标移过去→点/聚焦」的时序。
+      await trustedMouseMoveTo(input);
+      try { input.focus(); } catch (_) { /* 聚焦失败仍继续尝试 */ }
+    }
 
     const api = window.electronAPI;
     if (!api || typeof api.trustedInsertText !== 'function') {
@@ -635,6 +686,29 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
         timestamp: Date.now(),
       });
     } catch (_) { /* 可观测性代码绝不能阻断发送 */ }
+
+    // P1/P3 拟人化：鼠标轨迹可观测性（最近 30 秒内的轨迹才有意义）
+    try {
+      if (_lastMouseTrace && (Date.now() - _lastMouseTrace.at) < 30000) {
+        const tr = _lastMouseTrace;
+        const { addHistory } = require('../overlay/ui');
+        addHistory({
+          id: 'mousetrace_' + Date.now(),
+          command: '[鼠标轨迹] ' + (tr.ok ? ('成功 / ' + tr.points + ' 点') : '失败'),
+          success: !!tr.ok,
+          canceled: false,
+          output: [
+            '目标坐标: (' + tr.x + ', ' + tr.y + ')',
+            '轨迹点数: ' + tr.points,
+            '结果: ' + (tr.ok ? '成功' : '失败' + (tr.error ? '（' + tr.error + '）' : '')),
+            '用途: 输入框聚焦 / Enter 发送前补足页面级 mousemove 密度',
+            '时刻: ' + new Date(tr.at).toLocaleTimeString('zh-CN'),
+          ].join(String.fromCharCode(10)),
+          timestamp: Date.now(),
+        });
+      }
+    } catch (_) { /* 可观测性代码绝不能阻断发送 */ }
+
     // 记录用户原始消息（排除程序自动发的催促/工具回传，供本地拒绝改写使用）
     if (!isAuto) {
       try {
@@ -698,9 +772,9 @@ function sendToolResultToChat(toolCall, result) {
 
     out = String(out || '').trim();
     if (out.length > MAXLEN) out = out.slice(0, MAXLEN) + nl + '...[内容太长省略了一部分]...';
-    msg = out || '(执行完成，没有输出)';
+    msg = out || replyPhrases.pickEmptyOutput();
   } else {
-    msg = '出错了：' + ((result && result.error) || '未知错误') + nl + '再试一下看看。';
+    msg = replyPhrases.pickErrorRetry((result && result.error) || '未知错误');
   }
 
   // 【审计修复 2026-11-02】工具结果回传前脱敏（真词 → 占位符，防泄露）
@@ -733,11 +807,10 @@ function sendCombinedJsResultsToChat(results) {
       if (out.length > MAX_OUTPUT) {
         out = out.slice(0, MAX_OUTPUT) + sep + '...[输出太长省略了一部分]...';
       }
-      msg += (out || '(执行完成，没有输出)') + sep;
+      msg += (out || replyPhrases.pickEmptyOutput()) + sep;
     } else {
       // 报错时只说错误本身，不把代码贴回去（真人不会把自己刚写的代码再念一遍）
-      msg += '出错了：' + ((item && item.result && item.result.error) || '未知错误') + sep;
-      msg += '我改一下重新跑。' + sep;
+      msg += replyPhrases.pickErrorRetry((item && item.result && item.result.error) || '未知错误') + sep;
     }
 
     // 多脚本之间留空行分隔即可，不加"第一个/下一个"这类机械过渡
@@ -752,7 +825,7 @@ function sendCombinedJsResultsToChat(results) {
     }
   }
   if (allImages.length > 0) {
-    msg += sep + '（附了 ' + allImages.length + ' 张图，你看下。）';
+    msg += sep + replyPhrases.pickImageAttached(allImages.length);
   }
 
   // 【审计修复 2026-11-02】JS 汇总结果回传前脱敏
@@ -1141,6 +1214,9 @@ function triggerSend(input) {
 async function fallbackSend(provider, input) {
   // 方法 1: 可信 Enter 按键（优先——用户指定顺序）
   if (input) {
+    // P1 拟人化（2026-11-06）：Enter 发送前补一段鼠标轨迹。
+    // 点击按钮路径不补 —— trustedClickElement 已自带贝塞尔轨迹，避免重复叠加。
+    try { await trustedMouseMoveTo(input); } catch (_) { /* 轨迹失败不影响发送 */ }
     const ok = await trustedPressEnter(input);
     if (ok) {
       console.log('[LingYa] 已通过可信 Enter 触发发送');
@@ -1665,4 +1741,6 @@ module.exports = {
   onUserMessageSent,
   onMessageDelivered,
   cancelPendingSend,
+  // 仅测试用：暴露内部函数便于单测
+  __test: { setInputContent, trustedMouseMoveTo, trustedClickElement, fallbackSend, _lastMouseTraceGetter: () => _lastMouseTrace },
 };

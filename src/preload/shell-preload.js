@@ -57,7 +57,6 @@ const api = {
   // 读取会话存档（用于「导入到当前对话」，2026-11-06）
   conversationArchiveRead: (sessionId) => ipcRenderer.invoke('conversation-archive-read', { sessionId }),
   // 从 AI 视图读取当前网页标题（供「同步标题」按钮，2026-11-06）
-  getAiViewTitle: () => ipcRenderer.invoke('get-ai-view-title'),
   newChat: () => ipcRenderer.invoke('shell-new-chat'),
   runAction: (action) => ipcRenderer.invoke('shell-run-action', { action }),
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),

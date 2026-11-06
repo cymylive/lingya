@@ -368,47 +368,6 @@ function init() {
       console.error('[LingYa] 归档清理失败:', e.message);
     }
 
-    // 会话标题更新 → 调平台 API 改名 + DOM 双写（含 MutationObserver 守护）
-    // （nameConversation / 手动改名原本只改 LingYa 本地存储，不碰网页自身 UI）
-    try {
-      if (window.electronAPI && window.electronAPI.onSessionTitleUpdated) {
-        window.electronAPI.onSessionTitleUpdated(async (payload) => {
-          try {
-            const p = payload || {};
-            const newTitle = String(p.title || '').trim();
-            const sid = String(p.sessionId || '').trim();
-            if (!newTitle || !sid) return;
-            // 标记已命名：无论来源是 AI 自动命名 / 用户手动改名 / 自动重命名，
-            // 后续 init-project 都不该再触发一次自动重命名
-            try { require('./dom/auto-rename').markRenamed(sid); } catch (_) {}
-            const sync = require('./dom/page-title-sync');
-            const r = await sync.syncSessionTitle(sid, newTitle);
-            console.log('[LingYa] 会话标题同步: ' + JSON.stringify({
-              sid, title: newTitle, api: r.api, dom: r.dom, current: r.current,
-            }));
-          } catch (e) { console.error('[LingYa] 同步会话标题失败:', e.message); }
-        });
-      }
-
-      // SPA 路由切换后重新应用标题（DeepSeek 是 pushState 导航）
-      const syncMod = require('./dom/page-title-sync');
-      window.addEventListener('popstate', () => { try { syncMod.onUrlChanged(); } catch (_) {} });
-      // 【2026-11-06 修复 #5】幂等保护
-      if (!window.__lyTitleSyncTimer) {
-        let lastHref = location.href;
-        window.__lyTitleSyncTimer = setInterval(() => {
-          if (location.href !== lastHref) { lastHref = location.href; try { syncMod.onUrlChanged(); } catch (_) {} }
-        }, 800);
-      }
-
-      // 【2026-11-06 新增】标题自动回填：网页标题稳定后写入本地 session-store，
-      // 解决「工作区会话名显示 ID」的问题——网页上有真实标题，但之前没有回写通道。
-      // 幂等保护：SPA 路由切换不卸载 preload，避免重复启动 MutationObserver。
-      if (!window.__lyAutoSyncStarted) {
-        window.__lyAutoSyncStarted = true;
-        try { syncMod.startAutoSync(); } catch (e) { console.warn('[灵鸦] 标题自动回填启动失败:', e && e.message); }
-      }
-    } catch (_) { /* ignore */ }
   } catch (err) {
     // 第 3 层兜底：这里的异常只可能来自插件/归档/标题同步等辅助功能。
     // 核心链路（第 1 层）与 UI（第 2 层）都已独立 try，不受影响。

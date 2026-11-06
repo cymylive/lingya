@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.6.205] - 2026-11-06
+
+### Added
+
+- **拟人化改造：mousemove 轨迹密度 + 真实点击聚焦**
+  - `src/main/ipc.js`：新增 `trusted-mouse-move` handler，只发 `mouseMove` 不发 down/up，复用 `_bezierPath` 逻辑
+  - `src/preload/api.js`：暴露 `trustedMouseMove(x, y)`
+  - `src/preload/dom/chat-input.js`：新增 `trustedMouseMoveTo`，Enter 发送前补轨迹；输入框聚焦改为优先 `trustedClickElement`，失败回退 `focus()`
+  - 目的：数美 fp.min.js 采集 256 个 mousemove 点，灵鸦原本每次点击仅约 10 点
+
+- **回传消息措辞多样化**
+  - 新建 `src/preload/dom/reply-phrases.js`：4 组措辞池各 10 条，连续两次不重复
+  - `chat-input.js` / `intercept-observer.js`：6 处硬编码回传措辞改为随机池
+  - 目的：发给 AI 的消息会进入服务端对话历史，固定句式是可被长期行为分析识别的模式
+
+### Changed
+
+- **硬件加速改为配置项**（默认开启）
+  - `security-store.js` 新增 `disableGpu: false`
+  - `src/main/index.js` 读配置决定是否 `disableHardwareAcceleration`
+  - 设置面板「发送延迟」新增「硬件加速」卡片，需重启生效
+  - 目的：默认启用硬件加速后 WebGL 渲染器为真实 GPU，而非 SwiftShader
+
+### Fixed
+
+- **工作区会话 tooltip 显示会话 ID 而非标题**
+  - `shell-renderer.js` / `shell-renderer-helpers.js`：`title` 属性从 `s.sessionId` 改为 `label`（`s.title || s.sessionId`）
+
+### Removed
+
+- `src/preload/dom/page-title-sync.js` 及其测试（标题同步改为其他路径）
+
+### Docs
+
+- 新增 `docs/PROJECT-ANALYSIS.md`（全量项目分析报告）
+- 新增 `.lingyaCode/notes/implemented/feature/2026-11-06-humanize-mousemove-and-gpu.md`（含键盘指纹三层证据链）
+
+## [0.6.203] - 2026-11-06
+
+### Changed
+
+- **Spec Kit 从"建议遵守"升级为"绝对强制"**
+  - `src/prompt/speckit/router.md`：第一条铁律从"必须先走 Spec Kit"升级为"第一句话必须是分诊"。明确禁止在分诊声明前调用任何工具、查文件、建 todo、写代码
+  - `tools/plan-gate.js`：拦截报错信息改写为【Spec Kit 门禁 / 计划门禁】，明确提示 AI 必须先输出【Spec Kit 分诊】并调用 todoWrite 建计划
+  - L0 微改定义保留，但强制要求"输出分诊声明 → 直接改 → 验证"，不再允许完全跳过
+
 ## [0.6.100] - 2026-10-22
 
 ### Fixed

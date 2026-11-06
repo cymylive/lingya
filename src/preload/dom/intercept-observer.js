@@ -11,6 +11,7 @@ const { setFabState, getFabState, setStopped, markTaskDone } = require('../overl
 const { hasTool, toolNamesList } = require('../tool-names');
 const state = require('./state');
 const taskState = require('./task-state');
+const replyPhrases = require('./reply-phrases');
 
 // ===== token 按会话缓存的持久化（localStorage）=====
 // 为什么需要：state.serverTokenUsageBySession 只在内存，关闭 LingYa 后丢失，
@@ -152,7 +153,7 @@ function enqueueProcessing(taskFn) {
       const detail = (err && err.message) ? String(err.message).slice(0, 500) : String(err || '未知错误');
       console.log('[LingYa][拦截] 队列异常第 ' + queueErrorContinueCount + ' 次，回传错误并催 AI 重试');
       sendMessageToChat(
-        '刚才那步出错了：' + detail + '\n\n接着往下做，先看看上一步是不是已经生效，别重复做。全做完了跟我说“完成了”。',
+        replyPhrases.pickQueueError(detail),
         '队列异常重试',
         { auto: true }
       );

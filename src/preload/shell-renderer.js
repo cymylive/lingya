@@ -2591,6 +2591,21 @@
         '</div>' +
         '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-send-save">保存</button></div>' +
         '</div>' +
+        // ===== 性能 / 反检测（2026-11-06）=====
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">硬件加速</div>' +
+          '<div class="ly-set-desc">' +
+            '关闭后使用软件渲染（SwiftShader），可修复部分 Intel 核显的 GPU 驱动崩溃问题；' +
+            '但 WebGL 渲染器指纹会与真实浏览器用户不同。<strong>默认开启硬件加速</strong>，指纹更接近普通用户。' +
+            '<br>修改后<strong>需要重启应用</strong>才生效。' +
+          '</div>' +
+          '<label class="ly-set-toggle" style="margin-top:6px;">' +
+            '<input type="checkbox" id="sh-set-disable-gpu" />' +
+            '<span>启用兼容模式（禁用硬件加速）</span>' +
+          '</label>' +
+        '</div>' +
+        '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;"><button class="sh-btn primary" id="sh-set-disable-gpu-save">保存</button></div>' +
+        '</div>' +
       '</div>' +
       // 附件上传间隔
       '<div class="ly-set-cat'+(active==='attach'?' active':'')+'" data-cat="attach">' +
@@ -3056,6 +3071,33 @@
         toast2('发送延迟已保存（双策略）：快请求区间 ' + dmin + '~' + dmax + 'ms');
       }
     });
+
+    // ===== 硬件加速（disableGpu）回填与保存（2026-11-06 拟人化改造）=====
+    (function(){
+      var cb = ev('sh-set-disable-gpu');
+      var btn = ev('sh-set-disable-gpu-save');
+      if (!cb || !btn) return;
+      // 回填：从 security-store 读 disableGpu
+      try {
+        if (window.shellAPI && typeof window.shellAPI.getSecurityConfig === 'function') {
+          window.shellAPI.getSecurityConfig().then(function(c){
+            cb.checked = !!(c && c.disableGpu);
+          })['catch'](function(){});
+        }
+      } catch (_e) {}
+      // 保存：写回 security-store，提示需重启
+      btn.addEventListener('click', function(){
+        try {
+          if (!window.shellAPI || typeof window.shellAPI.updateSecurityConfig !== 'function') {
+            toast2('保存失败：接口不可用');
+            return;
+          }
+          window.shellAPI.updateSecurityConfig({ disableGpu: !!cb.checked }).then(function(){
+            toast2('已保存，需重启应用生效');
+          })['catch'](function(){ toast2('保存失败'); });
+        } catch (_e) { toast2('保存失败'); }
+      });
+    })();
 
     // ===== 提示词草稿管理（2026-11-01）=====
     (function(){
@@ -5348,18 +5390,6 @@
         : (isCur ? '不能导入当前对话本身' : '跨窗口会话暂不支持导入');
       importBtn = '<span class="ck-ws-act ck-ws-act-disabled" data-act="import" title="' + attr(importTip) + '" style="opacity:.3;cursor:not-allowed;">' + (WS_ICON.import || '📥') + '</span>';
     }
-    // ===== 同步标题按钮（2026-11-06）=====
-    // 从 AI 网页读取真实标题回写本地 store。
-    // 限制：只有「当前会话」能读——主进程 get-ai-view-title 读的是当前窗口 AI 视图，
-    // 非当前会话的网页 DOM 不在当前视图里，读不到。跨窗口会话同理。
-    var syncTitleBtn = '';
-    if(s.sessionId && isCur && !isOtherWin){
-      syncTitleBtn = '<span class="ck-ws-act" data-act="sync-title" title="从网页同步标题">' + (WS_ICON.syncTitle || '🔄') + '</span>';
-    } else {
-      var syncTip = isCur ? '跨窗口会话无法读取标题'
-        : '只有当前打开的会话能同步标题（请先切换过去）';
-      syncTitleBtn = '<span class="ck-ws-act ck-ws-act-disabled" data-act="sync-title" title="' + attr(syncTip) + '" style="opacity:.3;cursor:not-allowed;">' + (WS_ICON.syncTitle || '🔄') + '</span>';
-    }
     // ===== 多选模式（2026-11-06）=====
     // 规则：只有「本组处于多选模式 + 非归档 + 非跨窗口」的会话才渲染 checkbox。
     // 跨窗口会话禁选：删除涉及别的 profile 写入，风险不对等，直接不给勾。
@@ -5379,14 +5409,14 @@
     }
     // 多选模式下隐藏单项操作按钮，避免与 checkbox 语义打架
     var actsHtml = selectMode
-      ? '<span class="ck-ws-acts" style="display:none;">' + renameBtn + syncTitleBtn + exportBtn + importBtn + act + delBtn + '</span>'
-      : '<span class="ck-ws-acts">' + renameBtn + syncTitleBtn + exportBtn + importBtn + act + delBtn + '</span>';
+      ? '<span class="ck-ws-acts" style="display:none;">' + renameBtn + exportBtn + importBtn + act + delBtn + '</span>'
+      : '<span class="ck-ws-acts">' + renameBtn + exportBtn + importBtn + act + delBtn + '</span>';
     return '<div class="ck-ws-item' + (isCur ? ' current' : '') + (sub ? ' sub' : '') + (isOtherWin ? ' other-win' : '') +
       (checked ? ' ws-selected' : '') + (selectMode ? ' ws-select-mode' : '') + '"' +
       ' data-session-id="' + attr(s.sessionId) + '"' +
       ' data-profile-id="' + attr(s.profileId || '') + '"' +
       ' data-name="' + attr(label) + '"' +
-      ' title="' + attr(s.sessionId) + '">' +
+      ' title="' + attr(label) + '">' +
       cbHtml +
       caret +
       '<span class="ck-ws-name">' + esc(label) + '</span>' +
@@ -5935,39 +5965,6 @@
               if(r && r.success) { /* 主进程会异步弹保存框 */ }
               else toast2('导出失败：' + ((r && r.error) || '未知错误'));
             })['catch'](function(){ toast2('导出失败'); });
-          } else if(act === 'sync-title'){
-            // ===== 从网页同步标题（2026-11-06）=====
-            // 主进程代读 AI 视图 DOM（shell 窗口读不到 AI 网页），拿回标题后写本地 store。
-            if(actEl.classList.contains('ck-ws-act-disabled')) return;
-            if(!window.shellAPI || !window.shellAPI.getAiViewTitle){
-              toast2('接口不可用');
-              return;
-            }
-            window.shellAPI.getAiViewTitle().then(function(res){
-              if(!res || !res.success){
-                toast2('读取网页标题失败：' + ((res && res.error) || '未知错误'));
-                return;
-              }
-              if(!res.title || !res.title.trim()){
-                toast2('网页上未找到会话标题');
-                return;
-              }
-              // 校验：读到的 sessionId 必须与点击的会话一致，防止读错会话的标题
-              if(res.sessionId && id && res.sessionId !== id){
-                toast2('当前网页打开的是另一个会话，无法同步该会话标题');
-                return;
-              }
-              window.shellAPI.setSessionTitle(res.title, id).then(function(r2){
-                if(r2 && r2.success){
-                  toast2('已同步标题：' + res.title);
-                  reload();
-                } else {
-                  toast2('保存标题失败：' + ((r2 && r2.error) || '未知错误'));
-                }
-              })['catch'](function(){ toast2('保存标题失败'); });
-            })['catch'](function(err){
-              toast2('读取网页标题异常：' + ((err && err.message) || '未知错误'));
-            });
           } else if(act === 'import'){
             // ===== 导入到当前对话（2026-11-06）=====
             // 禁用项（当前会话/跨窗口/无ID）的按钮带 ck-ws-act-disabled，点击直接返回

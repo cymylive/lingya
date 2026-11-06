@@ -2655,9 +2655,26 @@ if (_shouldQuit) {
   // 强制禁用 Windows 11 原生覆盖滚动条，否则自定义 CSS 无法生效
 app.commandLine.appendSwitch('disable-features', 'OverlayScrollbar,OverlayScrollbars,WindowsOverlayScrollbar');
 
-// 关闭硬件加速，解决 Intel 核显等 GPU 驱动崩溃问题
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu');
+// 硬件加速开关（2026-11-06 拟人化改造）：
+// 默认开启硬件加速 —— WebGL 渲染器是真实 GPU，指纹更接近普通浏览器用户，
+// 避免数美风控 fp.min.js 采集到 UNMASKED_RENDERER_WEBGL = SwiftShader（软件渲染）。
+// 旧行为（disableGpu=true）会关闭硬件加速，解决部分 Intel 核显的 GPU 驱动崩溃问题，
+// 但 WebGL 会 fallback 到 SwiftShader。用户可在「设置 → 发送延迟 → 性能」中切换。
+let _disableGpu = false;
+try {
+  const _secStore = require('./security-store');
+  _disableGpu = _secStore.getConfig().disableGpu === true;
+} catch (err) {
+  console.warn('[灵鸦] 读取 disableGpu 配置失败，回退为开启硬件加速:', err.message);
+  _disableGpu = false;
+}
+if (_disableGpu) {
+  console.log('[灵鸦] 兼容模式：已禁用硬件加速（disableGpu=true）');
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+} else {
+  console.log('[灵鸦] 已启用硬件加速（WebGL 指纹为真实 GPU）');
+}
 
 app.whenReady().then(() => {
     setupAppMenu();

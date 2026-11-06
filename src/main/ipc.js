@@ -110,6 +110,82 @@ function logCtxLookupFailure(sender) {
   }
 }
 
+// ========== 可信鼠标轨迹辅助（模块级，供 trusted-click / trusted-mouse-move 共用）==========
+// 贝塞尔曲线点击辅助（P3，2026-11-05）：让可信点击的鼠标轨迹更接近真人。
+const _lastMousePos = new Map();
+function _bezierPath(x0, y0, x1, y1, steps) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 5) return [{ x: x1, y: y1 }];
+  const jitter = (Math.random() - 0.5) * dist * 0.4;
+  const nx = -dy / dist, ny = dx / dist;
+  const cx = (x0 + x1) / 2 + nx * jitter;
+  const cy = (y0 + y1) / 2 + ny * jitter;
+  const pts = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    const px = mt * mt * x0 + 2 * mt * t * cx + t * t * x1;
+    const py = mt * mt * y0 + 2 * mt * t * cy + t * t * y1;
+    pts.push({ x: Math.round(px + (Math.random() - 0.5) * 2), y: Math.round(py + (Math.random() - 0.5) * 2) });
+  }
+  return pts;
+}
+function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+/**
+ * 可信鼠标移动（P1 拟人化）：只发 mouseMove 不发 down/up。
+ * 用于在输入框聚焦前、Enter 发送前补足页面级 mousemove 密度，
+ * 使数美 fp.min.js 的 256 点 mousemove 采样能采满且轨迹自然。
+ * 与 trusted-click 共享 _lastMousePos / _bezierPath / _sleep，保证轨迹连续。
+ *
+ * @param {Event} event IPC 事件（用 event.sender 拿 webContents）
+ * @param {{ x: number, y: number }} args 目标坐标（相对视口 CSS 像素）
+ * @param {{ sleep?: Function, bezier?: Function }} deps 仅测试注入
+ */
+async function handleTrustedMouseMove(event, args, deps) {
+  const sleep = (deps && deps.sleep) || _sleep;
+  const bezier = (deps && deps.bezier) || _bezierPath;
+  try {
+    const wc = event && event.sender;
+    if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) {
+      return { success: false, error: 'webContents unavailable' };
+    }
+    const x = Number(args && args.x);
+    const y = Number(args && args.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { success: false, error: 'invalid coordinates' };
+    }
+    let size = [0, 0];
+    if (typeof wc.getSize === 'function') size = wc.getSize();
+    const w = Number(size && size[0]) || 0;
+    const h = Number(size && size[1]) || 0;
+    let cx = Math.round(x);
+    let cy = Math.round(y);
+    if (w > 0) cx = Math.max(0, Math.min(cx, w - 1));
+    if (h > 0) cy = Math.max(0, Math.min(cy, h - 1));
+    const prev = _lastMousePos.get(wc.id);
+    const start = prev || { x: Math.round(w / 2), y: Math.round(h / 2) };
+    const steps = 8 + Math.floor(Math.random() * 8);
+    const path = bezier(start.x, start.y, cx, cy, steps);
+    let points = 0;
+    for (const pt of path) {
+      if (wc.isDestroyed()) break;
+      wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+      points++;
+      await sleep(1);
+    }
+    // 收尾对齐目标点（与 trusted-click 一致）
+    if (!wc.isDestroyed()) {
+      wc.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+      points++;
+    }
+    _lastMousePos.set(wc.id, { x: cx, y: cy });
+    return { success: true, points: points };
+  } catch (err) {
+    return { success: false, error: err && err.message };
+  }
+}
+
 // 初始化项目
 function registerIpcHandlers() {
   // 会话存档 IPC（每 profile 独立的 jsonl 存档）
@@ -1438,27 +1514,6 @@ function registerIpcHandlers() {
 
   // ========== Skill 系统 ==========
   // 列出所有技能
-// 贝塞尔曲线点击辅助（P3，2026-11-05）：让可信点击的鼠标轨迹更接近真人。
-const _lastMousePos = new Map();
-function _bezierPath(x0, y0, x1, y1, steps) {
-  const dx = x1 - x0, dy = y1 - y0;
-  const dist = Math.hypot(dx, dy);
-  if (dist < 5) return [{ x: x1, y: y1 }];
-  const jitter = (Math.random() - 0.5) * dist * 0.4;
-  const nx = -dy / dist, ny = dx / dist;
-  const cx = (x0 + x1) / 2 + nx * jitter;
-  const cy = (y0 + y1) / 2 + ny * jitter;
-  const pts = [];
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps, mt = 1 - t;
-    const px = mt * mt * x0 + 2 * mt * t * cx + t * t * x1;
-    const py = mt * mt * y0 + 2 * mt * t * cy + t * t * y1;
-    pts.push({ x: Math.round(px + (Math.random() - 0.5) * 2), y: Math.round(py + (Math.random() - 0.5) * 2) });
-  }
-  return pts;
-}
-function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
   // ========== Trusted input (isTrusted) ==========
   ipcMain.handle('trusted-click', async (event, args) => {
     try {
@@ -1496,6 +1551,14 @@ function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
     } catch (err) {
       return { success: false, error: err.message };
     }
+  });
+
+  // 可信鼠标移动（P1 拟人化，2026-11-06）：只发 mouseMove 不发 down/up。
+  // 用于在输入框聚焦前、Enter 发送前补足页面级 mousemove 密度，
+  // 使数美 fp.min.js 的 256 点 mousemove 采样能采满且轨迹自然。
+  // 与 trusted-click 共享 _lastMousePos / _bezierPath / _sleep，保证轨迹连续。
+  ipcMain.handle('trusted-mouse-move', async (event, args) => {
+    return handleTrustedMouseMove(event, args);
   });
 
   ipcMain.handle('trusted-key', async (event, args) => {
@@ -2413,57 +2476,6 @@ function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
     } catch (err) { return { success: false, error: err.message }; }
   });
 
-  // 【2026-11-06 新增】从 AI 视图读取当前网页标题（供侧栏「同步标题」按钮使用）
-  // shell 窗口是独立 webContents，无法直接读 AI 网页 DOM，必须由主进程代为执行。
-  ipcMain.handle('get-ai-view-title', async (event) => {
-    try {
-      const ctx = windowState.getContextByWebContents(event.sender);
-      if (!ctx) return { success: false, error: '窗口上下文不存在' };
-      const wc = windowState.getViewWebContents(ctx);
-      if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
-      // 提取当前 URL 里的 sessionId（与 page-title-sync 同一套正则）
-      const url = String(wc.getURL() || '');
-      let sid = null;
-      let m = url.match(/\/a\/chat\/s\/([a-f0-9-]{8,})/i);
-      if (m) sid = m[1];
-      if (!sid) { m = url.match(/\/chat\/s\/([a-f0-9-]{8,})/i); if (m) sid = m[1]; }
-      if (!sid) { m = url.match(/\/s\/([a-f0-9-]{8,})/i); if (m) sid = m[1]; }
-      if (!sid) return { success: false, error: '无法从当前页面 URL 解析会话 ID' };
-      // 在 AI 视图里执行一段查找顶部标题的脚本（与 findPageTitleEl 同策略）
-      const script = [
-        '(function () {',
-        '  var NOT_TITLE = new Set(["开启新对话","新对话","复制","下载","分享","返回","更多","编辑","已思考","思考中","深度思考","智能搜索","联网搜索","发送","停止","置顶","今天","昨天","7 天内","30 天内"]);',
-        '  var all = document.querySelectorAll("*");',
-        '  var cands = [];',
-        '  for (var i = 0; i < all.length; i++) {',
-        '    var el = all[i];',
-        '    if (el.children.length > 0) continue;',
-        '    var t = (el.textContent || "").trim();',
-        '    if (!t || t.length < 2 || t.length > 80) continue;',
-        '    if (NOT_TITLE.has(t)) continue;',
-        '    var tag = (el.tagName || "").toLowerCase();',
-        '    if (tag === "button" || tag === "a" || tag === "input" || tag === "textarea") continue;',
-        '    var r; try { r = el.getBoundingClientRect(); } catch (_) { continue; }',
-        '    if (r.top < 0 || r.top > 60 || r.left < 150 || r.width < 20) continue;',
-        '    var fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch (_) {}',
-        '    if (fs < 13) continue;',
-        '    cands.push({ t: t, top: r.top, fs: fs });',
-        '  }',
-        '  if (cands.length === 0) return { ok: false };',
-        '  cands.sort(function (a, b) { return (a.top - b.top) || (b.fs - a.fs); });',
-        '  return { ok: true, title: cands[0].t };',
-        '})()',
-      ].join('\n');
-      const result = await wc.executeJavaScript(script, true);
-      if (!result || !result.ok || !result.title) {
-        return { success: false, error: '未能从页面读取到标题' };
-      }
-      return { success: true, sessionId: sid, title: result.title };
-    } catch (err) {
-      return { success: false, error: (err && err.message) || String(err) };
-    }
-  });
-
   ipcMain.handle('harness-event-report', async (event, payload) => {
     try {
       const info = getHarnessInfo(event);
@@ -2511,5 +2523,5 @@ async function handleTrustedInsertText(event, args, deps) {
 
 module.exports = {
   registerIpcHandlers,
-  __test: { handleTrustedInsertText },
+  __test: { handleTrustedInsertText, handleTrustedMouseMove },
 };
