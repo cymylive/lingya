@@ -703,18 +703,18 @@ function renderTodoPanel(todos) {
   var panel = $('todo-panel');
   var list = $('todo-list');
   var prog = $('todo-progress');
-  var currentText = $('todo-current');
-  if (!panel || !list || !prog || !currentText) return;
+  if (!panel || !list || !prog) return;
 
   if (!todos || todos.length === 0) {
     panel.hidden = true;
     return;
   }
 
+  // 强制展开，常驻显示
+  panel.classList.remove('collapsed');
+
   var done = 0;
-  var inProgressText = '';
   var html = '';
-  
   for (var i = 0; i < todos.length; i++) {
     var t = todos[i] || {};
     var status = t.status || 'pending';
@@ -722,12 +722,8 @@ function renderTodoPanel(todos) {
     
     var icon = '○';
     var cls = '';
-    if (status === 'completed') { 
-      icon = '✅'; cls = 'done'; 
-    } else if (status === 'in_progress') { 
-      icon = '⏳'; cls = 'in-progress'; 
-      if (!inProgressText) inProgressText = t.content || '';
-    }
+    if (status === 'completed') { icon = '✅'; cls = 'done'; }
+    else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
     
     html += '<div class="todo-item ' + cls + '">' +
             '<span class="todo-icon">' + icon + '</span>' +
@@ -737,18 +733,6 @@ function renderTodoPanel(todos) {
   
   list.innerHTML = html;
   prog.textContent = done + '/' + todos.length;
-  
-  // 更新折叠状态下的单行文字
-  if (done === todos.length) {
-    currentText.textContent = '所有任务已完成 ✅';
-  } else if (inProgressText) {
-    currentText.textContent = '正在执行：' + inProgressText;
-  } else {
-    // 如果没有 in_progress 状态，取第一个 pending 的
-    var firstPending = todos.find(function(x) { return x.status !== 'completed'; });
-    currentText.textContent = firstPending ? ('准备执行：' + (firstPending.content || '')) : 'AI 计划执行中';
-  }
-  
   panel.hidden = false;
 }
 
