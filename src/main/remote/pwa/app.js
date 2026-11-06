@@ -773,7 +773,9 @@ function stopGeneration() {
 
 function autoResize() {
   elInput.style.height = 'auto';
-  elInput.style.height = Math.min(elInput.scrollHeight, 140) + 'px';
+  // 加上一点余量（比如 2px）防止部分安卓 WebView 的 scrollHeight 计算偏小导致文字被切
+  var newHeight = elInput.scrollHeight + 2;
+  elInput.style.height = Math.min(newHeight, 140) + 'px';
 }
 
 /* ========== 登录 ========== */
