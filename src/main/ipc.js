@@ -205,20 +205,26 @@ function registerIpcHandlers() {
 
   // 待办列表变更：广播给所有窗口（带 sessionId，前端按当前会话过滤，避免跨会话串扰）
   todoEvents.on('change', ({ sessionId, todos, archived }) => {
+    // 1. 转发给手机远程端
+    try {
+      const remoteMgr = require('./remote/manager');
+      if (remoteMgr && typeof remoteMgr.broadcastTodoUpdate === 'function') {
+        remoteMgr.broadcastTodoUpdate('', todos);
+      }
+    } catch (_) {}
+
+    // 2. 发送给本地壳窗口/侧边栏
     for (const ctx of windowState.getAllContexts()) {
       const payload = { sessionId: sessionId || null, todos, archived: !!archived };
-      // AI 视图（ctx.win 的 Proxy 已重定向到 view）——覆盖层订阅方
       try {
         const wc = ctx.win && ctx.win.webContents;
         if (wc && !wc.isDestroyed()) wc.send('lingya-todos-updated', payload);
       } catch (_) {}
-      // 壳窗口（侧边栏）——真实 BrowserWindow 的 webContents
       try {
         const raw = ctx.rawWin;
         if (raw && !raw.isDestroyed() && raw.webContents) raw.webContents.send('lingya-todos-updated', payload);
       } catch (_) {}
     }
-    // 通知所有壳窗口「总控台数据已变化」，前端据此立即重绘
     try {
       for (const c of windowState.getAllContexts()) {
         const raw2 = c.rawWin;

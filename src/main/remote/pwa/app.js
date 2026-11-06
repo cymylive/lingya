@@ -710,6 +710,30 @@ function renderTodoPanel(todos) {
     return;
   }
 
+  panel.classList.remove('collapsed');
+  var done = 0;
+  var html = '';
+  for (var i = 0; i < todos.length; i++) {
+    var t = todos[i] || {};
+    var status = t.status || 'pending';
+    if (status === 'completed') done++;
+    
+    var icon = '○';
+    var cls = '';
+    if (status === 'completed') { icon = '✅'; cls = 'done'; }
+    else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
+    
+    html += '<div class="todo-item ' + cls + '">' +
+            '<span class="todo-icon">' + icon + '</span>' +
+            '<span>' + escapeHtml(t.content || '') + '</span>' +
+            '</div>';
+  }
+  
+  list.innerHTML = html;
+  prog.textContent = done + '/' + todos.length;
+  panel.hidden = false;
+}
+
   // 强制展开，常驻显示
   panel.classList.remove('collapsed');
 
