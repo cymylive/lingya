@@ -80,6 +80,18 @@ var generating = false;
 
 /* ========== 工具函数 ========== */
 function getToken() { return localStorage.getItem(LS_TOKEN) || ''; }
+
+var LS_HISTORY = 'lingya-remote-history';
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(LS_HISTORY) || '[]'); } catch (_) { return []; }
+}
+function addHistory(addr, token) {
+  if (!addr || !token) return;
+  var h = getHistory();
+  h = h.filter(function(item) { return item.addr !== addr || item.token !== token; });
+  h.unshift({ addr: addr, token: token, ts: Date.now() });
+  localStorage.setItem(LS_HISTORY, JSON.stringify(h.slice(0, 5)));
+}
 function getAddr() { return localStorage.getItem(LS_ADDR) || ''; }
 function baseUrl() {
   var a = getAddr();
@@ -633,6 +645,8 @@ async function doConnect() {
   }
   elConnect.disabled = false;
   elConnect.textContent = '连接';
+  // 保存历史记录
+  addHistory(addr || location.origin, tok);
   // 进入应用
   enterApp();
 }
@@ -683,14 +697,74 @@ function toggleTheme() {
 function bind() {
   elConnect.addEventListener('click', doConnect);
 
-  elPaste.addEventListener('click', async function () {
-    try {
-      var t = await navigator.clipboard.readText();
-      if (t) { elToken.value = t.trim(); elToken.focus(); }
-    } catch (_) {
-      showLoginError('无法读取剪贴板，请长按粘贴');
+  var elHistoryBtn = $('login-history-btn');
+  var elHistoryMenu = $('login-history');
+
+  if (elHistoryBtn) {
+    elHistoryBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!elHistoryMenu) return;
+      elHistoryMenu.hidden = !elHistoryMenu.hidden;
+      if (!elHistoryMenu.hidden) renderHistoryMenu();
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    if (elHistoryMenu && !elHistoryMenu.hidden) {
+      if (!elHistoryMenu.contains(e.target) && e.target !== elHistoryBtn && !elHistoryBtn.contains(e.target)) {
+        elHistoryMenu.hidden = true;
+      }
     }
   });
+
+  function renderHistoryMenu() {
+    if (!elHistoryMenu) return;
+    var h = getHistory();
+    var html = '<div class="login-history-item" id="login-paste-item">' +
+               '<div class="h-addr"><svg class="ico" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:4px;"><use href="#i-plus"/></svg>从剪贴板粘贴</div>' +
+               '</div>';
+    for (var i = 0; i < h.length; i++) {
+      var item = h[i];
+      html += '<div class="login-history-item" data-idx="' + i + '">' +
+              '<div class="h-addr">' + escapeHtml(item.addr) + '</div>' +
+              '<div class="h-token">' + escapeHtml(item.token.slice(0, 8)) + '...</div>' +
+              '</div>';
+    }
+    if (h.length === 0) {
+      html += '<div style="padding:10px 12px;font-size:12px;color:var(--text-dim);text-align:center;">暂无历史记录</div>';
+    }
+    elHistoryMenu.innerHTML = html;
+
+    var pasteItem = $('login-paste-item');
+    if (pasteItem) {
+      pasteItem.onclick = async function() {
+        try {
+          var t = await navigator.clipboard.readText();
+          if (t) { elToken.value = t.trim(); elToken.focus(); }
+        } catch (_) {
+          showLoginError('无法读取剪贴板，请长按粘贴');
+        }
+        elHistoryMenu.hidden = true;
+      };
+    }
+
+    var items = elHistoryMenu.querySelectorAll('.login-history-item[data-idx]');
+    for (var j = 0; j < items.length; j++) {
+      (function(el) {
+        el.onclick = function() {
+          var idx = parseInt(el.getAttribute('data-idx'), 10);
+          var item = h[idx];
+          if (item) {
+            elAddr.value = item.addr;
+            elToken.value = item.token;
+            showLoginError('');
+            elHistoryMenu.hidden = true;
+            doConnect();
+          }
+        };
+      })(items[j]);
+    }
+  }
 
   elToken.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); doConnect(); }
