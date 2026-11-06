@@ -421,7 +421,6 @@ function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
-var drawerToggleFn = null;
 function send(obj) {
   if (ws && ws.readyState === 1) {
     try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
@@ -450,6 +449,13 @@ function handleServerMessage(msg) {
   if (t === 'profiles') return onProfiles(msg);
   if (t === 'history') return onHistory(msg);
   if (t === 'ai-start') return onAiStart(msg);
+  if (t === 'task-state') {
+    if (msg.text) {
+      elExec.hidden = false;
+      elExecText.textContent = msg.text;
+    }
+    return;
+  }
   if (t === 'ai-stream') return onAiStream(msg);
   if (t === 'ai-reply') return onAiReply(msg);
   if (t === 'ai-stop') return onAiStop(msg);
@@ -558,6 +564,8 @@ function onHistory(msg) {
 
 function onAiStart(_msg) {
   setGenerating(true);
+  elExec.hidden = false;
+  elExecText.textContent = 'AI 正在思考…';
   streamEl = null;
   streamText = '';
   streamThink = '';
@@ -855,9 +863,6 @@ function bind() {
   var elNewChat = $('btn-new-chat');
   var elSessionList = $('session-list');
 
-  drawerToggleFn = function(open) {
-    // ...原内容
-  };
   function toggleDrawer(open) {
     if (open) {
       elDrawer.classList.add('open');

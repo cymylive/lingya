@@ -187,13 +187,21 @@ function broadcastAiEvent(webContentsId, kind, data) {
         s.active = true; s.sent = ''; s.think = ''; s.thinkSent = ''; s.toolCount = 0;
         broadcast({ type: 'ai-start', profileId: pid });
       }
-      if (p.kind === 'tool') {
-        broadcast({ type: 'tool', profileId: pid, name: p.text || '工具', at: Date.now() });
+      
+      // ui.js 里：kind = 'executing' 代表工具，'busy' 代表思考/生成
+      if (p.kind === 'executing') {
+        s.toolCount = 1; // 保持工具状态
+        s.toolLastAt = Date.now();
+        broadcast({ type: 'tool', profileId: pid, name: p.text || '执行中', at: Date.now() });
+      } else if (p.kind === 'busy') {
+        s.toolCount = 0;
+        broadcast({ type: 'task-state', profileId: pid, text: p.text || 'AI 正在思考…' });
       }
     } else {
       clearBusy(webContentsId);
       if (s.active) {
         s.active = false;
+        s.toolCount = 0;
         broadcast({ type: 'ai-stop', profileId: pid, reason: 'user' });
       }
     }
