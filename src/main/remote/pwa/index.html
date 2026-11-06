@@ -149,9 +149,12 @@
   
   <!-- AI 计划面板（常驻分栏） -->
   <div id="todo-panel" class="todo-panel" hidden>
-    <div class="todo-header">
-      <span>📋 AI 执行计划</span>
-      <span id="todo-progress" class="todo-progress">0/0</span>
+    <div class="todo-header" id="todo-header" style="cursor:pointer;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span>📋 AI 执行计划</span>
+        <span id="todo-progress" class="todo-progress">0/0</span>
+      </div>
+      <span id="todo-chevron" style="transition:transform 0.2s;">▾</span>
     </div>
     <div id="todo-list" class="todo-list"></div>
   </div>
