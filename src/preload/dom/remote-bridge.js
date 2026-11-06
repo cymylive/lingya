@@ -109,6 +109,17 @@ function initRemoteBridge() {
     });
   } catch (_) {}
 
+  // 4.5 接收手机上传的文件，通知 AI 输入框
+  try {
+    if (typeof window.electronAPI.onRemoteFileUploaded === 'function') {
+      window.electronAPI.onRemoteFileUploaded((payload) => {
+        if (!payload || !payload.filePath) return;
+        const text = '\n[手机上传了文件，保存在电脑: ' + payload.filePath + ']\n';
+        sendToChat(text, '系统', 300).catch(() => {});
+      });
+    }
+  } catch (_) {}
+
   // 5. 手机消息 → sendToChat
   try {
     if (typeof window.electronAPI.onRemoteUserMessage === 'function') {
