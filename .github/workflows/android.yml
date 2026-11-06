@@ -25,7 +25,7 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Sync Android version
         run: node scripts/sync-android-version.js
@@ -41,19 +41,12 @@ jobs:
             echo "no keystore secret, using debug signing"
           fi
 
-      - name: FORCE Clean old web assets
-        run: |
-          rm -rf android/app/src/main/assets/public
-
       - name: Sync Capacitor
         run: npx cap sync android
 
       - name: Build Debug APK
         working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew clean
-          ./gradlew assembleDebug --no-daemon
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -61,4 +54,3 @@ jobs:
           name: lingya-android-debug
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
-# force update 2
