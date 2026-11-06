@@ -488,17 +488,41 @@ function onActionInitProject(profileId, projectName) {
     return { success: false, error: '创建文件夹失败: ' + err.message };
   }
   
-  // 调用底层 initProject
-  try {
-    const { initProject } = require('../project-context');
-    // 注意：initProject 是异步的，不用 await 阻塞 WS
-    initProject(false, ctx, targetDir, false).catch((e) => {
-      console.error('[Remote] initProject failed:', e);
+  const wc = ctx.view.webContents;
+  if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+
+  let homeUrl = null;
+  try { 
+    const { getProviderByUrl } = require('../../providers'); 
+    const p = getProviderByUrl(wc.getURL()); 
+    if (p && p.homeUrl) homeUrl = p.homeUrl; 
+  } catch (_) {}
+
+  const doInit = () => {
+    try {
+      const { initProject } = require('../project-context');
+      // skipPrompt: false 意味着它会正常发送初始提示词
+      initProject(false, ctx, targetDir, false).catch((e) => {
+        console.error('[Remote] initProject failed:', e);
+      });
+    } catch (err) {
+      console.error('[Remote] require initProject failed:', err);
+    }
+  };
+
+  // 核心修复：先跳回首页新建会话，等页面加载完后再绑定项目
+  if (homeUrl) {
+    wc.once('did-finish-load', () => {
+      // 延时 1.5s 等前端 React/Vue 渲染完毕，再发送初始化指令
+      setTimeout(doInit, 1500);
     });
-    return { success: true, dir: targetDir };
-  } catch (err) {
-    return { success: false, error: err.message };
+    wc.loadURL(homeUrl).catch(() => {});
+  } else {
+    // 找不到首页 URL 时的兜底
+    doInit();
   }
+
+  return { success: true, dir: targetDir };
 }
 
 function onActionRename(profileId, sessionId, title) {
