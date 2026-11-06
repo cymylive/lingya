@@ -49,6 +49,8 @@ async function startService() {
       onActionImport: (pid, srcId) => manager.onActionImport(pid, srcId),
       onActionSwitchSession: (pid, session) => manager.onActionSwitchSession(pid, session),
       onActionDeleteSession: (pid, sid, ws) => manager.onActionDeleteSession(pid, sid, ws),
+      onActionArchiveSession: (pid, sid, arc) => manager.onActionArchiveSession(pid, sid, arc),
+      onActionArchiveProject: (pid, dir, arc) => manager.onActionArchiveProject(pid, dir, arc),
       onFileUploaded: (filePath, fileName) => {
         // 手机上传文件成功后，通知目标窗口的 AI 页面，把文件路径插进去
         const ctx = manager.getTargetContext();

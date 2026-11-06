@@ -561,8 +561,12 @@ function onSessionsData(msg) {
         moreBtn.addEventListener('click', function(ev) {
           ev.stopPropagation();
           var sid = el.getAttribute('data-sid');
-          var action = prompt('输入操作：1 = 重命名，2 = 导入历史，3 = 删除');
-          if (action === '3') {
+          var action = prompt('输入操作：1=重命名, 2=导入历史, 3=删除, 4=归档/取消归档');
+          if (action === '4') {
+            var isArch = el.closest('.project-group').parentNode.querySelector('.drawer-tab.active').getAttribute('data-tab') === 'archived';
+            send({ type: 'action-archive-session', profileId: currentProfileId, sessionId: sid, archived: !isArch });
+            setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+          } else if (action === '3') {
             if (confirm('确定要删除这个会话吗？此操作不可恢复！')) {
               send({ type: 'action-delete-session', profileId: currentProfileId, sessionId: sid });
             }

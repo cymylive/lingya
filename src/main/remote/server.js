@@ -303,6 +303,20 @@ function handleWsMessage(ws, raw) {
     return;
   }
 
+  if (msg.type === 'action-archive-session') {
+    if (typeof deps.onActionArchiveSession === 'function') {
+      try { deps.onActionArchiveSession(msg.profileId, msg.sessionId, msg.archived); } catch (_) {}
+    }
+    return;
+  }
+
+  if (msg.type === 'action-archive-project') {
+    if (typeof deps.onActionArchiveProject === 'function') {
+      try { deps.onActionArchiveProject(msg.profileId, msg.projectDir, msg.archived); } catch (_) {}
+    }
+    return;
+  }
+
   if (msg.type === 'action-delete-session') {
     if (typeof deps.onActionDeleteSession === 'function') {
       try { deps.onActionDeleteSession(msg.profileId, msg.sessionId, ws); } catch (_) {}

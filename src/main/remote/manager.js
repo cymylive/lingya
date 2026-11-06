@@ -620,6 +620,20 @@ function onActionNewChat(profileId) {
   if (homeUrl) wc.loadURL(homeUrl).catch(() => {});
 }
 
+function onActionArchiveSession(profileId, sessionId, archived) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (ctx && ctx.sessionStore && typeof ctx.sessionStore.setSessionArchived === 'function') {
+    ctx.sessionStore.setSessionArchived(sessionId, archived);
+  }
+}
+
+function onActionArchiveProject(profileId, projectDir, archived) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (ctx && ctx.sessionStore && typeof ctx.sessionStore.setProjectArchived === 'function') {
+    ctx.sessionStore.setProjectArchived(projectDir, archived);
+  }
+}
+
 function onActionDeleteSession(profileId, sessionId, ws) {
   const ctx = findContextByProfileId(profileId) || getTargetContext();
   if (!ctx) return;
@@ -730,6 +744,8 @@ module.exports = {
   onActionRename,
   onActionImport,
   onActionDeleteSession,
+  onActionArchiveSession,
+  onActionArchiveProject,
   sendFileToPhone,
   findContextByWcId,
   findContextByProfileId,
