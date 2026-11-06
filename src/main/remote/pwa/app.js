@@ -603,7 +603,6 @@ function onSessionsData(msg) {
   });
 
 
-  );
 
   list.querySelectorAll('.project-actions').forEach(function(el) {
     el.addEventListener('click', function(ev) {
