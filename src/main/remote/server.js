@@ -231,6 +231,27 @@ function handleWsMessage(ws, raw) {
     }
     return;
   }
+
+  if (msg.type === 'req-sessions') {
+    if (typeof deps.onReqSessions === 'function') {
+      try { deps.onReqSessions(msg.profileId, ws); } catch (_) {}
+    }
+    return;
+  }
+
+  if (msg.type === 'action-new-chat') {
+    if (typeof deps.onActionNewChat === 'function') {
+      try { deps.onActionNewChat(msg.profileId); } catch (_) {}
+    }
+    return;
+  }
+
+  if (msg.type === 'action-switch-session') {
+    if (typeof deps.onActionSwitchSession === 'function') {
+      try { deps.onActionSwitchSession(msg.profileId, msg.session); } catch (_) {}
+    }
+    return;
+  }
 }
 
 /** 启动服务。port 传 0 由系统分配（测试用）。 */

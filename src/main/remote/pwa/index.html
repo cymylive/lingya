@@ -16,6 +16,9 @@
 <body>
 
 <svg class="icon-sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12h18M3 6h18M3 18h18" />
+  </symbol>
   <symbol id="i-bird" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
     <path d="M15.2 4.1a5.2 5.2 0 0 1 4.6 3.6" />
     <path d="M19.8 7.7 22.4 6.6 19.8 5.5" />
@@ -97,6 +100,9 @@
 <section id="app" class="app" hidden>
 
   <header class="topbar">
+    <button id="btn-menu" class="btn-icon" type="button" title="菜单">
+      <svg class="ico"><use href="#i-menu" /></svg>
+    </button>
     <div id="conn" class="conn-badge" title="连接状态">
       <span id="conn-dot" class="conn-dot"></span>
       <span id="conn-text">未连接</span>
@@ -119,6 +125,15 @@
       </button>
     </div>
   </header>
+
+  <div id="drawer-overlay" class="drawer-overlay" hidden></div>
+  <aside id="sidebar-drawer" class="sidebar-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">历史会话</div>
+      <button id="btn-new-chat" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;">+ 新建对话</button>
+    </div>
+    <div id="session-list" class="session-list"></div>
+  </aside>
 
   <div id="offline-banner" class="offline-banner" hidden>连接已断开，正在重连…</div>
 

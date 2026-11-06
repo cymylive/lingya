@@ -442,6 +442,61 @@ function busyWatchdogTick() {
   }
 }
 
+function getSessionsForContext(ctx) {
+  if (!ctx) return [];
+  try {
+    const { app } = require('electron');
+    const { aggregateWorkspaces } = require('../workspace-aggregator');
+    const profileManager = require('../profile-manager');
+    const profiles = profileManager.readProfiles();
+    const agg = aggregateWorkspaces(app.getPath('userData'), ctx.profileId, profiles);
+    return agg.sessions || [];
+  } catch (e) {
+    console.error('[Remote] getSessionsForContext error:', e);
+    return [];
+  }
+}
+
+function onActionNewChat(profileId) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx || !ctx.view) return;
+  const wc = ctx.view.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  let homeUrl = null;
+  try { 
+    const { getProviderByUrl } = require('../../providers'); 
+    const p = getProviderByUrl(wc.getURL()); 
+    if (p && p.homeUrl) homeUrl = p.homeUrl; 
+  } catch (_) {}
+  if (homeUrl) wc.loadURL(homeUrl).catch(() => {});
+}
+
+function onActionSwitchSession(profileId, session) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx || !ctx.view) return;
+  const wc = ctx.view.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  
+  let url = session.url;
+  if (!url && session.sessionId) {
+    try {
+      const { getProviderByUrl } = require('../../providers');
+      const p = getProviderByUrl(wc.getURL());
+      if (p && p.sessionUrlBase) {
+        url = p.sessionUrlBase + session.sessionId;
+      }
+    } catch (_) {}
+  }
+  
+  if (url) {
+    wc.loadURL(url).catch(() => {});
+    // 切换后重新同步历史
+    setTimeout(() => {
+      // 给页面一点时间加载，然后前端去刷新
+    }, 1000);
+  }
+}
+
 function cleanupStreamState(profileId) {
   const s = streamStates.get(profileId);
   if (s && s.timer) clearTimeout(s.timer);
@@ -484,6 +539,9 @@ module.exports = {
   onSelectProfile,
   onNewClient,
   refreshHistory,
+  getSessionsForContext,
+  onActionNewChat,
+  onActionSwitchSession,
   findContextByWcId,
   findContextByProfileId,
   markBusy,

@@ -35,6 +35,15 @@ async function startService() {
       onSelectProfile: (pid, ws) => manager.onSelectProfile(pid, ws),
       onNewClient: (ws) => manager.onNewClient(ws),
       onRefresh: (ws) => manager.refreshHistory(ws),
+      onReqSessions: (pid, ws) => {
+        const ctx = pid ? manager.findContextByProfileId(pid) : manager.getTargetContext();
+        const sessions = manager.getSessionsForContext(ctx);
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'sessions-data', sessions }));
+        }
+      },
+      onActionNewChat: (pid) => manager.onActionNewChat(pid),
+      onActionSwitchSession: (pid, session) => manager.onActionSwitchSession(pid, session),
     },
   });
   if (!r.ok) return { ok: false, error: r.error };

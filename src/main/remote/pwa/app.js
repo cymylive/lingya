@@ -421,6 +421,7 @@ function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
+var drawerToggleFn = null;
 function send(obj) {
   if (ws && ws.readyState === 1) {
     try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
@@ -456,6 +457,51 @@ function handleServerMessage(msg) {
   if (t === 'tool') return onTool(msg);
   if (t === 'sys') return onSys(msg);
   if (t === 'pong') return;
+  if (t === 'sessions-data') return onSessionsData(msg);
+}
+
+function onSessionsData(msg) {
+  var list = $('session-list');
+  if (!list) return;
+  var sessions = msg.sessions || [];
+  var html = '';
+  sessions.sort(function(a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); });
+  
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    var title = s.title || s.sessionId || '未命名会话';
+    var project = s.projectDir ? s.projectDir.split(/[\\/]/).pop() : '无项目';
+    var activeCls = (s.sessionId === currentProfileId) ? ' active' : ''; // 这里简单的对比，不完全准，靠 ID 匹配更好
+    
+    html += '<div class="session-item" data-sid="' + escapeHtml(s.sessionId) + '" data-url="' + escapeHtml(s.url || '') + '">' +
+            '<div class="s-title">' + escapeHtml(title) + '</div>' +
+            '<div class="s-meta">' + escapeHtml(project) + '</div>' +
+            '</div>';
+  }
+  
+  if (!html) html = '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px;">暂无历史会话</div>';
+  list.innerHTML = html;
+  
+  var items = list.querySelectorAll('.session-item');
+  for (var j = 0; j < items.length; j++) {
+    (function(el) {
+      el.addEventListener('click', function() {
+        var sid = el.getAttribute('data-sid');
+        var url = el.getAttribute('data-url');
+        send({ type: 'action-switch-session', profileId: currentProfileId, session: { sessionId: sid, url: url } });
+        var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+        var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+        elMessages.innerHTML = '';
+        if (!elEmpty) {
+          elEmpty = document.createElement('div');
+          elEmpty.className = 'empty-state';
+          elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
+          elMessages.appendChild(elEmpty);
+        }
+        setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
+      });
+    })(items[j]);
+  }
 }
 
 function onProfiles(msg) {
@@ -799,6 +845,41 @@ function bind() {
       }
       send({ type: 'refresh-history' });
       setTimeout(function() { elRefresh.style.opacity = '1'; }, 500);
+    });
+  }
+
+  // === 抽屉交互 ===
+  var elMenu = $('btn-menu');
+  var elDrawer = $('sidebar-drawer');
+  var elDrawerOverlay = $('drawer-overlay');
+  var elNewChat = $('btn-new-chat');
+  var elSessionList = $('session-list');
+
+  drawerToggleFn = function(open) {
+    // ...原内容
+  };
+  function toggleDrawer(open) {
+    if (open) {
+      elDrawer.classList.add('open');
+      elDrawerOverlay.hidden = false;
+      requestAnimationFrame(function() { elDrawerOverlay.classList.add('open'); });
+      send({ type: 'req-sessions', profileId: currentProfileId });
+    } else {
+      elDrawer.classList.remove('open');
+      elDrawerOverlay.classList.remove('open');
+      setTimeout(function() { elDrawerOverlay.hidden = true; }, 200);
+    }
+  }
+
+  if (elMenu) elMenu.addEventListener('click', function() { toggleDrawer(true); });
+  if (elDrawerOverlay) elDrawerOverlay.addEventListener('click', function() { toggleDrawer(false); });
+
+  if (elNewChat) {
+    elNewChat.addEventListener('click', function() {
+      send({ type: 'action-new-chat', profileId: currentProfileId });
+      toggleDrawer(false);
+      // 等页面跳转后触发刷新
+      setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
     });
   }
 
