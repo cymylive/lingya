@@ -276,23 +276,54 @@ html.light #btn-theme .ico-moon { display: inline; }
   flex-direction: column;
   overflow: hidden;
   font-size: 13px;
+  transition: max-height 0.3s ease;
+}
+.todo-panel.collapsed {
+  max-height: 36px; /* 仅容纳头部高度 */
 }
 .todo-header {
   padding: 8px 12px;
   background: var(--bg-3);
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.todo-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.todo-current-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--accent);
+  font-weight: 500;
+}
+.todo-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .todo-progress {
   color: var(--text-dim);
   font-size: 12px;
 }
+.todo-chevron {
+  color: var(--text-dim);
+  transition: transform 0.3s;
+}
+.todo-panel.collapsed .todo-chevron {
+  transform: rotate(-90deg); /* 收起时箭头朝右 */
+}
 .todo-list {
   padding: 8px 12px;
   overflow-y: auto;
+  border-top: 1px solid var(--border);
 }
 .todo-item {
   display: flex;

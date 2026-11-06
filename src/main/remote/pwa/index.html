@@ -145,10 +145,16 @@
   <div id="offline-banner" class="offline-banner" hidden>连接已断开，正在重连…</div>
 
   <!-- AI 计划面板 -->
-  <div id="todo-panel" class="todo-panel" hidden>
-    <div class="todo-header">
-      <span>📋 AI 执行计划</span>
-      <span id="todo-progress" class="todo-progress">0/0</span>
+  <div id="todo-panel" class="todo-panel collapsed" hidden>
+    <div class="todo-header" id="todo-header">
+      <div class="todo-header-left">
+        <span class="todo-icon">📋</span>
+        <span id="todo-current" class="todo-current-text">等待 AI 规划...</span>
+      </div>
+      <div class="todo-header-right">
+        <span id="todo-progress" class="todo-progress">0/0</span>
+        <span class="todo-chevron" id="todo-chevron">▾</span>
+      </div>
     </div>
     <div id="todo-list" class="todo-list"></div>
   </div>
