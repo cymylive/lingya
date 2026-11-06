@@ -503,10 +503,45 @@ function getSessionsForContext(ctx) {
     console.error('[Remote] getSessionsForContext error:', e);
     return { sessions: [], archivedProjects: [] };
   }
-} catch (e) {
-    console.error('[Remote] getSessionsForContext error:', e);
-    return [];
+
+}
+
+
+function onActionNewSessionInProject(profileId, projectDir) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx) return { success: false, error: '目标窗口不存在' };
+  
+  const wc = ctx.view.webContents;
+  if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+
+  let homeUrl = null;
+  try { 
+    const { getProviderByUrl } = require('../../providers'); 
+    const p = getProviderByUrl(wc.getURL()); 
+    if (p && p.homeUrl) homeUrl = p.homeUrl; 
+  } catch (_) {}
+
+  const doInit = () => {
+    try {
+      const { initProject } = require('../project-context');
+      initProject(false, ctx, projectDir, false).catch((e) => {
+        console.error('[Remote] initProject in existing dir failed:', e);
+      });
+    } catch (err) {
+      console.error('[Remote] require initProject failed:', err);
+    }
+  };
+
+  if (homeUrl) {
+    wc.once('did-finish-load', () => {
+      setTimeout(doInit, 3000);
+    });
+    wc.loadURL(homeUrl).catch(() => {});
+  } else {
+    doInit();
   }
+
+  return { success: true, dir: projectDir };
 }
 
 function onActionInitProject(profileId, projectName) {
@@ -748,6 +783,7 @@ module.exports = {
   onActionNewChat,
   onActionSwitchSession,
   onActionInitProject,
+  onActionNewSessionInProject,
   onActionRename,
   onActionImport,
   onActionDeleteSession,

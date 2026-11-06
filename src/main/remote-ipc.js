@@ -45,6 +45,7 @@ async function startService() {
       },
       onActionNewChat: (pid) => manager.onActionNewChat(pid),
       onActionInitProject: (pid, name) => manager.onActionInitProject(pid, name),
+      onActionNewSessionInProject: (pid, dir) => manager.onActionNewSessionInProject(pid, dir),
       onActionRename: (pid, sid, title) => manager.onActionRename(pid, sid, title),
       onActionImport: (pid, srcId) => manager.onActionImport(pid, srcId),
       onActionSwitchSession: (pid, session) => manager.onActionSwitchSession(pid, session),
