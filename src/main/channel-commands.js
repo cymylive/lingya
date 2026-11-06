@@ -88,13 +88,17 @@ async function handleCommand(text, ctx, reply, channelLabel) {
     try {
       const tunnel = require('./remote/tunnel');
       const remoteIpc = require('./remote-ipc');
-      // 先停掉旧隧道（如果有），保证拿到的是全新地址
+      const config = require('./remote/config');
       await tunnel.stopTunnel();
-      // 重新启动
       const r = await remoteIpc.startTunnelNow();
+      const cfg = config.readConfig();
       if (r.ok && r.url) {
-        await reply('🌐 新的公网地址已生成：
-' + r.url);
+        await reply(
+          '🌐 新的连接信息已生成：\n\n' +
+          '电脑地址：' + r.url + '\n' +
+          '访问令牌：' + cfg.token + '\n\n' +
+          '💡 直接复制以上两条信息，填入手机端即可连接。'
+        );
       } else {
         await reply('❌ 启动隧道失败：' + (r.error || '未知错误，请检查网络或 cloudflared 安装'));
       }
