@@ -733,12 +733,6 @@ function renderTodoPanel(todos) {
   prog.textContent = done + '/' + todos.length;
   panel.hidden = false;
 }
-  
-  list.innerHTML = html;
-  prog.textContent = done + '/' + todos.length;
-  panel.hidden = false;
-}
-
 
 function onProfiles(msg) {
   profilesCache = Array.isArray(msg.profiles) ? msg.profiles : [];
