@@ -906,7 +906,7 @@ function showLoginError(text) {
   elLoginErr.hidden = !text;
 }
 
-async function doConnect() {
+function doConnect() {
   showLoginError('');
   var addr = normalizeAddr(elAddr.value);
   var tok = elToken.value.trim();
@@ -925,35 +925,49 @@ async function doConnect() {
   elConnect.disabled = true;
   elConnect.textContent = '连接中…';
   
-  try {
-    var base = addr || location.origin;
-    var pingUrl = base.replace(/\/+$/, '') + '/api/ping';
-    console.log('正在请求: ' + pingUrl);
-    
-    var res = await fetch(pingUrl, {
-      method: 'GET',
-      headers: { 'Authorization': 'Bearer ' + tok },
-      mode: 'cors'
-    });
-    
-    if (res.status === 401) {
+  var base = addr || location.origin;
+  var pingUrl = base.replace(/\/+$/, '') + '/api/ping';
+  console.log('正在请求: ' + pingUrl);
+  
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', pingUrl, true);
+  xhr.setRequestHeader('Authorization', 'Bearer ' + tok);
+  xhr.timeout = 5000;
+  
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      elConnect.disabled = false;
+      elConnect.textContent = '连接';
+      addHistory(addr || location.origin, tok);
+      enterApp();
+    } else if (xhr.status === 401) {
       showLoginError('令牌错误，请检查后重试');
       elConnect.disabled = false;
       elConnect.textContent = '连接';
-      return;
-    }
-    if (!res.ok) {
-      showLoginError('连接失败（HTTP ' + res.status + '），请检查地址');
+    } else {
+      showLoginError('连接失败（HTTP ' + xhr.status + '），请检查地址');
       elConnect.disabled = false;
       elConnect.textContent = '连接';
-      return;
     }
-  } catch (err) {
-    showLoginError('无法连接到 ' + (addr || '服务器') + '：' + (err.message || '网络错误，可能是跨域或超时'));
+  };
+  
+  xhr.onerror = function() {
+    showLoginError('无法连接到 ' + (addr || '服务器') + '：网络错误或跨域被拦截');
     elConnect.disabled = false;
     elConnect.textContent = '连接';
-    return;
-  function enterApp() {
+  };
+  
+  xhr.ontimeout = function() {
+    showLoginError('连接超时，请检查电脑防火墙或网络');
+    elConnect.disabled = false;
+    elConnect.textContent = '连接';
+  };
+  
+  xhr.send();
+}
+
+
+function enterApp() {
   elLogin.hidden = true;
   elLogin.style.display = 'none';
   elApp.hidden = false;
@@ -1341,5 +1355,3 @@ if (document.readyState === 'loading') {
 
 })();
 
-
-})();
