@@ -335,14 +335,20 @@ function markLastToolDone() {
 /* 生成态 */
 function setGenerating(v) {
   generating = !!v;
-  // 发送按钮永远显示，停止按钮仅在生成时显示
-  elSend.hidden = false;
-  elStop.hidden = !generating;
   
-  // 生成中，发送按钮变暗（防误触）
+  // 发送按钮永远显示，生成中变暗防误触
+  elSend.hidden = false;
   elSend.style.opacity = generating ? '0.5' : '1';
   
-  if (!generating) hideTool();
+  // 停止按钮：只在生成时高亮可点，平时是暗色不可点
+  if (generating) {
+    elStop.classList.remove('disabled');
+    elStop.disabled = false;
+  } else {
+    elStop.classList.add('disabled');
+    elStop.disabled = true;
+    hideTool();
+  }
 }
 
 /* ========== 连接 ========== */
@@ -956,7 +962,10 @@ function bind() {
   });
 
   elSend.addEventListener('click', sendText);
-  elStop.addEventListener('click', stopGeneration);
+  elStop.addEventListener('click', function() {
+    if (!generating) return;
+    stopGeneration();
+  });
   elInput.addEventListener('input', function () {
     autoResize();
     localStorage.setItem(LS_DRAFT, elInput.value);
