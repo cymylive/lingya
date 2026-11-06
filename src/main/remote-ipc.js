@@ -3,6 +3,7 @@
  * 供桌面设置页调用；服务/隧道/粘合层在此接线。
  */
 const { ipcMain } = require('electron');
+const os = require('os');
 const config = require('./remote/config');
 const server = require('./remote/server');
 const manager = require('./remote/manager');
@@ -29,9 +30,10 @@ async function startService() {
     port: cfg.port,
     token: cfg.token,
     deps: {
-      onUserMessage: (text) => manager.onUserMessage(text, manager.currentProfileId || ''),
-      onStop: () => manager.onStop(manager.currentProfileId || ''),
+      onUserMessage: (text) => manager.onUserMessage(text, ''),
+      onStop: () => manager.onStop(''),
       onSelectProfile: (pid, ws) => manager.onSelectProfile(pid, ws),
+      onNewClient: (ws) => manager.onNewClient(ws),
     },
   });
   if (!r.ok) return { ok: false, error: r.error };
@@ -67,6 +69,21 @@ async function startTunnelNow() {
   return r;
 }
 
+/** 枚举本机局域网 IPv4（非回环、非内网链接本地） */
+function listLanUrls(port) {
+  const out = [];
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const info of ifaces[name] || []) {
+        if (!info || info.family !== 'IPv4' || info.internal) continue;
+        out.push('http://' + info.address + ':' + port);
+      }
+    }
+  } catch (_) {}
+  return out;
+}
+
 /** 聚合状态（设置页轮询） */
 function getStatus() {
   const cfg = getRemoteConfig();
@@ -76,6 +93,7 @@ function getStatus() {
     port: cfg.port,
     token: cfg.token,
     publicUrl: cfg.publicUrl || ts.url || '',
+    lanUrls: listLanUrls(cfg.port),
     serverRunning: server.isRunning(),
     tunnel: ts,
     clients: server.listClients(),
@@ -94,7 +112,7 @@ function registerRemoteIpc() {
     const cfg = saveRemoteConfig({ enabled: !!enabled });
     if (cfg.enabled) {
       const s = await startService();
-      if (!s.ok) return { success: false, error: s.error };
+      if (!s.ok) return { success: false, error: s.error, ...getStatus() };
     } else {
       await stopAll();
     }
@@ -107,6 +125,7 @@ function registerRemoteIpc() {
     if (typeof p.port === 'number') next.port = p.port;
     if (typeof p.tunnelToken === 'string') next.tunnelToken = p.tunnelToken;
     if (typeof p.publicUrl === 'string') next.publicUrl = p.publicUrl;
+    if (typeof p.tunnelEnabled === 'boolean') next.tunnelEnabled = p.tunnelEnabled;
     saveRemoteConfig(next);
     return { success: true, ...getStatus() };
   });
@@ -136,12 +155,10 @@ function registerRemoteIpc() {
     return { success: true, ...getStatus() };
   });
 
-  // AI 视图上报的任务状态变化 -> 手机
-  // 由 index.js 的 lingya-report-task-state 处理器调用
-  ipcMain.handle('remote-ai-event', async (event, payload) => {
+  // AI 视图上报的事件 -> 手机（fire-and-forget，用 on 而非 handle）
+  ipcMain.on('remote-ai-event', (event, payload) => {
     const p = payload || {};
     try { manager.broadcastAiEvent(p.webContentsId, p.kind || '', p.data || {}); } catch (_) {}
-    return { success: true };
   });
 }
 

@@ -1,15 +1,48 @@
-.ly-pet-wrap{position:fixed;bottom:76px;width:56px;height:56px;z-index:60;touch-action:pan-y;cursor:pointer}
-.ly-pet{width:56px;height:56px;overflow:visible}
-.ly-body,.ly-head{fill:#1b2330;stroke:#2dd4bf;stroke-width:1.4}
-.ly-wing,.ly-tail{fill:#243044;stroke:#2dd4bf;stroke-width:1.2}
-.ly-beak{fill:#2dd4bf}
-.ly-eye{fill:#e6e8ee}
-.st-thinking .ly-pet{animation:ly-bob .9s ease-in-out infinite}
-.st-working .ly-pet{animation:ly-bob .5s ease-in-out infinite}
-.st-waiting .ly-pet{animation:ly-pulse 1.6s ease-in-out infinite}
-.st-done .ly-pet{animation:ly-hop .6s ease-out 1}
-.st-error .ly-pet{animation:ly-shake .4s ease-in-out 2}
-@keyframes ly-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-@keyframes ly-pulse{0%,100%{opacity:.6}50%{opacity:1}}
-@keyframes ly-hop{0%{transform:translateY(0)}40%{transform:translateY(-9px)}100%{transform:translateY(0)}}
-@keyframes ly-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+/* 灵鸦远程 · 手机桌宠样式 */
+.ly-pet-wrap {
+  position: fixed;
+  bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  width: 56px;
+  height: 56px;
+  z-index: 60;
+  touch-action: pan-y;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ly-pet-wrap.dragging { cursor: grabbing; }
+.ly-pet {
+  width: 56px;
+  height: 56px;
+  overflow: visible;
+  display: block;
+  pointer-events: none;
+}
+.ly-body, .ly-head { fill: #1b2330; stroke: #2dd4bf; stroke-width: 1.4; }
+.ly-wing, .ly-tail { fill: #243044; stroke: #2dd4bf; stroke-width: 1.2; }
+.ly-beak { fill: #2dd4bf; }
+.ly-eye { fill: #e6e8ee; }
+
+html.light .ly-body, html.light .ly-head { fill: #ffffff; stroke: #0d9488; }
+html.light .ly-wing, html.light .ly-tail { fill: #e0f2f1; stroke: #0d9488; }
+html.light .ly-beak { fill: #0d9488; }
+html.light .ly-eye { fill: #1a1d20; }
+
+/* 状态动画 */
+.st-thinking .ly-pet { animation: ly-bob 1.2s ease-in-out infinite; }
+.st-working .ly-pet { animation: ly-bob .5s ease-in-out infinite; }
+.st-waiting .ly-pet { animation: ly-pulse 1.6s ease-in-out infinite; }
+.st-done .ly-pet { animation: ly-hop .7s ease-out 1; }
+.st-error .ly-pet { animation: ly-shake .4s ease-in-out 2; }
+.st-idle .ly-pet { animation: ly-breathe 3s ease-in-out infinite; }
+
+@keyframes ly-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes ly-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes ly-hop { 0% { transform: translateY(0); } 40% { transform: translateY(-10px) scale(1.05); } 100% { transform: translateY(0) scale(1); } }
+@keyframes ly-shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@keyframes ly-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ly-pet { animation: none !important; }
+}

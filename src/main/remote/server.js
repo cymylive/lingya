@@ -239,7 +239,14 @@ function startServer(opts) {
 
     pwaDir = options.pwaDir || path.join(__dirname, 'pwa');
     if (!fs.existsSync(pwaDir)) {
-      // 目录不存在仍允许启动（T006 之前测试用临时目录；生产应存在）
+      // 打包后：asar 内路径可能不可读，回退到 extraResources 复制的 remote-pwa
+      try {
+        const packed = process.resourcesPath && path.join(process.resourcesPath, 'remote-pwa');
+        if (packed && fs.existsSync(packed)) pwaDir = packed;
+      } catch (_) {}
+    }
+    if (!fs.existsSync(pwaDir)) {
+      // 目录不存在仍允许启动（测试用临时目录；生产应存在）
     }
 
     let server;

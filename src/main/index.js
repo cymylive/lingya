@@ -2738,6 +2738,10 @@ app.on('before-quit', (event) => {
   try {
     require('./graphify-builder').cancel();
   } catch (_) {}
+  // 停止远程服务与 cloudflared 隧道（防孤儿进程 + 端口残留）
+  try {
+    require('./remote-ipc').stopAll().catch(() => {});
+  } catch (_) {}
   // 刷新会话存档（appendFileSync 已即时落盘，这里只作接口约定兜底）
   try {
     const { createArchiveIpc } = require('./conversation-archive-ipc');

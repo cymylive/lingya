@@ -2793,6 +2793,10 @@
           '<div class="ly-set-row"><input id="remote-port" type="number" class="ly-set-input ly-set-input-md" /><button class="sh-btn" id="remote-save-port">保存</button></div>' +
         '</div></div>' +
         '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">局域网地址（同一 WiFi 可用）</div>' +
+          '<div class="ly-set-desc" id="remote-lan-urls" style="word-break:break-all;font-family:monospace;">未启动</div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
           '<div class="ly-set-label">公网地址</div>' +
           '<div class="ly-set-desc" id="remote-public-url" style="word-break:break-all;font-family:monospace;">未启动</div>' +
           '<div class="ly-set-desc" id="remote-tunnel-status"></div>' +
@@ -2839,6 +2843,7 @@
         if(R('remote-token')) R('remote-token').value=st.token||'';
         if(R('remote-port')) R('remote-port').value=st.port||7799;
         if(R('remote-public-url')) R('remote-public-url').textContent=st.publicUrl||'未启动';
+        if(R('remote-lan-urls')) R('remote-lan-urls').textContent=(st.lanUrls&&st.lanUrls.length)?st.lanUrls.join('  |  '):(st.serverRunning?'（未检测到局域网地址）':'未启动');
         if(R('remote-enabled')) R('remote-enabled').checked=!!st.enabled;
       }
       function refresh(){ if(API.remoteStatus) API.remoteStatus().then(function(st){ fill(st); var c=R('remote-clients'); if(c){ c.textContent=(st.clients&&st.clients.length)?st.clients.map(function(x){return (x.ip||'')+' '+(x.ua||'').slice(0,24);}).join(' | '):'无'; } var ts=R('remote-tunnel-status'); if(ts){ ts.textContent=st.tunnel&&st.tunnel.error?('隧道错误: '+st.tunnel.error):(st.tunnel&&st.tunnel.running?'隧道运行中':''); } })['catch'](function(){}); }

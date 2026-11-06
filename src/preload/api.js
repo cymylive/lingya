@@ -415,6 +415,18 @@ let electronAPI = {
   qqReport: (payload) => {
     return ipcRenderer.invoke('qq-report', payload);
   },
+  // ========== 手机远程控制 API ==========
+  // AI 页面（bridge）→ 主进程：上报 AI 事件（流式/工具/回复/停止/错误），
+  // 由 remote/manager 按 profileId 转发给已连接的手机。
+  remoteReport: (payload) => {
+    ipcRenderer.send('remote-ai-event', payload || {});
+  },
+  // 主进程 → AI 页面：手机用户消息 → 交给 sendToChat 处理
+  onRemoteUserMessage: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('remote-user-message', handler);
+    return () => ipcRenderer.removeListener('remote-user-message', handler);
+  },
   // ========== 通道窗口绑定 API ==========
   getWeixinBinding: () => ipcRenderer.invoke('weixin-get-binding'),
   bindWeixinUser: (userId, userName) => ipcRenderer.invoke('weixin-bind-user', { userId, userName }),

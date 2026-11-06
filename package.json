@@ -9,6 +9,9 @@
     "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage --test-reporter=lcov test/tools/*.test.js test/main/*.test.js test/preload/*.test.js > coverage.lcov",
     "test:ci": "node --test --test-concurrency=1 test/tools/*.test.js test/main/*.test.js test/preload/*.test.js",
     "check:notes": "node scripts/check-notes.js",
+    "cap:sync": "cap sync android",
+    "cap:open": "cap open android",
+    "android:version": "node scripts/sync-android-version.js",
     "check:sidebar": "node scripts/verify-sidebar-parity.js",
     "build": "electron-builder --publish always",
     "build:graphify": "node scripts/build-graphify.mjs",
@@ -63,6 +66,11 @@
   },
   "homepage": "https://github.com/cymylive/lingya#readme",
   "devDependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/local-notifications": "^8.0.0",
+    "@capacitor-mlkit/barcode-scanning": "^8.0.0",
     "electron": "^33.4.11",
     "electron-builder": "^24.13.3"
   },

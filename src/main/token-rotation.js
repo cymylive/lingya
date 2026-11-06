@@ -325,7 +325,8 @@ async function submit(sourceProfileId, sourceAccountTag, data, deps) {
       const sleepMs = Math.min(pollMs, Math.max(0, deadline - Date.now()));
       await new Promise((r) => {
         const t = setTimeout(r, sleepMs);
-        if (t && typeof t.unref === 'function') t.unref();
+        // 仅在 Electron 主进程 unref；纯 Node 测试环境 unref 会让事件循环"空转结束"→ cancelledByParent
+        if (t && typeof t.unref === 'function' && process.versions && process.versions.electron) t.unref();
       });
       targetIndex = selectNextIndex(config.pool, config.cursor, isAvailable, pickOpts);
       if (targetIndex !== -1) break;
@@ -348,8 +349,8 @@ async function submit(sourceProfileId, sourceAccountTag, data, deps) {
       console.error('[Rotation] onResult 回调异常:', err.message);
     }
   }, ACK_TIMEOUT_MS);
-  // Node 环境下别让定时器挂着进程（Electron 主进程无影响，测试环境有用）
-  if (timer && typeof timer.unref === 'function') timer.unref();
+  // 仅在 Electron 主进程 unref；纯 Node 测试环境 unref 会让事件循环"空转结束"→ cancelledByParent
+  if (timer && typeof timer.unref === 'function' && process.versions && process.versions.electron) timer.unref();
 
   pending.set(requestId, {
     sourceProfileId,

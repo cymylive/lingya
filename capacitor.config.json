@@ -1,0 +1,19 @@
+{
+  "appId": "com.lingya.lingya",
+  "appName": "灵鸦",
+  "webDir": "src/main/remote/pwa",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon",
+      "iconColor": "#2dd4bf"
+    }
+  }
+}

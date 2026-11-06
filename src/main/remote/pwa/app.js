@@ -1,70 +1,400 @@
+/* 灵鸦远程 · 手机端主逻辑 */
 (function () {
 'use strict';
 
+/* ========== 常量 ========== */
 var LS_TOKEN = 'lingya-remote-token';
 var LS_ADDR = 'lingya-remote-addr';
 var LS_DRAFT = 'lingya-remote-draft';
+var LS_THEME = 'lingya-remote-theme';
+var LS_CLIENT = 'lingya-client-id';
+var LS_PET_X = 'lingya-pet-x';
 
-var ws = null;
-var connected = false;
-var reconnectDelay = 500;
-var reconnectTimer = null;
-var manualClose = false;
-var currentProfile = '';
-var outbox = [];
-var clients = {};
+var RECONNECT_BASE = 500;
+var RECONNECT_MAX = 8000;
+var DISCONNECT_DEBOUNCE = 3000;
+var STARTUP_WATCHDOG = 8000;
+var HEARTBEAT_INTERVAL = 25000;
+var OFFLINE_QUEUE_MAX = 50;
+var BOTTOM_THRESHOLD = 60;
+
+/* ========== DOM ========== */
 function $(id) { return document.getElementById(id); }
+var elLogin = $('login');
+var elApp = $('app');
+var elAddr = $('login-addr');
+var elToken = $('login-token');
+var elPaste = $('login-paste');
+var elConnect = $('login-connect');
+var elLoginErr = $('login-error');
+var elConn = $('conn');
+var elConnText = $('conn-text');
+var elProfileSel = $('profile-select');
+var elTheme = $('btn-theme');
+var elDisconnect = $('btn-disconnect');
+var elOffline = $('offline-banner');
+var elMessages = $('messages');
+var elEmpty = $('empty-state');
+var elExec = $('exec-status');
+var elExecText = $('exec-text');
+var elScrollBtn = $('scroll-bottom-btn');
+var elScrollBadge = $('scroll-new-badge');
+var elInput = $('input');
+var elSend = $('send');
+var elStop = $('stop');
+var elPetLayer = $('pet-layer');
 
+/* ========== 状态 ========== */
+var ws = null;
+var wsGen = 0;
+var connected = false;
+var reconnectDelay = RECONNECT_BASE;
+var reconnectTimer = null;
+var disconnectTimer = null;
+var startupWatchdog = null;
+var heartbeatTimer = null;
+var manualClose = false;
+var currentProfileId = '';
+var profilesReady = false;
+var profilesCache = [];
+var offlineQueue = [];
+var clientId = '';
+var stickToBottom = true;
+var hasNewWhileScrolled = false;
+
+/* 流式状态（当前气泡） */
+var streamEl = null;      // .msg.assistant 容器
+var streamBodyEl = null;  // 正文容器
+var streamThinkEl = null; // 思考容器（details）
+var streamText = '';
+var streamThink = '';
+
+/* 工具计时 */
+var toolChipEl = null;
+var toolStartAt = 0;
+var toolTickTimer = null;
+var toolLastTickAt = 0;
+var toolName = '';
+
+/* 当前是否生成中 */
+var generating = false;
+
+/* ========== 工具函数 ========== */
+function getToken() { return localStorage.getItem(LS_TOKEN) || ''; }
+function getAddr() { return localStorage.getItem(LS_ADDR) || ''; }
 function baseUrl() {
-  var a = localStorage.getItem(LS_ADDR);
+  var a = getAddr();
   if (a) return a.replace(/\/+$/, '');
   if (window.Capacitor) return '';
   return location.origin;
 }
-
 function wsUrl() {
   var b = baseUrl();
   if (!b) return '';
   return b.replace(/^http/, 'ws') + '/ws';
 }
-function token() { return localStorage.getItem(LS_TOKEN) || ''; }
-
-function setConn(ok, text) {
-  var el = $('conn');
-  el.textContent = text || (ok ? '已连接' : '未连接');
-  el.className = 'conn' + (ok ? '' : ' bad');
+function normalizeAddr(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+  try { var u = new URL(s); return u.protocol + '//' + u.host; } catch (_) { return ''; }
+}
+function ensureClientId() {
+  var c = localStorage.getItem(LS_CLIENT);
+  if (!c) {
+    c = 'c_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now();
+    localStorage.setItem(LS_CLIENT, c);
+  }
+  clientId = c;
 }
 
-function showOffline(v) { $('offline').hidden = !v; }
-function addMsg(kind, text) {
+/* ========== Markdown（最小实现，无外部依赖） ========== */
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function renderMarkdown(raw) {
+  if (!raw) return '';
+  var text = escapeHtml(raw);
+  var fences = [];
+  // 抽取代码块
+  text = text.replace(/\`\`\`([a-zA-Z0-9_-]*)\n([\s\S]*?)\`\`\`/g, function (_m, lang, code) {
+    var idx = fences.length;
+    fences.push({ lang: lang || '', code: code });
+    return '\u0000FENCE' + idx + '\u0000';
+  });
+  // 行内代码
+  text = text.replace(/\`([^\`\n]+)\`/g, '<code>$1</code>');
+  // 粗体/斜体
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  // 链接
+  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // 换行
+  text = text.replace(/\n/g, '<br>');
+  // 还原代码块
+  text = text.replace(/\u0000FENCE(\d+)\u0000/g, function (_m, i) {
+    var f = fences[Number(i)];
+    if (!f) return '';
+    var cls = f.lang ? ' class="lang-' + escapeHtml(f.lang) + '"' : '';
+    return '<pre data-fence="1"><button class="copy-code-btn" type="button">复制</button><code' + cls + '>' + f.code + '</code></pre>';
+  });
+  return text;
+}
+
+/* ========== 消息渲染 ========== */
+function scrollToBottom(force) {
+  if (!force && !stickToBottom) return;
+  requestAnimationFrame(function () {
+    elMessages.scrollTop = elMessages.scrollHeight;
+  });
+}
+function nearBottom() {
+  var gap = elMessages.scrollHeight - elMessages.scrollTop - elMessages.clientHeight;
+  return gap <= BOTTOM_THRESHOLD;
+}
+function updateScrollBtn() {
+  if (stickToBottom) {
+    elScrollBtn.hidden = true;
+    elScrollBadge.hidden = true;
+    hasNewWhileScrolled = false;
+  } else {
+    elScrollBtn.hidden = false;
+  }
+}
+function clearEmpty() {
+  if (elEmpty && elEmpty.parentNode) elEmpty.parentNode.removeChild(elEmpty);
+  elEmpty = null;
+}
+function addMessage(kind, text) {
+  clearEmpty();
   var el = document.createElement('div');
   el.className = 'msg ' + kind;
-  el.textContent = text;
-  $('stream').appendChild(el);
-  $('stream').scrollTop = $('stream').scrollHeight;
+  if (kind === 'assistant' && text) {
+    el.innerHTML = renderMarkdown(text);
+  } else {
+    el.textContent = text || '';
+  }
+  elMessages.appendChild(el);
+  if (!stickToBottom) {
+    hasNewWhileScrolled = true;
+    elScrollBadge.hidden = false;
+  } else {
+    scrollToBottom(true);
+  }
   return el;
 }
+function addSystem(text) { return addMessage('system', text); }
+function addError(text) { return addMessage('error', text); }
+function addUser(text) { return addMessage('user', text); }
 
-function clearMsgs() { $('stream').innerHTML = ''; }
-function petState(s){try{if(window.LingyaPet)window.LingyaPet.setState(s);}catch(_){}}
-function send(obj) {
-  if (ws && ws.readyState === 1) {
-    try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
+/* 流式气泡 */
+function ensureStreamEl() {
+  if (streamEl && streamEl.parentNode) return;
+  clearEmpty();
+  streamEl = document.createElement('div');
+  streamEl.className = 'msg assistant';
+  streamThinkEl = document.createElement('details');
+  streamThinkEl.className = 'think-block';
+  streamThinkEl.hidden = true;
+  var sum = document.createElement('summary');
+  sum.textContent = '思考过程';
+  var tb = document.createElement('div');
+  tb.className = 'think-body';
+  streamThinkEl.appendChild(sum);
+  streamThinkEl.appendChild(tb);
+  streamThinkEl._body = tb;
+  streamBodyEl = document.createElement('div');
+  streamBodyEl.className = 'stream-body';
+  streamEl.appendChild(streamThinkEl);
+  streamEl.appendChild(streamBodyEl);
+  elMessages.appendChild(streamEl);
+  streamText = '';
+  streamThink = '';
+  scrollToBottom(true);
+}
+function updateStream(thinkDelta, textDelta, reset) {
+  ensureStreamEl();
+  if (reset) {
+    streamText = '';
+    streamThink = '';
   }
-  return false;
+  if (thinkDelta) {
+    streamThink += thinkDelta;
+    streamThinkEl.hidden = false;
+    streamThinkEl._body.textContent = streamThink;
+  }
+  if (textDelta) {
+    streamText += textDelta;
+    streamBodyEl.innerHTML = renderMarkdown(streamText);
+    bindCopyButtons(streamBodyEl);
+  }
+  scrollToBottom(false);
 }
-
-function queueMsg(text) {
-  if (outbox.length >= 50) outbox.shift();
-  outbox.push(text);
+function finalizeStream(finalText) {
+  if (finalText != null && finalText !== '') {
+    if (!streamEl) ensureStreamEl();
+    streamText = finalText;
+    streamBodyEl.innerHTML = renderMarkdown(streamText);
+    bindCopyButtons(streamBodyEl);
+  }
+  if (streamEl) {
+    if (!streamBodyEl.innerHTML && !streamText) {
+      if (streamThink) {
+        streamBodyEl.innerHTML = '<span style="color:var(--text-dim)">（无正文）</span>';
+      } else {
+        streamEl.parentNode && streamEl.parentNode.removeChild(streamEl);
+      }
+    }
+  }
+  streamEl = null;
+  streamBodyEl = null;
+  streamThinkEl = null;
+  streamText = '';
+  streamThink = '';
 }
-
-function flushOutbox() {
-  while (outbox.length) {
-    var t = outbox.shift();
-    if (!send({ type: 'user-message', text: t })) { outbox.unshift(t); break; }
+function bindCopyButtons(root) {
+  var btns = root.querySelectorAll('.copy-code-btn');
+  for (var i = 0; i < btns.length; i++) {
+    (function (btn) {
+      if (btn._bound) return;
+      btn._bound = true;
+      btn.addEventListener('click', function () {
+        var pre = btn.parentNode;
+        var code = pre && pre.querySelector('code');
+        if (!code) return;
+        var txt = code.textContent;
+        try {
+          navigator.clipboard.writeText(txt).then(function () {
+            btn.textContent = '已复制';
+            setTimeout(function () { btn.textContent = '复制'; }, 1500);
+          });
+        } catch (_) {}
+      });
+    })(btns[i]);
   }
 }
+
+/* 工具 chip */
+function showTool(name) {
+  toolName = name || '';
+  generating = true;
+  elExec.hidden = false;
+  elExecText.textContent = '工具执行中' + (toolName ? '：' + toolName : '') + ' 0s';
+  toolStartAt = Date.now();
+  toolLastTickAt = Date.now();
+  if (toolTickTimer) clearInterval(toolTickTimer);
+  toolTickTimer = setInterval(function () {
+    var now = Date.now();
+    var gap = now - toolLastTickAt;
+    if (gap > 2000) toolStartAt += gap; // 后台冻结补偿
+    toolLastTickAt = now;
+    var sec = Math.floor((now - toolStartAt) / 1000);
+    elExecText.textContent = '工具执行中' + (toolName ? '：' + toolName : '') + ' ' + sec + 's';
+  }, 1000);
+  addToolCard(toolName, false);
+  petState('working');
+}
+function hideTool() {
+  elExec.hidden = true;
+  if (toolTickTimer) { clearInterval(toolTickTimer); toolTickTimer = null; }
+  markLastToolDone();
+}
+function addToolCard(name, done) {
+  clearEmpty();
+  var el = document.createElement('div');
+  el.className = 'msg tool' + (done ? ' done' : '');
+  el.innerHTML = '<svg class="ico"><use href="#i-tool"/></svg><span>' + escapeHtml(name || '工具') + (done ? '（完成）' : '') + '</span>';
+  elMessages.appendChild(el);
+  scrollToBottom(true);
+}
+function markLastToolDone() {
+  var cards = elMessages.querySelectorAll('.msg.tool:not(.done)');
+  for (var i = 0; i < cards.length; i++) {
+    cards[i].classList.add('done');
+    var sp = cards[i].querySelector('span');
+    if (sp && sp.textContent.indexOf('完成') < 0) sp.textContent = sp.textContent + '（完成）';
+  }
+}
+
+/* 桌宠 */
+function petState(s) {
+  try { if (window.LingyaPet && window.LingyaPet.setState) window.LingyaPet.setState(s); } catch (_) {}
+}
+
+/* 生成态 */
+function setGenerating(v) {
+  generating = !!v;
+  elSend.hidden = generating;
+  elStop.hidden = !generating;
+  petState(generating ? 'thinking' : 'idle');
+  if (!generating) hideTool();
+}
+
+/* ========== 连接 ========== */
+function setConn(state, text) {
+  elConn.className = 'conn-badge' + (state === 'ok' ? ' ok' : state === 'bad' ? ' bad' : '');
+  elConnText.textContent = text;
+}
+function showOffline(v) { elOffline.hidden = !v; }
+
+function buildWsProtocols() {
+  var tok = getToken();
+  return tok ? ['lingya.' + tok] : [];
+}
+
+function connect() {
+  if (manualClose) return;
+  var url = wsUrl();
+  if (!url) { addError('未配置电脑地址'); return; }
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  var myGen = ++wsGen;
+  try {
+    ws = new WebSocket(url, buildWsProtocols());
+  } catch (err) {
+    scheduleReconnect();
+    return;
+  }
+  ws.onopen = function () {
+    if (myGen !== wsGen) return;
+    connected = true;
+    reconnectDelay = RECONNECT_BASE;
+    setConn('ok', '已连接');
+    showOffline(false);
+    if (disconnectTimer) { clearTimeout(disconnectTimer); disconnectTimer = null; }
+    if (startupWatchdog) { clearTimeout(startupWatchdog); startupWatchdog = null; }
+    setGenerating(false);
+    send({ type: 'auth', clientId: clientId });
+    flushOfflineQueue();
+    startHeartbeat();
+    petState('idle');
+  };
+  ws.onclose = function () {
+    if (myGen !== wsGen) return;
+    connected = false;
+    stopHeartbeat();
+    setConn('bad', '未连接');
+    if (startupWatchdog) { clearTimeout(startupWatchdog); startupWatchdog = null; }
+    if (!disconnectTimer) {
+      disconnectTimer = setTimeout(function () {
+        disconnectTimer = null;
+        if (!connected) showOffline(true);
+      }, DISCONNECT_DEBOUNCE);
+    }
+    if (!manualClose) scheduleReconnect();
+  };
+  ws.onerror = function () {};
+  ws.onmessage = function (ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    handleServerMessage(msg);
+  };
+}
+
 function scheduleReconnect() {
   if (manualClose) return;
   if (reconnectTimer) return;
@@ -72,197 +402,387 @@ function scheduleReconnect() {
     reconnectTimer = null;
     connect();
   }, reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 2, 8000);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
 }
 
-function sendText(text) {
-  if (!text) return;
-  addMsg('user', text);
-  petState('thinking');
-  if (!send({ type: 'user-message', text: text, profileId: currentProfile })) {
-    queueMsg(text);
-    showOffline(true);
-  }
-}
-function renderProfiles(list, current) {
-  var sel = $('profileSel');
-  sel.innerHTML = '';
-  (list || []).forEach(function (p) {
-    var o = document.createElement('option');
-    o.value = p.id;
-    o.textContent = p.name + (p.busy ? ' · 生成中' : '');
-    sel.appendChild(o);
-  });
-  if (current) { sel.value = current; currentProfile = current; }
-  else if (sel.value) currentProfile = sel.value;
-}
-var curAiEl = null;
-var curAiProfile = '';
-var toolTimer = null;
-var toolStart = 0;
-
-function startTool(name) {
-  toolStart = Date.now();
-  var chip = $('toolChip');
-  chip.hidden = false;
-  chip.textContent = '工具运行 ' + (name || '') + ' 0s';
-  if (toolTimer) clearInterval(toolTimer);
-  toolTimer = setInterval(function () {
-    var s = Math.floor((Date.now() - toolStart) / 1000);
-    chip.textContent = '工具运行 ' + (name || '') + ' ' + s + 's';
-  }, 500);
-}
-
-function stopTool() {
-  if (toolTimer) { clearInterval(toolTimer); toolTimer = null; }
-  $('toolChip').hidden = true;
-}
-function onMessage(ev) {
-  var m;
-  try { m = JSON.parse(ev.data); } catch (_) { return; }
-  if (!m || !m.type) return;
-
-  if (m.type === 'profiles') { renderProfiles(m.profiles, m.current); return; }
-  if (m.type === 'pong') return;
-  if (m.type === 'sys') { addMsg('sys', m.text || ''); petState('thinking'); return; }
-  if (m.type === 'error') { addMsg('err', m.text || ''); stopTool(); petState('error'); return; }
-  if (m.type === 'stream') {
-    if (m.profileId && currentProfile && m.profileId !== currentProfile) return;
-    if (!curAiEl || curAiProfile !== (m.profileId || '')) {
-      curAiEl = addMsg('ai', '');
-      curAiProfile = m.profileId || '';
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(function () {
+    if (ws && ws.readyState === 1) {
+      send({ type: 'ping' });
     }
-    curAiEl.textContent = m.text || '';
-    $('stream').scrollTop = $('stream').scrollHeight;
+  }, HEARTBEAT_INTERVAL);
+}
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+function send(obj) {
+  if (ws && ws.readyState === 1) {
+    try { ws.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
+  }
+  return false;
+}
+
+function flushOfflineQueue() {
+  if (!offlineQueue.length) return;
+  var arr = offlineQueue.slice();
+  offlineQueue.length = 0;
+  for (var i = 0; i < arr.length; i++) {
+    if (!send({ type: 'user-message', text: arr[i] })) {
+      offlineQueue.push(arr[i]);
+      break;
+    }
+  }
+  if (offlineQueue.length) {
+    addSystem('已暂存 ' + offlineQueue.length + ' 条消息，网络恢复后自动发送');
+  }
+}
+
+/* ========== 服务端消息处理 ========== */
+function handleServerMessage(msg) {
+  var t = msg.type;
+  if (t === 'profiles') return onProfiles(msg);
+  if (t === 'history') return onHistory(msg);
+  if (t === 'ai-start') return onAiStart(msg);
+  if (t === 'ai-stream') return onAiStream(msg);
+  if (t === 'ai-reply') return onAiReply(msg);
+  if (t === 'ai-stop') return onAiStop(msg);
+  if (t === 'ai-error') return onAiError(msg);
+  if (t === 'tool') return onTool(msg);
+  if (t === 'sys') return onSys(msg);
+  if (t === 'pong') return;
+}
+
+function onProfiles(msg) {
+  profilesCache = Array.isArray(msg.profiles) ? msg.profiles : [];
+  var cur = msg.currentProfileId || '';
+  if (!profilesReady) profilesReady = true;
+  var sel = elProfileSel;
+  var html = '<option value="">选择窗口…</option>';
+  for (var i = 0; i < profilesCache.length; i++) {
+    var p = profilesCache[i];
+    var label = (p.name || p.id || '窗口') + (p.busy ? ' · 生成中' : '');
+    html += '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>';
+  }
+  sel.innerHTML = html;
+  if (cur) {
+    sel.value = cur;
+    currentProfileId = cur;
+  } else if (profilesCache.length === 1) {
+    sel.value = profilesCache[0].id;
+    currentProfileId = profilesCache[0].id;
+    send({ type: 'select-profile', profileId: currentProfileId });
+  }
+}
+
+function onHistory(msg) {
+  var pid = msg.profileId || '';
+  var list = Array.isArray(msg.history) ? msg.history : [];
+  // 切换窗口后清屏
+  var all = elMessages.querySelectorAll('.msg');
+  for (var i = 0; i < all.length; i++) elMessages.removeChild(all[i]);
+  if (!list.length) {
+    if (!elEmpty) {
+      elEmpty = document.createElement('div');
+      elEmpty.className = 'empty-state';
+      elEmpty.innerHTML = '<svg class="ico ico-48"><use href="#i-bird"/></svg><p>连接成功，发一条消息开始对话</p>';
+      elMessages.appendChild(elEmpty);
+    }
     return;
   }
-  if (m.type === 'tool') {
-    if (m.profileId && currentProfile && m.profileId !== currentProfile) return;
-    if (m.ended) { stopTool(); petState('working'); } else { startTool(m.name); petState('working'); }
+  for (var j = 0; j < list.length; j++) {
+    var e = list[j];
+    if (!e || !e.text) continue;
+    if (e.t === 'user') addUser(e.text);
+    else if (e.t === 'assistant') addMessage('assistant', e.text);
+    else addSystem(e.text);
+  }
+  scrollToBottom(true);
+}
+
+function onAiStart(_msg) {
+  setGenerating(true);
+  streamEl = null;
+  streamText = '';
+  streamThink = '';
+  if (toolChipEl && toolChipEl.parentNode) toolChipEl.parentNode.removeChild(toolChipEl);
+  toolChipEl = null;
+}
+
+function onAiStream(msg) {
+  var pid = msg.profileId || '';
+  if (pid && currentProfileId && pid !== currentProfileId) return;
+  if (!generating) setGenerating(true);
+  updateStream(msg.thinkDelta || '', msg.textDelta || '', !!msg.reset);
+}
+
+function onAiReply(msg) {
+  var pid = msg.profileId || '';
+  if (pid && currentProfileId && pid !== currentProfileId) return;
+  finalizeStream(msg.text || '');
+  setGenerating(false);
+  petState('done');
+}
+
+function onAiStop(msg) {
+  finalizeStream(null);
+  setGenerating(false);
+  if (msg.reason !== 'watchdog') {
+    addSystem('已停止生成');
+  }
+  petState('idle');
+}
+
+function onAiError(msg) {
+  finalizeStream(null);
+  setGenerating(false);
+  addError('出错了：' + (msg.text || '未知错误'));
+  petState('error');
+}
+
+function onTool(msg) {
+  var pid = msg.profileId || '';
+  if (pid && currentProfileId && pid !== currentProfileId) return;
+  if (msg.ended) {
+    hideTool();
     return;
   }
-  if (m.type === 'ai-reply') {
-    if (m.profileId && currentProfile && m.profileId !== currentProfile) return;
-    curAiEl = null; curAiProfile = '';
-    stopTool(); petState('done');
-    if (m.text) addMsg('ai', m.text);
-    return;
+  // 先收尾已有流式气泡，把工具卡片独立展示
+  if (streamEl) finalizeStream(streamText);
+  showTool(msg.name || '');
+}
+
+function onSys(msg) {
+  if (msg.text) {
+    if (msg.keepBusy) {
+      // 忙态提示：不打断 UI，只 toast 式系统消息
+      addSystem(msg.text);
+    } else {
+      addSystem(msg.text);
+    }
   }
 }
-function connect() {
-  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
-  var url = wsUrl();
-  var tok = token();
-  if (!url || !tok) { showOffline(true); return; }
 
-  try {
-    ws = new WebSocket(url, ['lingya.' + tok]);
-  } catch (e) {
-    setConn(false, '连接失败');
-    scheduleReconnect();
-    return;
-  }
-  ws.onopen = function () {
-    connected = true;
-    reconnectDelay = 500;
-    setConn(true, '已连接');
-    showOffline(false);
-    send({ type: 'auth', clientId: getClientId() });
-    send({ type: 'ping' });
-    flushOutbox();
-  };
-
-  ws.onmessage = onMessage;
-  ws.onclose = function () {
-    connected = false;
-    setConn(false, '已断开');
-    showOffline(true);
-    stopTool(); petState('idle');
-    if (!manualClose) scheduleReconnect();
-  };
-
-  ws.onerror = function () {
-    try { ws.close(); } catch (_) {}
-  };
-}
-function getClientId() {
-  var k = 'lingya-remote-cid';
-  var v = localStorage.getItem(k);
-  if (!v) {
-    v = 'c' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-    localStorage.setItem(k, v);
-  }
-  return v;
-}
-function doLogin() {
-  var t = $('token').value.trim();
-  var a = $('addr').value.trim();
-  if (!t) { $('loginErr').textContent = '请输入令牌'; return; }
-  localStorage.setItem(LS_TOKEN, t);
-  if (a) localStorage.setItem(LS_ADDR, a);
-  $('loginErr').textContent = '正在连接…';
-  var url = baseUrl() + '/api/ping';
-  fetch(url, { headers: { Authorization: 'Bearer ' + t } })
-    .then(function (r) {
-      if (!r.ok) throw new Error('令牌错误或服务不可达');
-      $('login').hidden = true;
-      $('app').hidden = false;
-      $('loginErr').textContent = '';
-      manualClose = false;
-      connect();
-    })
-    .catch(function (e) { $('loginErr').textContent = e.message; });
-}
-function init() {
-  if (token()) { $('token').value = token(); }
-  var a = localStorage.getItem(LS_ADDR);
-  if (a) $('addr').value = a;
-  var d = localStorage.getItem(LS_DRAFT);
-  if (d) $('input').value = d;
-  if (token()) doLogin();
-}
-$('loginBtn').addEventListener('click', doLogin);
-$('token').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
-
-$('sendBtn').addEventListener('click', function () {
-  var el = $('input');
-  var t = el.value.trim();
-  if (!t) return;
-  el.value = '';
+/* ========== 用户输入 ========== */
+function sendText() {
+  var text = elInput.value.trim();
+  if (!text) return;
+  elInput.value = '';
+  autoResize();
   localStorage.removeItem(LS_DRAFT);
-  sendText(t);
-});
-$('input').addEventListener('input', function () {
-  localStorage.setItem(LS_DRAFT, $('input').value);
-});
-
-$('input').addEventListener('keydown', function (e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('sendBtn').click(); }
-});
-$('stopBtn').addEventListener('click', function () {
-  send({ type: 'stop', profileId: currentProfile });
-  stopTool();
-});
-
-$('profileSel').addEventListener('change', function () {
-  currentProfile = $('profileSel').value;
-  clearMsgs();
-  curAiEl = null;
-  curAiProfile = '';
-  send({ type: 'select-profile', profileId: currentProfile });
-});
-setInterval(function () {
-  if (connected) send({ type: 'ping' });
-}, 25000);
-
-document.addEventListener('visibilitychange', function () {
-  if (!document.hidden) {
-    if (!connected) connect();
-    else send({ type: 'ping' });
+  addUser(text);
+  if (!send({ type: 'user-message', text: text })) {
+    if (offlineQueue.length >= OFFLINE_QUEUE_MAX) offlineQueue.shift();
+    offlineQueue.push(text);
+    addSystem('消息已暂存（' + offlineQueue.length + '），网络恢复后自动发送');
   }
-});
+}
+function stopGeneration() {
+  send({ type: 'stop' });
+}
 
-window.addEventListener('online', function () { if (!connected) connect(); });
+function autoResize() {
+  elInput.style.height = 'auto';
+  elInput.style.height = Math.min(elInput.scrollHeight, 140) + 'px';
+}
 
-init();
+/* ========== 登录 ========== */
+function showLoginError(text) {
+  elLoginErr.textContent = text;
+  elLoginErr.hidden = !text;
+}
+
+async function doConnect() {
+  showLoginError('');
+  var addr = normalizeAddr(elAddr.value);
+  var tok = elToken.value.trim();
+  if (!addr && !window.Capacitor) {
+    addr = location.origin;
+  }
+  if (addr && elAddr.value.trim()) {
+    localStorage.setItem(LS_ADDR, addr);
+  } else if (window.Capacitor && !addr) {
+    showLoginError('请填写电脑地址（如 http://192.168.1.10:7799）');
+    return;
+  }
+  if (!tok) { showLoginError('请填写访问令牌'); return; }
+  localStorage.setItem(LS_TOKEN, tok);
+  // 验证 /api/ping
+  elConnect.disabled = true;
+  elConnect.textContent = '连接中…';
+  try {
+    var base = addr || location.origin;
+    var pingUrl = base.replace(/\/+$/, '') + '/api/ping';
+    var res = await fetch(pingUrl, {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + tok },
+    });
+    if (res.status === 401) {
+      showLoginError('令牌错误，请检查后重试');
+      localStorage.removeItem(LS_TOKEN);
+      elConnect.disabled = false;
+      elConnect.textContent = '连接';
+      return;
+    }
+    if (!res.ok) {
+      showLoginError('连接失败（HTTP ' + res.status + '），请检查地址');
+      elConnect.disabled = false;
+      elConnect.textContent = '连接';
+      return;
+    }
+  } catch (err) {
+    showLoginError('无法连接到 ' + (addr || '服务器') + '：' + (err.message || '网络错误'));
+    elConnect.disabled = false;
+    elConnect.textContent = '连接';
+    return;
+  }
+  elConnect.disabled = false;
+  elConnect.textContent = '连接';
+  // 进入应用
+  enterApp();
+}
+
+function enterApp() {
+  elLogin.hidden = true;
+  elLogin.style.display = 'none';
+  elApp.hidden = false;
+  manualClose = false;
+  setConn('', '连接中…');
+  startupWatchdog = setTimeout(function () {
+    startupWatchdog = null;
+    if (!connected) {
+      setConn('bad', '未连接');
+      showOffline(true);
+      addError('连接超时，正在重试…');
+    }
+  }, STARTUP_WATCHDOG);
+  connect();
+  petState('idle');
+}
+
+function disconnect() {
+  manualClose = true;
+  if (ws) {
+    try { ws.close(); } catch (_) {}
+    ws = null;
+  }
+  connected = false;
+  setConn('', '已断开');
+  showOffline(false);
+  elApp.hidden = true;
+  elLogin.hidden = false;
+  elLogin.style.display = '';
+}
+
+/* ========== 主题 ========== */
+function applyTheme(t) {
+  document.documentElement.classList.toggle('light', t === 'light');
+}
+function toggleTheme() {
+  var cur = localStorage.getItem(LS_THEME) || 'dark';
+  var next = cur === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(LS_THEME, next);
+  applyTheme(next);
+}
+
+/* ========== 事件绑定 ========== */
+function bind() {
+  elConnect.addEventListener('click', doConnect);
+
+  elPaste.addEventListener('click', async function () {
+    try {
+      var t = await navigator.clipboard.readText();
+      if (t) { elToken.value = t.trim(); elToken.focus(); }
+    } catch (_) {
+      showLoginError('无法读取剪贴板，请长按粘贴');
+    }
+  });
+
+  elToken.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); doConnect(); }
+  });
+
+  elProfileSel.addEventListener('change', function () {
+    var pid = elProfileSel.value;
+    currentProfileId = pid;
+    if (pid) send({ type: 'select-profile', profileId: pid });
+  });
+
+  elTheme.addEventListener('click', toggleTheme);
+  elDisconnect.addEventListener('click', function () {
+    if (confirm('确定断开连接？')) disconnect();
+  });
+
+  elSend.addEventListener('click', sendText);
+  elStop.addEventListener('click', stopGeneration);
+  elInput.addEventListener('input', function () {
+    autoResize();
+    localStorage.setItem(LS_DRAFT, elInput.value);
+  });
+  elInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (!generating) sendText();
+    }
+  });
+
+  elMessages.addEventListener('scroll', function () {
+    stickToBottom = nearBottom();
+    updateScrollBtn();
+  });
+
+  elScrollBtn.addEventListener('click', function () {
+    stickToBottom = true;
+    scrollToBottom(true);
+    updateScrollBtn();
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      if (!connected && !manualClose) {
+        reconnectDelay = RECONNECT_BASE;
+        connect();
+      }
+    }
+  });
+}
+
+/* ========== 初始化 ========== */
+function init() {
+  ensureClientId();
+  applyTheme(localStorage.getItem(LS_THEME) || 'dark');
+
+  var savedTok = getToken();
+  var savedAddr = getAddr();
+  if (savedAddr) elAddr.value = savedAddr;
+  if (savedTok) elToken.value = savedTok;
+
+  var draft = localStorage.getItem(LS_DRAFT);
+  if (draft) elInput.value = draft;
+
+  bind();
+  autoResize();
+
+  // 自动连接：有保存的 token 且非 Capacitor（PWA 同源）
+  if (savedTok && !window.Capacitor) {
+    enterApp();
+  } else if (savedTok && window.Capacitor && savedAddr) {
+    enterApp();
+  }
+
+  // 桌宠初始化
+  try {
+    if (window.LingyaPet && window.LingyaPet.mount) {
+      window.LingyaPet.mount(elPetLayer, { storageKey: LS_PET_X });
+    }
+  } catch (_) {}
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
 })();

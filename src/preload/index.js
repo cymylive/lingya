@@ -308,6 +308,13 @@ function init() {
   }
 
   try {
+    // 手机远程控制：上报 AI 事件给主进程 + 接收手机消息/停止
+    require('./dom/remote-bridge').initRemoteBridge();
+  } catch (err) {
+    console.error('[LingYa] 手机远程桥接启动失败:', err);
+  }
+
+  try {
     // 定时任务：接收主进程下发的任务指令并发送给 AI
     require('./dom/schedule-bridge').initScheduleBridge();
   } catch (err) {
