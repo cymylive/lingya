@@ -358,17 +358,15 @@ function markLastToolDone() {
 function setGenerating(v) {
   generating = !!v;
   
-  // 发送按钮永远显示，生成中变暗防误触
+  // 发送按钮永远显示
   elSend.hidden = false;
   elSend.style.opacity = generating ? '0.5' : '1';
   
-  // 停止按钮：只在生成时高亮可点，平时是暗色不可点
-  if (generating) {
-    elStop.classList.remove('disabled');
-    elStop.disabled = false;
-  } else {
-    elStop.classList.add('disabled');
-    elStop.disabled = true;
+  // 停止按钮：永远可点！不管什么状态，哪怕看着像空闲，点一下也能强行发中断
+  elStop.classList.remove('disabled');
+  elStop.disabled = false;
+  
+  if (!generating) {
     hideTool();
   }
 }
@@ -1069,8 +1067,12 @@ function bind() {
 
   elSend.addEventListener('click', sendText);
   elStop.addEventListener('click', function() {
-    if (!generating) return;
-    stopGeneration();
+    // 强行中断，不管前端的 generating 状态是什么，直接向电脑端发送 stop
+    send({ type: 'stop' });
+    // 本地先乐观地恢复状态
+    setGenerating(false);
+    finalizeStream(null);
+    addSystem('已发送停止指令');
   });
   elInput.addEventListener('input', function () {
     autoResize();
