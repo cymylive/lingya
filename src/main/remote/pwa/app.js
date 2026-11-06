@@ -246,7 +246,8 @@ function ensureStreamEl() {
   elMessages.appendChild(streamEl);
   streamText = '';
   streamThink = '';
-  scrollToBottom(true);
+  // 彻底移除强制滚动，不再抢夺用户视线
+  scrollToBottom(false);
 }
 function updateStream(thinkDelta, textDelta, reset) {
   ensureStreamEl();
@@ -340,7 +341,8 @@ function addToolCard(name, done) {
   el.className = 'msg tool' + (done ? ' done' : '');
   el.innerHTML = '<svg class="ico"><use href="#i-tool"/></svg><span>' + escapeHtml(name || '工具') + (done ? '（完成）' : '') + '</span>';
   elMessages.appendChild(el);
-  scrollToBottom(true);
+  // 移除强制滚动
+  scrollToBottom(false);
 }
 function markLastToolDone() {
   var cards = elMessages.querySelectorAll('.msg.tool:not(.done)');
