@@ -328,6 +328,15 @@ function onStop(profileId) {
   try {
     ctx.view.webContents.send('lingya-stop-task', {});
     clearBusy(wcId);
+    
+    // 核心修复：强行清空底层 generationState，防止网页端心跳延迟导致手机发不出消息
+    try {
+      const gs = require('../generation-state');
+      if (gs && typeof gs.clear === 'function') {
+        gs.clear(wcId);
+      }
+    } catch (_) {}
+
     stopStreamForProfile(pid, 'user');
   } catch (_) {}
 }
