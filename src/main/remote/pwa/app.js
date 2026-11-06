@@ -1074,7 +1074,7 @@ function bind() {
   if (elMenu) elMenu.addEventListener('click', function() { toggleDrawer(true); });
   if (elDrawerOverlay) elDrawerOverlay.addEventListener('click', function() { toggleDrawer(false); });
 
-  var elNewProject = $('btn-new-project');
+  // 重复声明已移除
   var elModalOverlay = $('modal-overlay');
   var elModalTitle = $('modal-title');
   var elModalInput = $('modal-input');
