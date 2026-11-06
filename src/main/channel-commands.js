@@ -76,8 +76,31 @@ async function handleCommand(text, ctx, reply, channelLabel) {
       '/list — 列出会话：标题 + 相对时间，当前置顶、归档垫底',
       '/say <ID> — 切换到指定会话（ID 用 /list 查看，支持前缀）',
       '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
+      '/proxy (或 /pxory) — 重启远程隧道并获取新的公网访问地址',
       '/help — 显示本帮助',
     ].join('\n'));
+    return true;
+  }
+
+  // ---------- /proxy 或 /pxory ----------
+  if (name === 'proxy' || name === 'pxory') {
+    await reply('⏳ 正在重启隧道并获取新地址，请稍候…');
+    try {
+      const tunnel = require('./remote/tunnel');
+      const remoteIpc = require('./remote-ipc');
+      // 先停掉旧隧道（如果有），保证拿到的是全新地址
+      await tunnel.stopTunnel();
+      // 重新启动
+      const r = await remoteIpc.startTunnelNow();
+      if (r.ok && r.url) {
+        await reply('🌐 新的公网地址已生成：
+' + r.url);
+      } else {
+        await reply('❌ 启动隧道失败：' + (r.error || '未知错误，请检查网络或 cloudflared 安装'));
+      }
+    } catch (err) {
+      await reply('❌ 执行异常：' + err.message);
+    }
     return true;
   }
 
