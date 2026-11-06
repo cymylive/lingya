@@ -335,8 +335,13 @@ function markLastToolDone() {
 /* 生成态 */
 function setGenerating(v) {
   generating = !!v;
-  elSend.hidden = generating;
+  // 发送按钮永远显示，停止按钮仅在生成时显示
+  elSend.hidden = false;
   elStop.hidden = !generating;
+  
+  // 生成中，发送按钮变暗（防误触）
+  elSend.style.opacity = generating ? '0.5' : '1';
+  
   if (!generating) hideTool();
 }
 
