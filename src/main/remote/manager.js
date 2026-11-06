@@ -525,8 +525,8 @@ function onActionInitProject(profileId, projectName) {
   // 核心修复：先跳回首页新建会话，等页面加载完后再绑定项目
   if (homeUrl) {
     wc.once('did-finish-load', () => {
-      // 延时 1.5s 等前端 React/Vue 渲染完毕，再发送初始化指令
-      setTimeout(doInit, 1500);
+      // 延时 3s 等前端框架完全就绪，降低输入框未挂载导致的失败率
+      setTimeout(doInit, 3000);
     });
     wc.loadURL(homeUrl).catch(() => {});
   } else {

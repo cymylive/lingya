@@ -147,7 +147,9 @@ function escapeHtml(s) {
 }
 function renderMarkdown(raw) {
   if (!raw) return '';
-  var text = escapeHtml(raw);
+  // 过滤可能导致 XSS 的伪协议
+  var text = String(raw).replace(/javascript:/gi, '');
+  text = escapeHtml(text);
   var fences = [];
   // 抽取代码块
   text = text.replace(/\`\`\`([a-zA-Z0-9_-]*)\n([\s\S]*?)\`\`\`/g, function (_m, lang, code) {

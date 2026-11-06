@@ -11,6 +11,7 @@ const tunnel = require('./remote/tunnel');
 
 let registered = false;
 let currentRemoteConfig = null;
+let isRestartingTunnel = false;
 
 function getRemoteConfig() {
   if (!currentRemoteConfig) currentRemoteConfig = config.readConfig();
@@ -63,7 +64,12 @@ async function stopAll() {
 
 /** 启动隧道 */
 async function startTunnelNow() {
-  const cfg = getRemoteConfig();
+  if (isRestartingTunnel) {
+    return { ok: false, error: '隧道正在重启中，请稍候…' };
+  }
+  isRestartingTunnel = true;
+  try {
+    const cfg = getRemoteConfig();
   if (!server.isRunning()) {
     const s = await startService();
     if (!s.ok) return { ok: false, error: s.error };

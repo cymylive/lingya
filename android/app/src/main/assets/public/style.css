@@ -359,13 +359,16 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 .msg.tool.done { opacity: .6; color: var(--text-dim); }
 
 .exec-status {
-  position: absolute; top: 62px; left: 50%; transform: translateX(-50%);
+  position: fixed; 
+  top: calc(var(--safe-t) + 54px); /* 动态计算：安全区 + 顶部栏高度 + 一点间距 */
+  left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px;
   padding: 6px 12px; font-size: 12px;
   background: var(--bg-2); border: 1px solid var(--tool-border);
   border-radius: 999px; color: var(--accent);
   box-shadow: var(--shadow); z-index: 20;
   animation: pulse 2s infinite;
+  pointer-events: none; /* 防止遮挡触摸事件 */
 }
 .exec-status .ico { width: 14px; height: 14px; }
 @keyframes pulse { 50% { opacity: .7; } }
