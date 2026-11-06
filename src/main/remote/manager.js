@@ -160,6 +160,18 @@ function stopStreamForProfile(pid, reason) {
   broadcast({ type: 'ai-stop', profileId: pid, reason: reason || 'user' });
 }
 
+function broadcastTokenUsage(profileId, payload) {
+  if (!remoteServer) return;
+  const p = payload || {};
+  // 灵鸦传来的 payload 包含 { context, cumulative, windowCumulative, todayCumulative, daily }
+  broadcast({ 
+    type: 'token-usage', 
+    profileId: profileId, 
+    context: p.context || 0,
+    cumulative: p.cumulative || 0
+  });
+}
+
 function broadcastAiEvent(webContentsId, kind, data) {
   const ctx = findContextByWcId(webContentsId);
   const pid = ctx ? String(ctx.profileId || '') : '';
@@ -664,4 +676,5 @@ module.exports = {
   isBusy,
   cleanupStreamState,
   readHistoryForContext,
+  broadcastTokenUsage,
 };

@@ -460,6 +460,17 @@ function handleServerMessage(msg) {
   if (t === 'profiles') return onProfiles(msg);
   if (t === 'history') return onHistory(msg);
   if (t === 'ai-start') return onAiStart(msg);
+  if (t === 'token-usage') {
+    var tb = $('token-badge');
+    var tt = $('token-text');
+    if (tb && tt && msg.context > 0) {
+      tb.hidden = false;
+      // 如果超过 1000，就用 k 表示
+      var num = msg.context;
+      tt.textContent = (num > 1000 ? (num / 1000).toFixed(1) + 'k' : num) + ' tk';
+    }
+    return;
+  }
   if (t === 'task-state') {
     if (msg.text) {
       elExec.hidden = false;

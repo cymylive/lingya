@@ -897,6 +897,17 @@ function registerIpcHandlers() {
   if (!global.__lingyaViewUsage) global.__lingyaViewUsage = new Map();
 
   ipcMain.handle('update-token-usage', async (event, payload) => {
+    // 转发给手机远程服务
+    try {
+      const remoteMgr = require('./remote/manager');
+      if (remoteMgr && typeof remoteMgr.broadcastTokenUsage === 'function') {
+        const ctx = windowState.getContextByWebContents(event.sender);
+        if (ctx) {
+          remoteMgr.broadcastTokenUsage(String(ctx.profileId || ''), payload);
+        }
+      }
+    } catch (_) {}
+
     try {
       // 常规：事件来源就是某个窗口的壳/AI 视图
       let ctx = windowState.getContextByWebContents(event.sender);

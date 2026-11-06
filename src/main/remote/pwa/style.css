@@ -227,6 +227,13 @@ html.light .login-error { background: #fef2f2; color: #991b1b; border: 1px solid
 .conn-badge.ok { color: var(--accent); }
 .conn-badge.bad .conn-dot { background: var(--danger); }
 
+.token-badge {
+  display: flex; align-items: center;
+  padding: 4px 8px; font-size: 11px;
+  background: var(--bg-3); border-radius: 4px;
+  color: var(--text-dim); font-family: monospace;
+  white-space: nowrap; flex-shrink: 0;
+}
 .profile-select {
   flex: 1; min-width: 0;
   padding: 6px 10px; font-size: 13px;
