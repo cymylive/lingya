@@ -1,3 +1,13 @@
+
+// 捕获所有前端异常并显示在登录页
+window.onerror = function(msg, url, line, col, error) {
+  var errText = '系统错误: ' + msg + ' (行 ' + line + ')';
+  console.error(errText);
+  if (typeof showLoginError === 'function') {
+    showLoginError(errText);
+  }
+  return false;
+};
 /* 灵鸦远程 · 手机端主逻辑 */
 (function () {
 'use strict';
@@ -911,16 +921,21 @@ async function doConnect() {
   }
   if (!tok) { showLoginError('请填写访问令牌'); return; }
   localStorage.setItem(LS_TOKEN, tok);
-  // 验证 /api/ping
+
   elConnect.disabled = true;
   elConnect.textContent = '连接中…';
+  
   try {
     var base = addr || location.origin;
     var pingUrl = base.replace(/\/+$/, '') + '/api/ping';
+    console.log('正在请求: ' + pingUrl);
+    
     var res = await fetch(pingUrl, {
       method: 'GET',
       headers: { 'Authorization': 'Bearer ' + tok },
+      mode: 'cors'
     });
+    
     if (res.status === 401) {
       showLoginError('令牌错误，请检查后重试');
       elConnect.disabled = false;
@@ -934,11 +949,17 @@ async function doConnect() {
       return;
     }
   } catch (err) {
-    showLoginError('无法连接到 ' + (addr || '服务器') + '。如果是局域网，请确保同一 WiFi；如果使用隧道，地址可能已变化，请检查电脑端最新地址。');
+    showLoginError('无法连接到 ' + (addr || '服务器') + '：' + (err.message || '网络错误，可能是跨域或超时'));
     elConnect.disabled = false;
     elConnect.textContent = '连接';
     return;
   }
+  
+  elConnect.disabled = false;
+  elConnect.textContent = '连接';
+  addHistory(addr || location.origin, tok);
+  enterApp();
+}
   elConnect.disabled = false;
   elConnect.textContent = '连接';
   // 保存历史记录
