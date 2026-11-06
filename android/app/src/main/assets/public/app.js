@@ -547,7 +547,7 @@ function onSessionsData(msg) {
     projects[pDir].sessions.push(s);
   });
 
-  var html = '';
+  var htmlStrStr = '';
   var pKeys = Object.keys(projects).sort();
   
   pKeys.forEach(function(pDir) {
@@ -564,29 +564,29 @@ function onSessionsData(msg) {
     var activeSessions = proj.sessions.filter(function(s) { return !s.archived; });
     var archSessions = proj.sessions.filter(function(s) { return !!s.archived; });
 
-    html += '<div class="project-group ' + openCls + '">';
-    html += '<div class="project-header">' +
+    htmlStrStr += '<div class="project-group ' + openCls + '">';
+    htmlStrStr += '<div class="project-header">' +
             '<div class="project-title">📁 ' + escapeHtml(pName) + '</div>' +
             '<div class="project-actions" data-pdir="' + escapeHtml(pDir) + '" data-arch="' + projArchived + '">⋮</div>' +
             '<div class="project-add-session" data-pdir="' + escapeHtml(pDir) + '" title="在该项目下新建会话">+</div>' +
             '<div class="todo-chevron" style="margin-left:8px;">▾</div>' +
             '</div>';
     
-    html += '<div class="project-sessions">';
-    activeSessions.forEach(function(s) { html += renderItem(s); });
+    htmlStrStr += '<div class="project-sessions">';
+    activeSessions.forEach(function(s) { htmlStrStr += renderItem(s); });
 
     if (archSessions.length > 0) {
-      html += '<div class="archived-group">' +
+      htmlStrStr += '<div class="archived-group">' +
               '<div class="archived-header">▶ 已归档 ' + archSessions.length + ' 对话</div>' +
               '<div class="archived-sessions">';
-      archSessions.forEach(function(s) { html += renderItem(s); });
-      html += '</div></div>';
+      archSessions.forEach(function(s) { htmlStrStr += renderItem(s); });
+      htmlStrStr += '</div></div>';
     }
-    html += '</div></div>';
+    htmlStrStr += '</div></div>';
   });
 
-  if (!html) html = '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px;">暂无会话</div>';
-  list.innerHTML = html;
+  if (!htmlStrStr) htmlStrStr = '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px;">暂无会话</div>';
+  list.innerHTML = htmlStrStr;
 
   list.querySelectorAll('.project-header').forEach(function(h) {
     h.addEventListener('click', function(e) {
@@ -716,7 +716,7 @@ function renderTodoPanel(todos) {
     }
 
     var done = 0;
-    var htmlStr = '';
+    var htmlStrStr = '';
     for (var i = 0; i < todos.length; i++) {
       var t = todos[i] || {};
       var status = t.status || 'pending';
@@ -727,13 +727,13 @@ function renderTodoPanel(todos) {
       if (status === 'completed') { icon = '✅'; cls = 'done'; }
       else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
       
-      htmlStr += '<div class="todo-item ' + cls + '">' +
+      htmlStrStr += '<div class="todo-item ' + cls + '">' +
               '<span class="todo-icon">' + icon + '</span>' +
               '<span>' + escapeHtml(t.content || '') + '</span>' +
               '</div>';
     }
     
-    list.innerHTML = htmlStr;
+    list.innerHTML = htmlStrStr;
     prog.textContent = done + '/' + todos.length;
     
     // 暴力解除所有隐藏属性
@@ -745,57 +745,18 @@ function renderTodoPanel(todos) {
   }
 }
 
-  var done = 0;
-  var inProgressText = '';
-  var htmlStr = '';
-  
-  for (var i = 0; i < todos.length; i++) {
-    var t = todos[i] || {};
-    var status = t.status || 'pending';
-    if (status === 'completed') done++;
-    
-    var icon = '○';
-    var cls = '';
-    if (status === 'completed') { 
-      icon = '✅'; cls = 'done'; 
-    } else if (status === 'in_progress') { 
-      icon = '⏳'; cls = 'in-progress'; 
-      if (!inProgressText) inProgressText = t.content || '';
-    }
-    
-    htmlStr += '<div class="todo-item ' + cls + '">' +
-            '<span class="todo-icon">' + icon + '</span>' +
-            '<span>' + escapeHtml(t.content || '') + '</span>' +
-            '</div>';
-  }
-  
-  list.innerHTML = htmlStr;
-  prog.textContent = done + '/' + todos.length;
-  
-  if (done === todos.length) {
-    currentText.textContent = '所有任务已完成 ✅';
-  } else if (inProgressText) {
-    currentText.textContent = '正在执行：' + inProgressText;
-  } else {
-    var firstPending = todos.find(function(x) { return x.status !== 'completed'; });
-    currentText.textContent = firstPending ? ('准备执行：' + (firstPending.content || '')) : 'AI 计划执行中';
-  }
-  
-  panel.hidden = false;
-}
-
 function onProfiles(msg) {
   profilesCache = Array.isArray(msg.profiles) ? msg.profiles : [];
   var cur = msg.currentProfileId || '';
   if (!profilesReady) profilesReady = true;
   var sel = elProfileSel;
-  var html = '<option value="">选择窗口…</option>';
+  var htmlStrStr = '<option value="">选择窗口…</option>';
   for (var i = 0; i < profilesCache.length; i++) {
     var p = profilesCache[i];
     var label = (p.name || p.id || '窗口') + (p.busy ? ' · 生成中' : '');
-    html += '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>';
+    htmlStrStr += '<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>';
   }
-  sel.innerHTML = html;
+  sel.innerHTML = htmlStrStr;
   if (cur) {
     sel.value = cur;
     currentProfileId = cur;
@@ -1055,20 +1016,20 @@ function bind() {
   function renderHistoryMenu() {
     if (!elHistoryMenu) return;
     var h = getHistory();
-    var html = '<div class="login-history-item" id="login-paste-item">' +
+    var htmlStrStr = '<div class="login-history-item" id="login-paste-item">' +
                '<div class="h-addr"><svg class="ico" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:4px;"><use href="#i-plus"/></svg>从剪贴板粘贴</div>' +
                '</div>';
     for (var i = 0; i < h.length; i++) {
       var item = h[i];
-      html += '<div class="login-history-item" data-idx="' + i + '">' +
+      htmlStrStr += '<div class="login-history-item" data-idx="' + i + '">' +
               '<div class="h-addr">' + escapeHtml(item.addr) + '</div>' +
               '<div class="h-token">' + escapeHtml(item.token.slice(0, 8)) + '...</div>' +
               '</div>';
     }
     if (h.length === 0) {
-      html += '<div style="padding:10px 12px;font-size:12px;color:var(--text-dim);text-align:center;">暂无历史记录</div>';
+      htmlStrStr += '<div style="padding:10px 12px;font-size:12px;color:var(--text-dim);text-align:center;">暂无历史记录</div>';
     }
-    elHistoryMenu.innerHTML = html;
+    elHistoryMenu.innerHTML = htmlStrStr;
 
     var pasteItem = $('login-paste-item');
     if (pasteItem) {
@@ -1373,3 +1334,4 @@ if (document.readyState === 'loading') {
 }
 
 })();
+
