@@ -416,6 +416,36 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
   pointer-events: auto;
 }
 
+/* ===== 弹窗 Modal ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-box {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  width: 100%; max-width: 320px; padding: 20px; box-shadow: var(--shadow);
+}
+.modal-title { margin: 0 0 16px; font-size: 16px; color: var(--text); }
+.modal-input {
+  width: 100%; padding: 10px; background: var(--bg-3); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 14px; margin-bottom: 20px;
+  outline: none;
+}
+.modal-input:focus { border-color: var(--accent); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.modal-actions button { padding: 8px 16px; width: auto; border-radius: 6px; cursor: pointer; border: none; font-size: 14px; }
+.modal-actions .btn-ghost { background: var(--bg-3); color: var(--text); }
+.modal-actions .btn-primary { background: var(--accent); color: #052e2b; }
+
+/* 会话项右侧菜单按钮 */
+.session-item { position: relative; }
+.session-more-btn {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); cursor: pointer; border-radius: 4px;
+}
+.session-more-btn:hover { background: var(--bg-3); color: var(--text); }
+
 /* ===== 滚动条 ===== */
 .messages::-webkit-scrollbar { width: 6px; }
 .messages::-webkit-scrollbar-track { background: transparent; }

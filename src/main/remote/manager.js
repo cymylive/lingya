@@ -465,6 +465,86 @@ function getSessionsForContext(ctx) {
   }
 }
 
+function onActionInitProject(profileId, projectName) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx) return { success: false, error: '目标窗口不存在' };
+  
+  const path = require('path');
+  const fs = require('fs');
+  const { app } = require('electron');
+  
+  // 安全过滤：去掉非法字符
+  const safeName = String(projectName).replace(/[<>:"/\\|?*]/g, '');
+  if (!safeName) return { success: false, error: '项目名包含非法字符' };
+  
+  // 默认建在电脑桌面
+  const targetDir = path.join(app.getPath('desktop'), safeName);
+  
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+  } catch (err) {
+    return { success: false, error: '创建文件夹失败: ' + err.message };
+  }
+  
+  // 调用底层 initProject
+  try {
+    const { initProject } = require('../project-context');
+    // 注意：initProject 是异步的，不用 await 阻塞 WS
+    initProject(false, ctx, targetDir, false).catch((e) => {
+      console.error('[Remote] initProject failed:', e);
+    });
+    return { success: true, dir: targetDir };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function onActionRename(profileId, sessionId, title) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx || !ctx.sessionStore) return;
+  try {
+    if (typeof ctx.sessionStore.setSessionTitleById === 'function') {
+      ctx.sessionStore.setSessionTitleById(sessionId, title);
+    }
+  } catch (_) {}
+}
+
+function onActionImport(profileId, sourceSessionId, targetSessionId) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx) return;
+  
+  const { app } = require('electron');
+  const fs = require('fs');
+  const path = require('path');
+  
+  const archivePath = path.join(app.getPath('userData'), 'conversations', String(ctx.profileId), String(sourceSessionId).replace(/[^a-zA-Z0-9_.-]/g, '_') + '.jsonl');
+  
+  try {
+    if (!fs.existsSync(archivePath)) return { success: false, error: '找不到源历史记录' };
+    const lines = fs.readFileSync(archivePath, 'utf-8').split('\n');
+    let text = '以下是历史对话上下文：\n\n';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj.role === 'user') text += '[用户] ' + obj.text + '\n';
+        else if (obj.role === 'assistant') text += '[AI] ' + obj.text + '\n';
+      } catch (_) {}
+    }
+    
+    // 发送给当前 AI 页面
+    const wc = ctx.view.webContents;
+    if (wc && !wc.isDestroyed()) {
+      wc.send('remote-user-message', { text: text });
+      return { success: true };
+    }
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 function onActionNewChat(profileId) {
   const ctx = findContextByProfileId(profileId) || getTargetContext();
   if (!ctx || !ctx.view) return;
@@ -550,6 +630,9 @@ module.exports = {
   getSessionsForContext,
   onActionNewChat,
   onActionSwitchSession,
+  onActionInitProject,
+  onActionRename,
+  onActionImport,
   findContextByWcId,
   findContextByProfileId,
   markBusy,

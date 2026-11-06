@@ -130,7 +130,7 @@
   <aside id="sidebar-drawer" class="sidebar-drawer">
     <div class="drawer-header">
       <div class="drawer-title">历史会话</div>
-      <button id="btn-new-chat" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;">+ 新建对话</button>
+      <button id="btn-new-project" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;">+ 新建项目</button>
     </div>
     <div id="session-list" class="session-list"></div>
   </aside>
@@ -163,6 +163,18 @@
       <svg class="ico"><use href="#i-stop" /></svg>
     </button>
   </footer>
+
+  <!-- 通用弹窗 -->
+  <div id="modal-overlay" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <h3 id="modal-title" class="modal-title">标题</h3>
+      <input id="modal-input" type="text" class="modal-input" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn-ghost">取消</button>
+        <button id="modal-confirm" class="btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
 
 </section>
 

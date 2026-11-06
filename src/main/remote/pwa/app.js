@@ -480,8 +480,9 @@ function onSessionsData(msg) {
     var activeCls = (s.sessionId === currentProfileId) ? ' active' : ''; // 这里简单的对比，不完全准，靠 ID 匹配更好
     
     html += '<div class="session-item" data-sid="' + escapeHtml(s.sessionId) + '" data-url="' + escapeHtml(s.url || '') + '">' +
-            '<div class="s-title">' + escapeHtml(title) + '</div>' +
+            '<div class="s-title" style="padding-right:20px;">' + escapeHtml(title) + '</div>' +
             '<div class="s-meta">' + escapeHtml(project) + '</div>' +
+            '<div class="session-more-btn" data-sid="' + escapeHtml(s.sessionId) + '">⋮</div>' +
             '</div>';
   }
   
@@ -491,6 +492,29 @@ function onSessionsData(msg) {
   var items = list.querySelectorAll('.session-item');
   for (var j = 0; j < items.length; j++) {
     (function(el) {
+      // 点击菜单按钮
+      var moreBtn = el.querySelector('.session-more-btn');
+      if (moreBtn) {
+        moreBtn.addEventListener('click', function(ev) {
+          ev.stopPropagation();
+          var sid = el.getAttribute('data-sid');
+          var action = prompt('输入操作：1 = 重命名，2 = 导入历史到当前对话');
+          if (action === '1') {
+            var newName = prompt('输入新的会话名称：');
+            if (newName) {
+              send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });
+              setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+            }
+          } else if (action === '2') {
+            send({ type: 'action-import', profileId: currentProfileId, sourceSessionId: sid });
+            alert('历史导入指令已发送，请查看当前对话。');
+            var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+            var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+          }
+        });
+      }
+
+      // 点击整个会话项
       el.addEventListener('click', function() {
         var sid = el.getAttribute('data-sid');
         var url = el.getAttribute('data-url');
@@ -879,12 +903,45 @@ function bind() {
   if (elMenu) elMenu.addEventListener('click', function() { toggleDrawer(true); });
   if (elDrawerOverlay) elDrawerOverlay.addEventListener('click', function() { toggleDrawer(false); });
 
-  if (elNewChat) {
-    elNewChat.addEventListener('click', function() {
-      send({ type: 'action-new-chat', profileId: currentProfileId });
-      toggleDrawer(false);
-      // 等页面跳转后触发刷新
-      setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
+  var elNewProject = $('btn-new-project');
+  var elModalOverlay = $('modal-overlay');
+  var elModalTitle = $('modal-title');
+  var elModalInput = $('modal-input');
+  var elModalCancel = $('modal-cancel');
+  var elModalConfirm = $('modal-confirm');
+  var modalCallback = null;
+
+  function showModal(title, placeholder, cb) {
+    elModalTitle.textContent = title;
+    elModalInput.value = '';
+    elModalInput.placeholder = placeholder || '请输入...';
+    elModalOverlay.hidden = false;
+    modalCallback = cb;
+    setTimeout(function() { elModalInput.focus(); }, 100);
+  }
+  function hideModal() { elModalOverlay.hidden = true; modalCallback = null; }
+
+  if (elModalCancel) elModalCancel.addEventListener('click', hideModal);
+  if (elModalConfirm) {
+    elModalConfirm.addEventListener('click', function() {
+      var val = elModalInput.value.trim();
+      if (val && modalCallback) modalCallback(val);
+      hideModal();
+    });
+  }
+  if (elModalInput) {
+    elModalInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') elModalConfirm.click();
+    });
+  }
+
+  if (elNewProject) {
+    elNewProject.addEventListener('click', function() {
+      showModal('新建项目', '输入项目名称（将在桌面创建）', function(name) {
+        send({ type: 'action-init-project', profileId: currentProfileId, projectName: name });
+        toggleDrawer(false);
+        setTimeout(function() { send({ type: 'refresh-history' }); }, 2000);
+      });
     });
   }
 
