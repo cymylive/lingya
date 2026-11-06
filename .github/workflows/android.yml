@@ -1,137 +1,56 @@
-<path>C:\Users\Administrator\Desktop\lingya-0.6.88-src-20261103_20261103_183031/.github/workflows/android.yml</path>
-<type>file</type>
-<content>
-1: <path>C:\Users\Administrator\Desktop\lingya-0.6.88-src-20261103_20261103_183031/.github/workflows/android.yml</path>
-2: <type>file</type>
-3: <content>
-4: 1: name: Build Android APK
-5: 2: 
-6: 3: on:
-7:   workflow_dispatch:
-8: 
-9: permissions:
-10: 24:   contents: write
-11: 25: 
-12: 26: jobs:
-13: 27:   build-apk:
-14: 28:     if: github.event_name != 'release'
-15: 29:     runs-on: ubuntu-latest
-16: 30:     steps:
-17: 31:       - name: Checkout
-18: 32:         uses: actions/checkout@v4
-19: 33: 
-20: 34:       - name: Setup Node
-21: 35:         uses: actions/setup-node@v4
-22: 36:         with:
-23: 37:           node-version: '22'
-24: 38: 
-25: 39:       - name: Setup JDK 21
-26: 40:         uses: actions/setup-java@v4
-27: 41:         with:
-28: 42:           distribution: 'temurin'
-29: 43:           java-version: '21'
-30: 44: 
-31: 45:       - name: Install dependencies
-32: 46:         run: npm ci --no-audit --no-fund
-33: 47: 
-34: 48:       - name: Sync Android version
-35: 49:         run: node scripts/sync-android-version.js
-36: 50: 
-37: 51:       - name: Diagnose Capacitor
-38: 52:         run: |
-39: 53:           echo "--- node_modules/@capacitor ---"
-40: 54:           ls -la node_modules/@capacitor/ || true
-41: 55:           echo "--- cap cli version ---"
-42: 56:           node -e "console.log(require('@capacitor/cli/package.json').version)" || true
-43: 57:           echo "--- webDir exists ---"
-44: 58:           ls -la src/main/remote/pwa/ | head -5 || true
-45: 59: 
-46: 60:       - name: Restore keystore
-47: 61:         env:
-48: 62:           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-49: 63:         run: |
-50: 64:           if [ -n "$KEYSTORE_BASE64" ]; then
-51: 65:             echo "$KEYSTORE_BASE64" | base64 -d > android/app/lingya-release.keystore
-52: 66:             echo "keystore restored from secrets"
-53: 67:           else
-54: 68:             echo "no keystore secret, using debug signing"
-55: 69:           fi
-56: 70: 
-57: 71:       - name: Sync Capacitor
-58: 72:         run: npx cap sync android 2>&1
-59: 73: 
-60: 74:       - name: Build Debug APK
-61: 75:         working-directory: android
-62: 76:         run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon --stacktrace
-63: 77: 
-64: 78:       - name: Upload Debug APK
-65: 79:         uses: actions/upload-artifact@v4
-66: 80:         with:
-67: 81:           name: lingya-android-debug
-68: 82:           path: android/app/build/outputs/apk/debug/*.apk
-69: 83:           retention-days: 30
-70: 84: 
-71: 85:   release-apk:
-72: 86:     if: github.event_name == 'release'
-73: 87:     runs-on: ubuntu-latest
-74: 88:     steps:
-75: 89:       - name: Checkout
-76: 90:         uses: actions/checkout@v4
-77: 91: 
-78: 92:       - name: Setup Node
-79: 93:         uses: actions/setup-node@v4
-80: 94:         with:
-81: 95:           node-version: '22'
-82: 96: 
-83: 97:       - name: Setup JDK 21
-84: 98:         uses: actions/setup-java@v4
-85: 99:         with:
-86: 100:           distribution: 'temurin'
-87: 101:           java-version: '21'
-88: 102: 
-89: 103:       - name: Install dependencies
-90: 104:         run: npm ci --no-audit --no-fund
-91: 105: 
-92: 106:       - name: Sync Android version
-93: 107:         run: node scripts/sync-android-version.js
-94: 108: 
-95: 109:       - name: Restore keystore
-96: 110:         env:
-97: 111:           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-98: 112:         run: |
-99: 113:           if [ -n "$KEYSTORE_BASE64" ]; then
-100: 114:             echo "$KEYSTORE_BASE64" | base64 -d > android/app/lingya-release.keystore
-101: 115:             echo "keystore restored from secrets"
-102: 116:           else
-103: 117:             echo "no keystore secret, using debug signing"
-104: 118:           fi
-105: 119: 
-106: 120:       - name: Sync Capacitor
-107: 121:         run: npx cap sync android 2>&1
-108: 122: 
-109: 123:       - name: Build Release APK
-110: 124:         working-directory: android
-111: 125:         run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
-112: 126: 
-113: 127:       - name: Upload Release APK
-114: 128:         uses: actions/upload-artifact@v4
-115: 129:         with:
-116: 130:           name: lingya-android-release
-117: 131:           path: android/app/build/outputs/apk/release/*.apk
-118: 132:           retention-days: 90
-119: 133: 
-120: 134:       - name: Upload to Release
-121: 135:         uses: softprops/action-gh-release@v2
-122: 136:         with:
-123: 137:           files: android/app/build/outputs/apk/release/*.apk
-124: 138:           tag_name: ${{ github.event.release.tag_name }}
-125: 139:           fail_on_unmatched_files: false
-126: 140:         env:
-127: 141:           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-128: 142: 
-129: 
-130: (End of file - total 142 lines)
-131: </content>
+name: Build Android APK
 
-(End of file - total 131 lines)
-</content>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Sync Android version
+        run: node scripts/sync-android-version.js
+
+      - name: Restore keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/lingya-release.keystore
+            echo "keystore restored from secrets"
+          else
+            echo "no keystore secret, using debug signing"
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build Debug APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingya-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
