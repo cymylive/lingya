@@ -310,17 +310,31 @@ function readHistoryForContext(ctx, limit) {
     if (!pid) return [];
     let sid = '';
     try {
-      if (ctx.sessionStore && ctx.sessionStore.state) {
-        sid = String(ctx.sessionStore.state.currentSessionId || '');
+      if (ctx.sessionStore) {
+        if (ctx.sessionStore.state && ctx.sessionStore.state.currentSessionId) {
+          sid = String(ctx.sessionStore.state.currentSessionId);
+        } else if (ctx.sessionStore.currentSessionId) {
+          sid = String(ctx.sessionStore.currentSessionId);
+        }
       }
     } catch (_) {}
-    if (!sid) return [];
+    
+    if (!sid) {
+      console.log('[Remote] readHistoryForContext: 没有找到当前 sessionId');
+      return [];
+    }
+    
     let userDataDir = '';
     try {
-      const dd = require('../data-dir');
-      if (dd && typeof dd.resolveDataDir === 'function') userDataDir = dd.resolveDataDir();
+      // 最稳妥的方式是直接通过 Electron 拿到当前实例的 userData 路径
+      const { app } = require('electron');
+      userDataDir = app ? app.getPath('userData') : '';
     } catch (_) {}
-    if (!userDataDir) return [];
+    
+    if (!userDataDir) {
+      console.log('[Remote] readHistoryForContext: 没有找到 userData 路径');
+      return [];
+    }
     const archive = createConversationArchive(pid, userDataDir);
     const r = archive.readEntries(sid);
     if (!r || !r.success || !Array.isArray(r.entries)) return [];
