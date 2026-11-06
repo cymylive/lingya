@@ -21,6 +21,34 @@ const SYSTEM_TAGS = [
   '插入记忆', '插入全部记忆', '插入技能', '生成文档', '沉浸式交流', '手动解析',
 ];
 
+// 附件消息的 tag 前缀：用户消息以 .md 附件形式发送时，tag 形如「附件:笔记-053800.md」
+// 导出时据此渲染「（附件：xxx）」前缀，正文即附件全文。
+const ATTACHMENT_TAG_PREFIX = '附件:';
+
+/** 判断 tag 是否为附件消息 */
+function isAttachmentTag(tag) {
+  return typeof tag === 'string' && tag.indexOf(ATTACHMENT_TAG_PREFIX) === 0;
+}
+
+/** 从附件 tag 中取出文件名 */
+function getAttachmentName(tag) {
+  if (!isAttachmentTag(tag)) return '';
+  return tag.slice(ATTACHMENT_TAG_PREFIX.length);
+}
+
+/**
+ * 判断一段用户文本是否为「附件引导语」——即 upload-hint 生成的那句提示。
+ * 引导语特征：短（<200 字符）、含 .md 文件名、不含换行。
+ * 用于跨来源去重：附件全文已由来源2 记录，来源3 从请求体提取到的引导语应丢弃。
+ */
+function isUploadHintText(text) {
+  if (!text) return false;
+  const s = String(text);
+  if (s.length > 200) return false;
+  if (s.indexOf(String.fromCharCode(10)) !== -1) return false;
+  return /.md\b/i.test(s);
+}
+
 /** 工具结果回传/JS 汇总类消息：tag 以这些前缀开头，同样过滤 */
 const SYSTEM_TAG_PREFIXES = ['工具=', 'JS汇总', '工具结果'];
 
@@ -86,6 +114,12 @@ function buildMarkdown(entries, meta, opts) {
     const role = e.role === 'user' ? '用户' : 'AI';
     lines.push('## ' + role + (e.ts ? ' · ' + formatTime(e.ts) : ''));
     lines.push('');
+    // 附件消息：在正文前加一行元信息，让导出能区分「输入框直接发」与「附件上传」
+    const attName = e.attachmentName || getAttachmentName(e.tag);
+    if (attName) {
+      lines.push('> 附件：' + attName);
+      lines.push('');
+    }
     let text = e.text || '';
     if (!o.includeToolBlocks) text = stripToolBlocks(text);
     lines.push(text || '（空）');
@@ -107,6 +141,90 @@ const MAX_ENTRIES = 2000;   // 上限保护，避免超长会话撑爆内存
 // 用「角色 + 时间窗 + 前缀/包含」三重判定。
 const DEDUP_WINDOW_MS = 5000;
 const recentUserMsgs = [];   // [{ text, at }]
+
+// ===== 本地存档持久化状态 =====
+let currentSessionId = null;
+let persistTimer = null;
+let pendingToPersist = [];   // [{ entry, retries }]
+const PERSIST_DEBOUNCE_MS = 1000;
+const PERSIST_MAX_RETRIES = 3;
+
+function getCurrentSessionId() { return currentSessionId; }
+function __testSetSessionId(sid) { currentSessionId = sid || null; }
+
+/** 解析当前会话 ID：优先缓存值，其次从 URL 实时提取 */
+function _resolveSessionId() {
+  if (currentSessionId) return currentSessionId;
+  try {
+    const provider = require('../../providers').getProviderByUrl(window.location.href);
+    if (provider && typeof provider.extractSessionId === 'function') {
+      return provider.extractSessionId(window.location.href) || null;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/** 安排一次节流写盘（1s 内的多次 addEntry 合并成一批） */
+function schedulePersist() {
+  if (persistTimer) return;
+  persistTimer = setTimeout(_flushPersist, PERSIST_DEBOUNCE_MS);
+  if (persistTimer && typeof persistTimer.unref === 'function') persistTimer.unref();
+}
+
+/** 把 pending 队列写入存档；失败的条目最多重试 3 次。
+ *  每条 pending 自带 sessionId（入队时快照），避免会话切换后串写。 */
+async function _flushPersist() {
+  persistTimer = null;
+  if (pendingToPersist.length === 0) return;
+  const batch = pendingToPersist;
+  pendingToPersist = [];
+  const retryQueue = [];
+  for (const item of batch) {
+    const sid = item.sessionId || _resolveSessionId();
+    if (!sid) continue;   // 无会话 id 的条目丢弃（内存 entries 仍保留）
+    let ok = false;
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI
+          && typeof window.electronAPI.conversationArchiveAppend === 'function') {
+        const r = await window.electronAPI.conversationArchiveAppend(sid, item.entry);
+        ok = !!(r && r.success);
+      }
+    } catch (_) { ok = false; }
+    if (!ok && item.retries < PERSIST_MAX_RETRIES) {
+      retryQueue.push({ entry: item.entry, retries: item.retries + 1, sessionId: sid });
+    }
+  }
+  if (retryQueue.length > 0) {
+    pendingToPersist = retryQueue.concat(pendingToPersist);
+    schedulePersist();
+  }
+}
+
+/**
+ * 从本地存档加载某会话的历史，替换内存 entries。
+ * @param {string} sessionId
+ * @returns {Promise<{loaded:boolean, count:number}>}
+ */
+async function loadFromArchive(sessionId) {
+  if (!sessionId) return { loaded: false, count: 0 };
+  try {
+    if (typeof window === 'undefined' || !window.electronAPI
+        || typeof window.electronAPI.conversationArchiveRead !== 'function') {
+      return { loaded: false, count: 0 };
+    }
+    const r = await window.electronAPI.conversationArchiveRead(sessionId);
+    if (!r || !r.success || !Array.isArray(r.entries) || r.entries.length === 0) {
+      return { loaded: false, count: 0 };
+    }
+    entries = r.entries.map(e => ({
+      role: e.role || '', text: e.text || '', ts: e.ts || Date.now(), tag: e.tag || '',
+      attachmentName: e.attachmentName || '',
+    }));
+    return { loaded: true, count: entries.length };
+  } catch (_) {
+    return { loaded: false, count: 0 };
+  }
+}
 
 function isDuplicateUserMessage(t) {
   const now = Date.now();
@@ -130,11 +248,69 @@ function rememberUserMessage(t) {
   if (recentUserMsgs.length > 20) recentUserMsgs.shift();
 }
 
-/** 追加一条记录（幂等去重：连续相同 + 跨来源用户消息去重） */
-function addEntry(role, text, tag) {
+// 最近记录过的附件名：用于过滤来源3 从请求体提取到的引导语
+const recentAttachments = [];
+
+function rememberAttachment(name) {
+  if (!name) return;
+  recentAttachments.push({ name: name, at: Date.now() });
+  if (recentAttachments.length > 20) recentAttachments.shift();
+}
+
+/**
+ * 提前登记待上传附件名（2026-11-06 修复竞态 #1）。
+ * 场景：来源3（请求体 hook）可能先于 onUserMessageSentCb 到达，
+ * 若不提前登记，引导语会先被记录为一条 user 消息，随后来源2 的全文
+ * 又记一条，导出时出现「引导语」+「全文」两条重复记录。
+ * 调用方：chat-input.js 在上传成功后立即调用本函数。
+ */
+function notePendingAttachment(name) {
+  rememberAttachment(name);
+}
+
+/**
+ * 检查一段短文本是否为刚上传附件的引导语。
+ * upload-hint 生成的引导语含文件名，且文件名在 recentAttachments 里。
+ */
+function matchesRecentAttachment(text) {
+  if (!isUploadHintText(text)) return false;
+  const now = Date.now();
+  for (let i = recentAttachments.length - 1; i >= 0; i--) {
+    if (now - recentAttachments[i].at > 60000) { recentAttachments.splice(i, 1); continue; }
+    if (text.indexOf(recentAttachments[i].name) !== -1) return true;
+  }
+  return false;
+}
+
+/**
+ * 追加一条记录（幂等去重：连续相同 + 跨来源用户消息去重）
+ * @param {string} role
+ * @param {string} text
+ * @param {string} [tag]
+ * @param {{attachment?:{name:string}}} [extra] 附件消息附加信息
+ */
+function addEntry(role, text, tag, extra) {
   if (!text) return;
-  const t = String(text).trim();
+  // 2026-11-05: 写入本地记录前还原占位符，让导出/存档/会话历史都是真词
+  let __raw = text;
+  try {
+    const { unredactText } = require('./redaction-filter');
+    if (unredactText) __raw = unredactText(text);
+  } catch (_) {}
+  const t = String(__raw).trim();
   if (!t) return;
+  // 附件消息：tag 改为「附件:<name>」，并登记文件名供后续引导语过滤
+  let finalTag = tag || '';
+  let attachmentName = '';
+  if (extra && extra.attachment && extra.attachment.name) {
+    attachmentName = String(extra.attachment.name);
+    finalTag = ATTACHMENT_TAG_PREFIX + attachmentName;
+    rememberAttachment(attachmentName);
+  }
+  // 来源3 引导语过滤：短文本命中刚上传的附件名，说明全文已由来源2 记录过，丢弃
+  if (role === 'user' && !attachmentName && matchesRecentAttachment(t)) {
+    return;
+  }
   // 连续相同内容去重
   const last = entries[entries.length - 1];
   if (last && last.role === role && last.text === t) return;
@@ -143,8 +319,13 @@ function addEntry(role, text, tag) {
     if (isDuplicateUserMessage(t)) return;
     rememberUserMessage(t);
   }
-  entries.push({ role: role, text: t, ts: Date.now(), tag: tag || '' });
+  const _entry = { role: role, text: t, ts: Date.now(), tag: finalTag };
+  if (attachmentName) _entry.attachmentName = attachmentName;
+  entries.push(_entry);
   if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
+  // 追加到持久化队列（节流写盘）；记录入队时的 sessionId，防止切会话后串写
+  pendingToPersist.push({ entry: _entry, retries: 0, sessionId: _resolveSessionId() });
+  schedulePersist();
 }
 
 function getEntries() { return entries.slice(); }
@@ -185,9 +366,9 @@ function initConversationLog() {
   // 2. LingYa 发送的用户消息（过滤系统消息）
   try {
     const { onUserMessageSent } = require('./chat-input');
-    onUserMessageSent(function (text, tag) {
+    onUserMessageSent(function (text, tag, extra) {
       if (shouldSkipTag(tag)) return;
-      addEntry('user', text, tag);
+      addEntry('user', text, tag, extra);
     });
   } catch (e) { console.error('[LingYa][对话记录] 订阅用户消息失败:', e && e.message); }
 
@@ -202,6 +383,33 @@ function initConversationLog() {
     }
   } catch (e) { console.error('[LingYa][对话记录] 订阅手动消息失败:', e && e.message); }
 
+  // 4. 会话切换监听：URL 的 sessionId 变化时，从本地存档加载该会话的历史
+  try {
+    let lastWatchedSid = _resolveSessionId();
+    currentSessionId = lastWatchedSid;
+    const watchTimer = setInterval(async function () {
+      let sid = null;
+      try {
+        const provider = require('../../providers').getProviderByUrl(window.location.href);
+        if (provider && typeof provider.extractSessionId === 'function') {
+          sid = provider.extractSessionId(window.location.href) || null;
+        }
+      } catch (_) {}
+      if (sid === lastWatchedSid) return;
+      lastWatchedSid = sid;
+      currentSessionId = sid;
+      // 切会话：先落盘旧队列，再清内存，再从存档恢复新会话历史
+      try { await _flushPersist(); } catch (_) {}
+      entries = [];
+      recentUserMsgs.length = 0;
+      if (sid) {
+        const r = await loadFromArchive(sid);
+        if (r.loaded) console.log('[LingYa][对话记录] 从存档恢复 ' + r.count + ' 条历史, session=' + sid.slice(0, 8));
+      }
+    }, 1000);
+    if (watchTimer && typeof watchTimer.unref === 'function') watchTimer.unref();
+  } catch (e) { console.error('[LingYa][对话记录] 会话切换监听启动失败:', e && e.message); }
+
   console.log('[LingYa][对话记录] 已启动');
 }
 
@@ -210,6 +418,9 @@ module.exports = {
   buildMarkdown, stripToolBlocks, shouldSkipTag, formatTime,
   SYSTEM_TAGS, SYSTEM_TAG_PREFIXES, MAX_ENTRIES, DEDUP_WINDOW_MS,
   isDuplicateUserMessage,
+  ATTACHMENT_TAG_PREFIX, isAttachmentTag, getAttachmentName, isUploadHintText,
   // 运行时
-  initConversationLog, addEntry, getEntries, clearEntries, getCount, exportMarkdown,
+  initConversationLog, addEntry, getEntries, clearEntries, getCount, exportMarkdown, notePendingAttachment,
+  // 本地存档
+  loadFromArchive, getCurrentSessionId, __testSetSessionId,
 };

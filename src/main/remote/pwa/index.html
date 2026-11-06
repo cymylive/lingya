@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>灵鸦远程</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/mobile-pet.css">
+</head>
+<body>
+<div id="login">
+  <h1>灵鸦远程</h1>
+  <p class="hint">输入桌面端显示的访问令牌</p>
+  <input id="token" type="password" placeholder="访问令牌" autocomplete="off">
+  <input id="addr" type="text" placeholder="电脑地址（APK 内需填）" autocomplete="off">
+  <button id="loginBtn">连接</button>
+  <div id="loginErr" class="err"></div>
+</div>
+<div id="app" hidden>
+  <header id="bar">
+    <select id="profileSel"></select>
+    <span id="conn" class="conn">已连接</span>
+  </header>
+  <div id="offline" class="offline" hidden>网络已断开，正在重连…</div>
+  <div id="stream"></div>
+  <div id="toolChip" class="chip" hidden></div>
+  <footer id="composer">
+    <button id="stopBtn" hidden>停止</button>
+    <textarea id="input" rows="1" placeholder="发消息…"></textarea>
+    <button id="sendBtn">发送</button>
+  </footer>
+</div>
+<script src="/app.js"></script><script src="/mobile-pet.js"></script>
+</body>
+</html>

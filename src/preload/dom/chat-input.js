@@ -317,6 +317,7 @@ function onUserMessageSent(cb) {
   onUserMessageSentCb = cb;
   return () => { if (onUserMessageSentCb === cb) onUserMessageSentCb = null; };
 }
+// 回调签名：(text, tag, extra) —— extra 可选，长文本附件时为 { attachment: { name } }
 
 // 【Harness 2026-11-02】消息已投递监听器
 // 与 onUserMessageSent 的区别：后者只对「非 auto 的用户消息」触发；
@@ -438,6 +439,15 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
       }
       if (uploaded) {
         console.log('[LingYa] 长消息（' + msgLen + ' 字符）→ 已上传附件 ' + uploadedName);
+        // 【2026-11-06 竞态修复 #1】上传成功后立即登记附件名，
+        // 确保来源3（请求体 hook 上报的引导语）在到达时能被过滤，
+        // 不依赖 onUserMessageSentCb 的触发时机。
+        try {
+          const cLog = require('./conversation-log');
+          if (cLog && typeof cLog.notePendingAttachment === 'function') {
+            cLog.notePendingAttachment(uploadedName);
+          }
+        } catch (_) { /* 记录模块不可用时忽略，不影响发送 */ }
       }
     } catch (err) {
       console.warn('[LingYa] 文件上传异常，回退文本发送:', err && err.message);
@@ -554,12 +564,16 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     });
   } catch (_) { /* 记录失败不影响发送 */ }
 
+  // 2026-11-05: 延迟等待期间标记 queued，避免被状态机 tick 判为「卡死」自动重置。
+  // 根因：sendDelay 最长 40s，RESPONDED 阈值 30s，必然撞超时。
+  try { require('./task-state').setQueued(true); } catch (_) {}
   pendingSendTimer = setTimeout(async function() {
     // 【Harness 2026-11-02】定时器已触发，清空句柄（后续 cancelPendingSend 不再管它）
     pendingSendTimer = null;
     // 延迟期间用户点了停止：取消本次发送
     if (state.stopped) {
       console.log('[LingYa] 已停止，取消本次延迟发送');
+      try { require('./task-state').setQueued(false); } catch (_) {}
       return;
     }
     console.log('[LingYa] 等待结束，开始触发发送');
@@ -577,8 +591,11 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
     }
     if (!sent) {
       console.error('[LingYa] 发送失败，跳过状态记录（' + (tag || '') + '）');
+      try { require('./task-state').setQueued(false); } catch (_) {}
       return;
     }
+    // 2026-11-05: 发送已成功，清除 queued 标记
+    try { require('./task-state').setQueued(false); } catch (_) {}
     // 记录本次请求发出时刻，供 intercept-observer 计算思考耗时
     state.lastRequestStartAt = Date.now();
     // 状态机：已发出，等 AI 开始生成（intercept-observer 收到 lingya-ai-start 后会切 AWAITING）
@@ -627,7 +644,10 @@ async function doSendToChat(msg, tag, fixedDelay, afterSent, opts) {
         state.userTaskStarted = true;
       } catch (_) {}
     }
-    if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag); } catch (_) {} }
+    // 第 3 参数 extra：长文本转附件时传 { attachment: { name } }，
+    // 让 conversation-log 把「输入框引导语」升级为「附件全文」条目
+    const _extra = uploaded ? { attachment: { name: uploadedName } } : null;
+    if (onUserMessageSentCb) { try { onUserMessageSentCb(msg, tag, _extra); } catch (_) {} }
     // 【Harness 2026-11-02】派发「消息已投递」（含系统消息）
     try {
       emitMessageDelivered({ tag: String(tag || ''), isSystem: !!(opts && opts.auto) });
@@ -1246,7 +1266,73 @@ ipcRenderer.on('lingya-set-setting', (_event, payload) => {
 ipcRenderer.on('lingya-export-session-md', async (_event, { sessionId, title }) => {
   try {
     if (!sessionId) return;
-    // 从 IndexedDB 读取该会话消息
+    // 【存档优先】先尝试从 LingYa 本地存档读取（不依赖平台侧是否保留会话）
+    let archiveMsgs = null;
+    try {
+      const { resolveExportEntries } = require('./export-source');
+      const ar = await resolveExportEntries(sessionId, {
+        readArchive: async (sid) => {
+          if (typeof window === 'undefined' || !window.electronAPI
+              || typeof window.electronAPI.conversationArchiveRead !== 'function') {
+            return { success: false, entries: [] };
+          }
+          return window.electronAPI.conversationArchiveRead(sid);
+        },
+        readIndexedDB: async () => [],   // 先不读 IDB，IDB 留作后面的回退
+      });
+      if (ar.source === 'archive' && Array.isArray(ar.entries) && ar.entries.length > 0) {
+        archiveMsgs = ar.entries;
+      }
+    } catch (_) {}
+    if (archiveMsgs && archiveMsgs.length > 0) {
+      // 用存档直接构建 Markdown
+      const pad2 = n => String(n).padStart(2, '0');
+      const now2 = new Date();
+      const fmt2 = ts => {
+        const d = new Date(typeof ts === 'number' ? ts : Date.now());
+        if (!isFinite(d.getTime())) return '';
+        return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+      };
+      const lines2 = [];
+      lines2.push('# ' + (title || sessionId));
+      lines2.push('');
+      lines2.push('- 会话 ID：' + sessionId);
+      lines2.push('- 导出时间：' + fmt2(Date.now()));
+      lines2.push('- 消息数：' + archiveMsgs.length);
+      lines2.push('- 数据源：LingYa 本地存档');
+      lines2.push('');
+      lines2.push('---');
+      lines2.push('');
+      for (const m of archiveMsgs) {
+        const role = String(m.role || '').toUpperCase();
+        const label = role === 'USER' ? '用户' : (role === 'ASSISTANT' ? 'AI' : role || '未知');
+        lines2.push('## ' + label + (m.ts ? ' · ' + fmt2(m.ts) : ''));
+        lines2.push('');
+        lines2.push(m.text || '（空）');
+        lines2.push('');
+      }
+      const md2 = lines2.join('\n');
+      const stamp2 = now2.getFullYear() + pad2(now2.getMonth()+1) + pad2(now2.getDate()) + '-' + pad2(now2.getHours()) + pad2(now2.getMinutes());
+      const sanitize2 = (s) => {
+        let out = String(s || '');
+        out = out.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
+        out = out.replace(/[. ]+$/g, '');
+        if (out.length > 80) out = out.slice(0, 80).trim();
+        return out;
+      };
+      const fn2 = sanitize2(title || sessionId).replace(/ - DeepSeek$/, '') + '_' + stamp2 + '.md';
+      const r2 = await ipcRenderer.invoke('conversation-export-md', { markdown: md2, suggestedName: fn2 });
+      try {
+        const { showToast } = require('../overlay/ui');
+        if (showToast) {
+          if (r2 && r2.success) showToast('已从本地存档导出：' + (r2.path || fn2), 4000);
+          else if (r2 && r2.canceled) { /* 用户取消 */ }
+          else showToast('导出失败：' + ((r2 && r2.error) || '未知错误'), 5000);
+        }
+      } catch (_) {}
+      return;
+    }
+    // 存档没有 → 回退读 IndexedDB（老会话兼容路径）
     const msgs = await new Promise((resolve) => {
       let req;
       try { req = indexedDB.open('deepseek-chat'); } catch (e) { resolve([]); return; }
@@ -1272,7 +1358,7 @@ ipcRenderer.on('lingya-export-session-md', async (_event, { sessionId, title }) 
       console.warn('[LingYa][export] IndexedDB 中无该会话消息, sessionId=' + sessionId);
       try {
         const { showToast } = require('../overlay/ui');
-        if (showToast) showToast('该会话在 IndexedDB 中无历史消息（可能从没在 DeepSeek 里打开过）', 5000);
+        if (showToast) showToast('该会话暂无对话内容', 5000);
       } catch (_) {}
       return;
     }
@@ -1422,12 +1508,12 @@ ipcRenderer.on('lingya-run-action', async (_event, payload) => {
       // 让 AI 回顾完整上下文，用 nameConversation 给本对话重新命名
       const prompt = [
         '请回顾本次对话的**完整上下文**（包括所有历史消息与工具执行结果），提炼这次对话真正在做的核心工作，',
-        '然后**只调用一次** nameConversation(title) 工具，给本次对话起一个准确的中文标题（≤20 字）。',
+        '然后**只调用一次** nameConversation(title) 工具，生成一个准确的中文标题建议（≤20 字）。',
         '',
         '要求：',
         '1. 标题要体现对话的**实际核心内容**，不要用"你好""继续"这类开场词，也不要用最后一条消息的主题代替整体。',
         '2. 直接调用工具，不要输出计划、不要解释、不要做任何其他操作。',
-        '3. 调用完只回复一句"已重命名为：<标题>"即可。',
+        '3. 注意：这个工具**只产出建议标题，不会自动改会话名**，由用户手动应用。调用完只回复一句"建议标题：<标题>"即可，不要说"已重命名"。',
       ].join('\n');
       await sendToChat(prompt, 'AI重命名', 300);
     } else if (a === 'stop') {

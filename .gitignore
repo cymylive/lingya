@@ -102,3 +102,16 @@ __pycache__/
 
 # Local redaction rules (contains private project descriptions)
 lingya-redaction.json
+
+# 一次性调试脚本（根目录探针）
+dbg-redaction.js
+scan-tokens.js
+scan5.js
+ver-redaction.js
+ver2.js
+
+# 测试残留产物（红脱敏往返测试临时文件）
+test/main/*.txt
+
+# cloudflared 二进制（55MB，按 resources/cloudflared/README.txt 自行下载）
+resources/cloudflared/*.exe

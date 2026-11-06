@@ -50,11 +50,16 @@ test('extractJsToolBlocks 提取 lingya 块', () => {
   assert.deepStrictEqual(blocks, ['await read("a.txt")']);
 });
 
-test('extractJsToolBlocks js 块仅当只有代码块', () => {
+test('extractJsToolBlocks js 块：纯代码块识别 + 正文混合也识别（2026-11-05 放宽）', () => {
+  // 纯 js 代码块 + 工具调用 → 识别（原逻辑）
   const js = '```js\nawait bash("echo")\n```';
   assert.deepStrictEqual(extractJsToolBlocks(js), ['await bash("echo")']);
+  // 正文 + js 代码块 + 工具调用 → 修复后也识别（修复「AI 说『我来查一下』+ 代码块被漏掉」）
   const mixed = '说明\n```js\nawait bash("echo")\n```';
-  assert.deepStrictEqual(extractJsToolBlocks(mixed), []);
+  assert.deepStrictEqual(extractJsToolBlocks(mixed), ['await bash("echo")']);
+  // 正文 + js 代码块 + 纯示例代码（不以工具调用开头）→ 仍不识别，避免误伤文档示例
+  const sample = '示例\n```js\nconst x = 1;\nconsole.log(x);\n```';
+  assert.deepStrictEqual(extractJsToolBlocks(sample), []);
 });
 
 test('extractJsToolBlocks 忽略普通 js', () => {

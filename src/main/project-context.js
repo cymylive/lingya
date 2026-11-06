@@ -269,6 +269,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   // 获取工具使用指导（section 机制，仿 dsh），同样按 agent 过滤
   const promptSections = toolRegistry.getFormattedPromptSections(deniedTools);
 
+
   stepLog('工具描述生成完成');
   // 确保已启用的 MCP server 已连接（8 秒超时，避免阻塞初始化）
   try {
@@ -365,32 +366,80 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
   //   console.error('[LingYa] 构建技能注入块失败:', err.message);
   // }
 
-  // Superpowers 开发流程注入块（强制路由 + 13 个方法论 skill 全文路径）
-  // 内置在 src/prompt/superpowers/，与项目无关，任何项目都注入。
-  // 作用等同于 Claude Code 的 SessionStart hook：让 AI 在动手前必须读对应 skill。
+  // Superpowers 开发流程注入块
+  // 2026-11-06：router.md 已删除（流程入口统一到 Spec Kit），以下读取逻辑失效，仅保留变量声明。
+  // 实际注入内容由下方「方法论手册索引注入块」生成。
   let superpowersSection = '';
+
+  // 方法论手册索引注入块（2026-11-06 起）
+  // 流程入口已统一到 Spec Kit；Superpowers 的 router.md 已删除，只保留 skills/ 下的方法论手册。
+  // 此处注入索引表（名称 + 简介 + 绝对路径），AI 需要时用 Read 工具按需读取全文，避免占用注入体积。
   try {
-    const spRoot = path.join(PROMPT_DIR, 'superpowers');
-    const routerPath = path.join(spRoot, 'router.md');
-    if (fs.existsSync(routerPath)) {
-      let routerText = fs.readFileSync(routerPath, 'utf-8');
-      // 两个占位符语义不同，不能混用：
-      //   {{SKILL_ROOT}} → skills 目录（用于 sp-tools.js 等 skill 内部脚本路径）
-      //   <程序目录>     → 程序根目录（router.md 里拼的是 <程序目录>/src/prompt/superpowers/skills/...）
-      // 曾把 <程序目录> 也替换成 skillRoot，导致路径重复成
-      //   .../superpowers/skills/src/prompt/superpowers/skills/<name>/SKILL.md
-      const skillRoot = path.join(spRoot, 'skills').replace(/\\/g, '/');
-      const appRoot = path.join(__dirname, '..', '..').replace(/\\/g, '/');
-      routerText = routerText.replace(/\{\{SKILL_ROOT\}\}/g, skillRoot);
-      // 尖括号写法 <SKILL_ROOT> / <plan> / <N> / <cmd> 里，只有 <SKILL_ROOT> 是路径占位，
-      // 其余是命令参数说明，必须原样保留。只替换 <SKILL_ROOT> 这一种。
-      routerText = routerText.replace(/<SKILL_ROOT>/g, skillRoot);
-      routerText = routerText.replace(/<程序目录>/g, appRoot);
-      superpowersSection = '---\n' + routerText;
-      console.log('[LingYa] Superpowers 注入块长度:', superpowersSection.length, '| skill 根目录:', skillRoot);
+    const spSkillsDir = path.join(PROMPT_DIR, 'superpowers', 'skills');
+    if (fs.existsSync(spSkillsDir)) {
+      const idxEntries = [];
+      const subDirs = fs.readdirSync(spSkillsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort();
+      for (const nm of subDirs) {
+        const mdP = path.join(spSkillsDir, nm, 'SKILL.md');
+        if (!fs.existsSync(mdP)) continue;
+        let dsc = '';
+        try {
+          const headTxt = fs.readFileSync(mdP, 'utf-8').slice(0, 800);
+          const dm = headTxt.match(/^---[\s\S]*?description:\s*(.+?)\s*$/m);
+          if (dm) dsc = String(dm[1] || '').replace(/^["']|["']$/g, '').trim();
+        } catch (_) {}
+        idxEntries.push('- ' + nm + (dsc ? ' — ' + dsc : '') + '\n  路径：' + mdP.replace(/\\/g, '/'));
+      }
+      if (idxEntries.length > 0) {
+        superpowersSection = '\n## 方法论手册索引（Superpowers Skills）\n\n' +
+          '以下是可查阅的方法论手册。**流程编排见上文 Spec Kit，此处只提供「具体怎么做」的细节。**\n' +
+          '需要时用 Read 工具读对应路径的 SKILL.md 全文。\n\n' +
+          idxEntries.join('\n\n') + '\n';
+        console.log('[灵鸦] 方法论索引注入块长度:', superpowersSection.length, '| 条目数:', idxEntries.length);
+      }
     }
   } catch (err) {
-    console.error('[LingYa] 构建 Superpowers 注入块失败:', err.message);
+    console.error('[灵鸦] 构建方法论索引注入块失败:', err.message);
+  }
+
+  // ===== Spec Kit 开发规范注入块 =====
+  // 对齐 spec-kit（https://github.com/github/spec-kit）的 SDD 流程：
+  //   specify（写做什么）→ clarify（澄清）→ plan（写怎么做）→ tasks（拆任务）→ 门禁批准 → implement
+  // 与 Superpowers 叠加：Spec Kit 管「做什么」，Superpowers 管「怎么做」。
+  // 内置在 src/prompt/speckit/，任何项目都注入流程；项目自身有 .specify/memory/constitution.md
+  // 时在 router 里提示 AI 读该文件（尊重项目自己的宪法，不注入灵鸦自己的）。
+  let speckitSection = '';
+  try {
+    const skRoot = path.join(PROMPT_DIR, 'speckit');
+    const skRouter = path.join(skRoot, 'router.md');
+    if (fs.existsSync(skRouter)) {
+      let skText = fs.readFileSync(skRouter, 'utf-8');
+      // 占位符：把内置 speckit 目录路径注入，供 AI 读写模板/命令文件
+      const skPath = skRoot.replace(/\\/g, '/');
+      skText = skText.replace(/\{\{SPECKIT_ROOT\}\}/g, skPath);
+      // 当前项目是否有自己的 .specify/ 与宪法
+      let hasSpecify = false;
+      let hasConstitution = false;
+      try {
+        hasSpecify = fs.existsSync(path.join(selectedDir, '.specify'));
+        hasConstitution = fs.existsSync(path.join(selectedDir, '.specify', 'memory', 'constitution.md'));
+      } catch (_) {}
+      let projectNote = '';
+      if (hasSpecify) {
+        projectNote = '\n\n## 当前项目 Spec Kit 状态\n\n- 项目已初始化 .specify/ 目录' +
+          (hasConstitution ? '\n- 宪法存在：'.concat('.specify/memory/constitution.md') : '\n- 宪法不存在（建议在 specify init 阶段创建）');
+      } else {
+        projectNote = '\n\n## 当前项目 Spec Kit 状态\n\n- 项目**未**初始化 .specify/ 目录' +
+          '\n- 首个 L2+ 开发任务开始时，先执行「specify init」阶段：用内置模板创建 .specify/ 结构与宪法';
+      }
+      speckitSection = '---\n' + skText + projectNote;
+      console.log('[LingYa] Spec Kit 注入块长度:', speckitSection.length, '| 项目已初始化:', hasSpecify);
+    }
+  } catch (err) {
+    console.error('[LingYa] 构建 Spec Kit 注入块失败:', err.message);
   }
 
   // ===== Purge 破甲注入块 =====
@@ -583,6 +632,7 @@ async function initProject(skipPrompt = false, windowContext = null, presetDir =
     '{{MEMORY_SECTION}}': memorySection,
     '{{SKILL_SECTION}}': skillSection,
     '{{SUPERPOWERS_SECTION}}': superpowersSection,
+    '{{SPECKIT_SECTION}}': speckitSection,
     // Purge 在前：先解除 Harness 削弱，再声明 CTF 场景
     '{{CTF_SECTION}}': (purgeSection ? purgeSection + '\n\n' : '') + ctfSection,
     '{{COMPLIANCE_SECTION}}': complianceSection,

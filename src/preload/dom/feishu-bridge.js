@@ -29,6 +29,13 @@ function report(payload) {
   try {
     const api = window.electronAPI;
     if (!api || typeof api.feishuReport !== 'function') return;
+    // 2026-11-05: 上报前还原占位符，让用户收到的推送是真词
+    try {
+      const { unredactText } = require('./redaction-filter');
+      if (unredactText && payload && typeof payload.text === 'string') {
+        payload = Object.assign({}, payload, { text: unredactText(payload.text) });
+      }
+    } catch (_) {}
     api.feishuReport(payload).catch(() => {});
   } catch (_) { /* ignore */ }
 }
@@ -63,6 +70,8 @@ function initFeishuBridge() {
     // 系统消息（拒绝改写/工具结果回传等）不上报
     const SYSTEM_TAGS = ['拒绝改写请求', '拒绝改写回传', '拒绝拦截', 'XML工具调用提示', 'CTF注入', '飞书'];
     if (tag && SYSTEM_TAGS.indexOf(tag) !== -1) return;
+    // 2026-11-06: 会话导入是本地上下文搬运，不推送到 IM（tag 形如「导入历史:<标题>」）
+    if (tag && String(tag).indexOf('导入历史') === 0) return;
     report({ type: 'user-message', text: text, tag: tag || '' });
   });
 

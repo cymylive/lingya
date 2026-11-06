@@ -8,6 +8,19 @@ console.log('[LingYa] Preload script 开始执行');
 // 暴露 electronAPI 到渲染进程（contextBridge + window 兜底）
 require('./api');
 
+// 主进程通知规则表已变（侧栏导入/新增/删除/采纳）→ 重新拉取，当前会话立刻用新规则
+try {
+  if (window.electronAPI && window.electronAPI.onRedactionRulesChanged) {
+    window.electronAPI.onRedactionRulesChanged(() => {
+      try {
+        require('./dom/redaction-filter').refreshRules().then(() => {
+          console.log('[⟦自动_1⟧] 脱敏规则已刷新');
+        }).catch(() => {});
+      } catch (_) {}
+    });
+  }
+} catch (_) {}
+
 // 2026-11-02：初始化时拉取一次脱敏规则，后续 redactText 同步可用
 try {
   require('./dom/redaction-filter').refreshRules().then(() => {
@@ -33,6 +46,7 @@ try {
     buildChromeObjectFix,
     buildPermissionsFix,
     buildNotificationFix,
+    buildNativeMask,
   } = require('../main/user-agent');
   // 2026-11-02：三项反检测补丁（基于实测指纹体检报告）
   //  - window.chrome 空壳（Electron keys:[]）→ 补 runtime/loadTimes/csi/app
@@ -40,6 +54,7 @@ try {
   //  - Notification.permission granted → default
   // 均通过 webFrame.executeJavaScript 注入主世界，先于页面任何脚本。
   const fixes = [
+    ['nativeMask', buildNativeMask()],
     ['userAgentData', buildUserAgentDataFix()],
     ['chrome',        buildChromeObjectFix()],
     ['permissions',   buildPermissionsFix()],
@@ -244,7 +259,11 @@ function init() {
     // 监听 URL 变化（SPA 路由）
     window.addEventListener('popstate', ui.updateHomeMode);
     window.addEventListener('hashchange', ui.updateHomeMode);
-    setInterval(ui.updateHomeMode, 1500);
+    // 【2026-11-06 修复 #5】定时器幂等：SPA 路由切换不会卸载 preload，
+    // 若 init 被重复调用会叠加 interval 造成内存/CPU 浪费。用模块级标志防重入。
+    if (!window.__lyHomeModeTimer) {
+      window.__lyHomeModeTimer = setInterval(ui.updateHomeMode, 1500);
+    }
     // 首次延迟执行，确保 overlay 已注入
     setTimeout(ui.updateHomeMode, 500);
 
@@ -374,10 +393,21 @@ function init() {
       // SPA 路由切换后重新应用标题（DeepSeek 是 pushState 导航）
       const syncMod = require('./dom/page-title-sync');
       window.addEventListener('popstate', () => { try { syncMod.onUrlChanged(); } catch (_) {} });
-      let lastHref = location.href;
-      setInterval(() => {
-        if (location.href !== lastHref) { lastHref = location.href; try { syncMod.onUrlChanged(); } catch (_) {} }
-      }, 800);
+      // 【2026-11-06 修复 #5】幂等保护
+      if (!window.__lyTitleSyncTimer) {
+        let lastHref = location.href;
+        window.__lyTitleSyncTimer = setInterval(() => {
+          if (location.href !== lastHref) { lastHref = location.href; try { syncMod.onUrlChanged(); } catch (_) {} }
+        }, 800);
+      }
+
+      // 【2026-11-06 新增】标题自动回填：网页标题稳定后写入本地 session-store，
+      // 解决「工作区会话名显示 ID」的问题——网页上有真实标题，但之前没有回写通道。
+      // 幂等保护：SPA 路由切换不卸载 preload，避免重复启动 MutationObserver。
+      if (!window.__lyAutoSyncStarted) {
+        window.__lyAutoSyncStarted = true;
+        try { syncMod.startAutoSync(); } catch (e) { console.warn('[灵鸦] 标题自动回填启动失败:', e && e.message); }
+      }
     } catch (_) { /* ignore */ }
   } catch (err) {
     // 第 3 层兜底：这里的异常只可能来自插件/归档/标题同步等辅助功能。
@@ -388,6 +418,10 @@ function init() {
   // 对话记录：累积用户/AI 消息，供导出 Markdown
   try {
     require('./dom/conversation-log').initConversationLog();
+    // 2026-11-05: 启动 DOM 占位符还原——AI 回复里的 ⟦xxx⟧ 在本地显示时换回真词
+    try {
+      require('./dom/dom-unredact').startDomUnredact();
+    } catch (e) { console.warn('[灵鸦] DOM 还原启动失败:', e && e.message); }
   } catch (err) {
     console.error('[LingYa] 对话记录启动失败:', err);
   }
@@ -396,20 +430,23 @@ function init() {
   ui.startOverlayWatcher();
 
   // 定期提取当前平台用户信息并更新窗口名
-  let lastSentUserName = '';
-  setInterval(() => {
-    try {
-      const provider = getProviderByUrl(window.location.href);
-      if (!provider || typeof provider.extractUserInfo !== 'function') return;
-      const text = provider.extractUserInfo();
-      if (text && text !== lastSentUserName) {
-        lastSentUserName = text;
-        window.electronAPI.updateWindowName(text).catch(() => {});
+  // 【2026-11-06 修复 #5】幂等保护
+  if (!window.__lyUserNameTimer) {
+    let lastSentUserName = '';
+    window.__lyUserNameTimer = setInterval(() => {
+      try {
+        const provider = getProviderByUrl(window.location.href);
+        if (!provider || typeof provider.extractUserInfo !== 'function') return;
+        const text = provider.extractUserInfo();
+        if (text && text !== lastSentUserName) {
+          lastSentUserName = text;
+          window.electronAPI.updateWindowName(text).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[LingYa] 轮询用户名异常:', e.message);
       }
-    } catch (e) {
-      console.error('[LingYa] 轮询用户名异常:', e.message);
-    }
-  }, 3000);
+    }, 3000);
+  }
 }
 
 if (document.readyState === 'loading') {

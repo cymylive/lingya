@@ -217,6 +217,98 @@ function stopGuard() {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
 }
 
+// ---------- 自动回填：网页标题稳定后写入本地 store（2026-11-06）----------
+// 背景：工作区会话名显示 ID，根因是本地 session-store 的 title 为 null。
+// 网页上其实有真实标题，只是没有回写通道。本模块补上这条通道。
+//
+// 设计要点：
+//   - debounce 3s：流式输出时 DOM 变化频繁，必须等标题稳定后才读，避免存入「正在生成…」这类临时文案
+//   - 只在当前会话上生效：非当前会话读不到 DOM
+//   - 用 lastSynced 去重：已同步过的标题不重复写盘
+//   - syncSessionTitle 被调用时同步更新 lastSynced，避免自写自读形成循环
+const autoSyncState = {
+  sessionId: null,
+  lastSynced: null,
+  timer: null,
+  observer: null,
+};
+
+/** 判断一个文本是否像有效会话标题（过滤按钮词、过短/过长） */
+function looksLikeTitle(t) {
+  const s = String(t || '').trim();
+  if (!s || s.length < 2 || s.length > 80) return false;
+  if (NOT_TITLE.has(s)) return false;
+  return true;
+}
+
+/** 从当前网页顶部读取会话标题（复用 findPageTitleEl） */
+function readCurrentTitleFromDom() {
+  try {
+    const el = findPageTitleEl(null);
+    if (!el) return null;
+    const t = (el.textContent || '').trim();
+    return looksLikeTitle(t) ? t : null;
+  } catch (_) { return null; }
+}
+
+/** debounce 调度：DOM 变化后等 3s 稳定再检查 */
+function scheduleAutoSync() {
+  if (autoSyncState.timer) clearTimeout(autoSyncState.timer);
+  autoSyncState.timer = setTimeout(() => {
+    autoSyncState.timer = null;
+    try { doAutoSync(); } catch (_) {}
+  }, 3000);
+}
+
+/** 执行自动回填 */
+function doAutoSync() {
+  const sid = sessionIdFromUrl(location.href);
+  if (!sid) return;
+  // 会话切换：重置状态
+  if (sid !== autoSyncState.sessionId) {
+    autoSyncState.sessionId = sid;
+    autoSyncState.lastSynced = null;
+  }
+  const t = readCurrentTitleFromDom();
+  if (!t) return;
+  if (t === autoSyncState.lastSynced) return;   // 已同步过，跳过
+  // 回写本地 store（幂等：写相同值无害）
+  try {
+    if (window.electronAPI && typeof window.electronAPI.setSessionTitle === 'function') {
+      window.electronAPI.setSessionTitle(t, sid).then((r) => {
+        if (r && r.success) {
+          console.log('[灵鸦][标题自动回填] 已同步标题到本地: ' + t);
+          autoSyncState.lastSynced = t;
+        }
+      }).catch(() => { /* 静默失败，不影响主流程 */ });
+    }
+  } catch (_) {}
+}
+
+/** 启动自动回填（幂等） */
+function startAutoSync() {
+  if (autoSyncState.observer) return;
+  try {
+    autoSyncState.observer = new MutationObserver(() => {
+      scheduleAutoSync();
+    });
+    // 只监听 childList：标题变化时 React 替换文本节点
+    autoSyncState.observer.observe(document.body, { childList: true, subtree: true });
+    // 初始触发一次（页面可能已加载完）
+    scheduleAutoSync();
+    console.log('[灵鸦][标题自动回填] 已启动');
+  } catch (_) { /* ignore */ }
+}
+
+/** 停止自动回填（测试/清理用） */
+function stopAutoSync() {
+  if (autoSyncState.observer) {
+    try { autoSyncState.observer.disconnect(); } catch (_) {}
+    autoSyncState.observer = null;
+  }
+  if (autoSyncState.timer) { clearTimeout(autoSyncState.timer); autoSyncState.timer = null; }
+}
+
 // ---------- 对外主入口 ----------
 /**
  * 同步会话标题。
@@ -235,6 +327,10 @@ async function syncSessionTitle(sessionId, title) {
     try { api = await platform.rename(sessionId, t); }
     catch (e) { api = { ok: false, error: e.message }; }
   }
+
+  // 记录已同步状态，避免自动回填对刚手动同步的标题重复回写
+  autoSyncState.sessionId = sessionId;
+  autoSyncState.lastSynced = t;
 
   // 2) DOM 双写（只在 sessionId 是当前会话时才有意义）
   const curSid = sessionIdFromUrl(location.href);
@@ -266,6 +362,10 @@ module.exports = {
   syncSessionTitle,
   onUrlChanged,
   stopGuard,
+  // 2026-11-06 新增：自动回填 + 手动读取当前标题
+  startAutoSync,
+  stopAutoSync,
+  readCurrentTitleFromDom,
   // 导出供测试
-  _internal: { findSidebarTitleEl, findPageTitleEl, sessionIdFromUrl, pickApi },
+  _internal: { findSidebarTitleEl, findPageTitleEl, sessionIdFromUrl, pickApi, looksLikeTitle },
 };

@@ -143,7 +143,8 @@ async function doRename(sid) {
   try {
     const { sendToChat } = require('./chat-input');
     const prompt = [
-      '帮我总结一下咱们刚才聊的核心内容，然后用 nameConversation 工具给这个对话起个短标题（不超过20字）。',
+      '帮我总结一下咱们刚才聊的核心内容，然后用 nameConversation 工具生成一个建议短标题（不超过20字）。',
+      '注意：该工具只产出建议标题、不会自动改会话名，由我自己手动应用。',
       '直接调工具就行，不用解释。',
     ].join('\n');
     console.log('[LingYa AutoRename] 发送自动重命名指令: ' + sid);

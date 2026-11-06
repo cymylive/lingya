@@ -237,11 +237,11 @@ declare function todoWrite(todos: TodoItem[]): Promise<string>;
 // ================= 会话 =================
 
 /**
- * 给当前对话起一个简短标题（用于会话列表识别）。
+ * 生成一个对话标题建议（不会自动修改会话名，由用户手动应用到会话列表）。
  * 在对话主题明确后（通常是首条用户消息处理时）调用一次。
  * @param title 对话标题（简短，建议不超过 20 字）
- * @returns 确认消息
- * @throws 标题为空、会话上下文不可用时抛出异常
+ * @returns 含 suggestedTitle 的确认消息
+ * @throws 标题为空、参数无法解析时抛出异常
  */
 declare function nameConversation(title: string): Promise<string>;
 

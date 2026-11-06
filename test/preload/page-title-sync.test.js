@@ -219,3 +219,100 @@ test('未登录（无 userToken）API 返回错误', async () => {
   assert.strictEqual(r.api.ok, false);
   assert.ok(r.api.error.indexOf('未登录') >= 0);
 });
+
+// ===== 自动回填（2026-11-06 新增）=====
+
+test('looksLikeTitle 过滤按钮词和异常长度', () => {
+  const page = buildPage({ sessionId: 'abc12345-0000' });
+  installGlobals(page);
+  delete require.cache[modPath];
+  const m = require(modPath);
+  const f = m._internal.looksLikeTitle;
+  assert.strictEqual(f('正常标题'), true);
+  assert.strictEqual(f('开启新对话'), false, '按钮词不应算标题');
+  assert.strictEqual(f(''), false);
+  assert.strictEqual(f('a'), false, '单字符不算标题');
+  assert.strictEqual(f('x'.repeat(81)), false, '超长不算标题');
+  assert.strictEqual(f('  前后空格  '), true, 'trim 后应算标题');
+});
+
+test('readCurrentTitleFromDom 返回顶部标题', () => {
+  const page = buildPage({ sessionId: 'abc12345-0000', pageTitleText: '真实会话标题', pageTop: 13, pageLeft: 268 });
+  installGlobals(page, 'https://chat.deepseek.com/a/chat/s/abc12345-0000');
+  delete require.cache[modPath];
+  const m = require(modPath);
+  assert.strictEqual(m.readCurrentTitleFromDom(), '真实会话标题');
+});
+
+test('readCurrentTitleFromDom 找不到有效标题返回 null', () => {
+  const page = buildPage({ sessionId: 'abc12345-0000', pageTitleText: '开启新对话', pageTop: 10 });
+  installGlobals(page);
+  delete require.cache[modPath];
+  const m = require(modPath);
+  assert.strictEqual(m.readCurrentTitleFromDom(), null);
+});
+
+test('startAutoSync 幂等：重复调用只创建一个 observer', () => {
+  const page = buildPage({ sessionId: 'abc12345-0000' });
+  installGlobals(page);
+  let observeCount = 0;
+  global.MutationObserver = class { observe(){ observeCount++; } disconnect(){} };
+  delete require.cache[modPath];
+  const m = require(modPath);
+  m.startAutoSync();
+  m.startAutoSync();
+  m.startAutoSync();
+  assert.strictEqual(observeCount, 1, 'observer 只应创建一次');
+  m.stopAutoSync();
+});
+
+test('startAutoSync 3s 后调用 setSessionTitle 回写标题', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const page = buildPage({ sessionId: 'abc12345-0000', pageTitleText: '回写标题', pageTop: 13, pageLeft: 268 });
+  installGlobals(page, 'https://chat.deepseek.com/a/chat/s/abc12345-0000');
+  global.MutationObserver = class { observe(){} disconnect(){} };
+  const calls = [];
+  global.electronAPI = { setSessionTitle: async (title, sid) => { calls.push({ title, sid }); return { success: true }; } };
+  delete require.cache[modPath];
+  const m = require(modPath);
+  m.startAutoSync();
+  t.mock.timers.tick(3000);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(calls.length, 1, '应调用一次 setSessionTitle');
+  assert.strictEqual(calls[0].title, '回写标题');
+  assert.strictEqual(calls[0].sid, 'abc12345-0000');
+  m.stopAutoSync();
+});
+
+test('stopAutoSync 后定时器不再触发', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const page = buildPage({ sessionId: 'abc12345-0000', pageTitleText: '标题A', pageTop: 13, pageLeft: 268 });
+  installGlobals(page, 'https://chat.deepseek.com/a/chat/s/abc12345-0000');
+  global.MutationObserver = class { observe(){} disconnect(){} };
+  const calls = [];
+  global.electronAPI = { setSessionTitle: async (title, sid) => { calls.push({ title, sid }); return { success: true }; } };
+  delete require.cache[modPath];
+  const m = require(modPath);
+  m.startAutoSync();
+  m.stopAutoSync();
+  t.mock.timers.tick(3000);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(calls.length, 0, 'stop 后不应再回写');
+});
+
+test('syncSessionTitle 后自动回填不重复写相同标题', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const page = buildPage({ sessionId: 'abc12345-0000', pageTitleText: '旧标题', pageTop: 13, pageLeft: 268 });
+  installGlobals(page, 'https://chat.deepseek.com/a/chat/s/abc12345-0000');
+  global.MutationObserver = class { observe(){} disconnect(){} };
+  const calls = [];
+  global.electronAPI = { setSessionTitle: async (title, sid) => { calls.push({ title, sid }); return { success: true }; } };
+  delete require.cache[modPath];
+  const m = require(modPath);
+  await m.syncSessionTitle('abc12345-0000', '手动标题');
+  m.startAutoSync();
+  t.mock.timers.tick(3000);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(calls.length, 0, '相同标题不应重复回写');
+  m.stopAutoSync();
+});

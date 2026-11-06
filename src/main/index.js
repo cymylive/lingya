@@ -1063,6 +1063,98 @@ ipcMain.on('lingya-dropdown-close', () => {
   try { dropdownWin.close(); } catch (_) {}
 });
 
+// ========== 状态栏溢出浮层（全部窗口的 token / 速度）==========
+// 同样必须用独立 BrowserWindow：AI 网页是 WebContentsView 原生层，
+// 壳页面 DOM 一旦落在 AI view 区域就会被完全遮住。
+const overflowWin = require('./overflow-window');
+
+ipcMain.handle('lingya-overflow-open', async (event, payload = {}) => {
+  try {
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const ownerWin = ctx.rawWin || ctx.win;
+    if (!ownerWin || ownerWin.isDestroyed()) return { success: false, error: '窗口已销毁' };
+
+    const rawAnchor = payload.anchor || { x: 100, y: 600, w: 60, h: 24 };
+    let baseX = 0, baseY = 0;
+    try {
+      const cb = ownerWin.getContentBounds();
+      baseX = cb.x;
+      baseY = cb.y;
+    } catch (_) {}
+    const anchor = {
+      x: baseX + Math.round(rawAnchor.x || 0),
+      y: baseY + Math.round(rawAnchor.y || 0),
+      w: Math.round(rawAnchor.w || 60),
+      h: Math.round(rawAnchor.h || 24),
+    };
+
+    overflowWin.open(ownerWin, {
+      anchor,
+      items: Array.isArray(payload.items) ? payload.items : [],
+      theme: payload.theme || 'dark',
+    });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('lingya-overflow-toggle', async (event, payload = {}) => {
+  try {
+    if (overflowWin.isOpen()) {
+      overflowWin.close();
+      return { success: true, closed: true };
+    }
+    const ctx = windowState.getContextByWebContents(event.sender);
+    if (!ctx) return { success: false, error: '窗口不存在' };
+    const ownerWin = ctx.rawWin || ctx.win;
+    if (!ownerWin || ownerWin.isDestroyed()) return { success: false, error: '窗口已销毁' };
+
+    const rawAnchor = payload.anchor || { x: 100, y: 600, w: 60, h: 24 };
+    let baseX = 0, baseY = 0;
+    try {
+      const cb = ownerWin.getContentBounds();
+      baseX = cb.x;
+      baseY = cb.y;
+    } catch (_) {}
+    const anchor = {
+      x: baseX + Math.round(rawAnchor.x || 0),
+      y: baseY + Math.round(rawAnchor.y || 0),
+      w: Math.round(rawAnchor.w || 60),
+      h: Math.round(rawAnchor.h || 24),
+    };
+    overflowWin.open(ownerWin, {
+      anchor,
+      items: Array.isArray(payload.items) ? payload.items : [],
+      theme: payload.theme || 'dark',
+    });
+    return { success: true, opened: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('lingya-overflow-update', async (_event, payload = {}) => {
+  try {
+    const ok = overflowWin.update(
+      Array.isArray(payload.items) ? payload.items : [],
+      payload.theme || 'dark'
+    );
+    return { success: true, applied: ok };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('lingya-overflow-close', async () => {
+  try { overflowWin.close(); return { success: true }; } catch (e) { return { success: false, error: e.message }; }
+});
+
+ipcMain.on('lingya-overflow-close-signal', () => {
+  try { overflowWin.close(); } catch (_) {}
+});
+
 // ========== 应用菜单 ==========
 function setupAppMenu() {
   const template = [
@@ -1249,6 +1341,16 @@ try {
 } catch (err) {
   console.error('[LingYa] 初始化 QQ 通道失败:', err.message);
 }
+
+// 手机远程控制：注册 IPC 并自动启动
+try {
+  const remoteIpc = require('./remote-ipc');
+  remoteIpc.registerRemoteIpc();
+  remoteIpc.initRemoteOnBoot().catch((e) => console.warn("[Remote]", e && e.message));
+} catch (err) {
+  console.error("[LingYa] remote init fail:", err && err.message);
+}
+
 
 // 侧栏开合/调宽（壳页面调用）：按 event.sender 路由到对应窗口，支持多窗口
 // 注：ipcMain.handle 是全局的，故此处只注册一次，用 sender 反查窗口。
@@ -2619,6 +2721,15 @@ app.on('before-quit', (event) => {
   try {
     require('./graphify-builder').cancel();
   } catch (_) {}
+  // 刷新会话存档（appendFileSync 已即时落盘，这里只作接口约定兜底）
+  try {
+    const { createArchiveIpc } = require('./conversation-archive-ipc');
+    // archive 实例由 ipc.js 持有，通过全局单例刷新
+    if (global.__lingyaArchiveIpc && typeof global.__lingyaArchiveIpc.flushAll === 'function') {
+      global.__lingyaArchiveIpc.flushAll();
+    }
+  } catch (_) {}
+
   // 先把各窗口的 sessionStore 内存缓存强制落盘（防抖计时器可能还没到点）
   try {
     for (const ctx of windowState.getAllContexts()) {

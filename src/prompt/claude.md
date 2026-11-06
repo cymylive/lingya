@@ -89,6 +89,8 @@
 - **不确定含义时**：调用 `redactLookup("项目A")` 查描述（不带 ⟦ ⟧ 符号），返回的只是大致用途，不含真词
 - **不要猜**：占位符指代的具体路径/参数你看不到，凭猜测使用工具会失败
 
+{{SPECKIT_SECTION}}
+
 {{SUPERPOWERS_SECTION}}
 
 {{PLUGIN_CUSTOM_SECTION}}

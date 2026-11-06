@@ -226,6 +226,17 @@ lingya/
 - **网络拦截模式**（DeepSeek 等）：在主世界 hook fetch/XHR，拿到原始回复
 - **DOM 抓取模式**（其他）：MutationObserver 监测页面 DOM 变化
 
+### 1.5 会话本地存档（conversation-archive.js）
+
+对话内容在运行时被累积并持久化到本地磁盘，**导出 Markdown 不再依赖平台 IndexedDB**。
+
+- **存储路径**：`<userData>/conversations/<profileId>/<sessionId>.jsonl`
+- **格式**：每行一个 JSON 对象（`{ role, text, ts, tag }`），append-only
+- **写入时机**：`conversation-log.js` 的 `addEntry` 后节流 1s 落盘（失败的条目最多重试 3 次）
+- **读取时机**：会话切换时自动从存档恢复内存 entries
+- **导出数据源优先级**：本地存档 → 平台 IndexedDB → 提示"该会话暂无对话内容"
+- **多窗口**：按 profileId 分目录隔离，跨窗口聚合时扫描所有 profile 的 session 文件
+
 ### 2. 提示词组装（project-context.js）
 
 点「初始化项目」时，组装 systemPrompt：
@@ -332,6 +343,14 @@ render() 何时执行这些问题上反复试错。
 - 涉及 UI 的改动，元素 **id 保持不变**（events.js / ui.js 依赖 getElementById）
 
 ---
+
+### 工作区跨窗口共享与搜索
+
+- `list-all-sessions` IPC 改为调 `workspace-aggregator.js` 的 `aggregateWorkspaces`，扫描所有 `session-dir-map-*.json` 合并
+- 同 sessionId 跨 profile 去重：`updatedAt` 取最新，`archived` 取 OR
+- 损坏的 session 文件跳过，不影响其余窗口数据
+- 会话项带 `data-profile-id`，跨窗口显示 `.ck-ws-badge` 徽标，点击弹确认后调 `openProfileWindow` 跳转
+- 搜索框 `#ws-search`，纯前端 `filterSessions` 字面匹配（项目路径 + 会话标题），防抖 150ms
 
 ## 七、常见坑
 

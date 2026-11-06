@@ -459,11 +459,16 @@ function createContext(plugin) {
       ctx.config = ctx.config || {};
       ctx.config[key] = value;
       // 落盘（重启保留）；失败不影响运行
-      try { pluginStore.savePluginConfig(plugin.id, ctx.config); } catch (_) {}
+      // 【2026-11-06 修复 #7】写盘失败不再完全静默，至少记录错误
+      try { pluginStore.savePluginConfig(plugin.id, ctx.config); } catch (e) {
+        console.warn('[PluginHost] 保存插件配置失败 (' + plugin.id + ', key=' + key + '):', e && e.message);
+      }
     },
     // 保存整个配置对象，供插件在修改多处配置时统一落盘
     save() {
-      try { pluginStore.savePluginConfig(plugin.id, ctx.config || {}); } catch (_) {}
+      try { pluginStore.savePluginConfig(plugin.id, ctx.config || {}); } catch (e) {
+        console.warn('[PluginHost] 保存插件配置失败 (' + plugin.id + '):', e && e.message);
+      }
     }
   };
   ctx.sessions = {

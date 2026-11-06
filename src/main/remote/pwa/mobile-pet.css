@@ -1,0 +1,15 @@
+.ly-pet-wrap{position:fixed;bottom:76px;width:56px;height:56px;z-index:60;touch-action:pan-y;cursor:pointer}
+.ly-pet{width:56px;height:56px;overflow:visible}
+.ly-body,.ly-head{fill:#1b2330;stroke:#2dd4bf;stroke-width:1.4}
+.ly-wing,.ly-tail{fill:#243044;stroke:#2dd4bf;stroke-width:1.2}
+.ly-beak{fill:#2dd4bf}
+.ly-eye{fill:#e6e8ee}
+.st-thinking .ly-pet{animation:ly-bob .9s ease-in-out infinite}
+.st-working .ly-pet{animation:ly-bob .5s ease-in-out infinite}
+.st-waiting .ly-pet{animation:ly-pulse 1.6s ease-in-out infinite}
+.st-done .ly-pet{animation:ly-hop .6s ease-out 1}
+.st-error .ly-pet{animation:ly-shake .4s ease-in-out 2}
+@keyframes ly-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes ly-pulse{0%,100%{opacity:.6}50%{opacity:1}}
+@keyframes ly-hop{0%{transform:translateY(0)}40%{transform:translateY(-9px)}100%{transform:translateY(0)}}
+@keyframes ly-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}

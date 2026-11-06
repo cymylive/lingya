@@ -200,6 +200,13 @@ function judgeUserWait(raw) {
   const text = String(raw || '').trim();
   if (!text) return { matched: false, strong: false };
 
+  // 2026-11-05: 前置判断——本轮回复包含工具调用代码块时，说明 AI 还在干活，
+  // 不算「向用户提问」。原实现会被复述计划时的 A/B/C 选项误判为强等待，
+  // 导致 reset IDLE 后自动续跑中断。
+  if (/```(?:lingya|json|javascript|js)/i.test(text)) {
+    return { matched: false, strong: false };
+  }
+
   // ===== 1) 选项结构（强信号，先判 —— 这类回复通常没有问号）=====
   // 剥掉代码块，避免把示例代码里的 A. B. 当选项
   const noCode = text.replace(/```[\s\S]*?```/g, '');
@@ -382,7 +389,19 @@ async function processInterceptedResponse(text, force, interrupted) {
   // 优先提取并执行 JS 工具代码块：即使流被中断（服务端已停止/流断开），
   // 已完整输出的 lingya 代码块仍应执行——否则 AI 输出了工具调用却不生效，
   // 表现为"工具调用变成纯文本"。
-  const jsBlocks = extractJsToolBlocks(raw);
+  //
+  // 【2026-11-05 关键修复】先对 raw 做 unredactText，再提取代码块。
+  // 根因：出站脱敏把系统提示词里的围栏标识 lingya 换成占位符，AI 模仿输出
+  // 的代码块围栏也是占位符，js-detector 只认 lingya / js / javascript，
+  // 识别不到 → 走「正常文本回复」分支 → 误判任务完成。同理，代码块内的
+  // 工具函数名（edit / glob / bash / todoWrite）被脱敏后 JsRunner 执行会报
+  // 「xxx is not defined」。整体 unredact 一次，两个问题一起解决。
+  let workRaw = raw;
+  try {
+    const { unredactText } = require('./redaction-filter');
+    if (typeof unredactText === 'function') workRaw = unredactText(raw);
+  } catch (_) { /* 脱敏模块不可用则用原文，不影响主流程 */ }
+  const jsBlocks = extractJsToolBlocks(workRaw);
   if (jsBlocks.length > 0) {
     console.log('[LingYa][拦截] 检测到 JS 工具代码块（' + jsBlocks.length + ' 个）' +
       (interrupted ? '（流中断，仍执行）' : '') + '，开始执行');
@@ -538,8 +557,9 @@ async function processInterceptedResponse(text, force, interrupted) {
     try { emitTaskIdle(); } catch (_) {}
     return;
   }
+
   // 计划已完成 / 本就无计划 → 收尾
-  console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用，且无未完成计划');
+  console.log('[LingYa][拦截] 正常文本回复，未检测到工具调用');
 
   // 【关键】AI 明确说「任务已完成」→ 清掉任务型标记，阻止 supervisor 无计划兜底误催。
   //

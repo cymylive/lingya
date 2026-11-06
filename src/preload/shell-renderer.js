@@ -1237,8 +1237,20 @@
                + '</div>';
             // 第二行：当前会话标题
             if (p.sessionTitle) {
-              h += '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">当前会话标题: ' + esc(p.sessionTitle) + '</div>';
+              h += '<div style="font-size:11px;color:var(--ck-text-dim);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">当前会话标题: ' + esc(p.sessionTitle) + '</div>';
             }
+            // Token / 输出速度（主进程全局表提供，跨窗口可见）
+            try {
+              var _tu2 = window.__lyShellTokenUtils;
+              var _tok2 = (typeof p.tokens === 'number') ? p.tokens : 0;
+              var _tps2 = (p.tps && p.tps !== '--') ? p.tps : '--';
+              var _tokStr2 = _tu2 && typeof _tu2.formatTokenCount === 'function'
+                ? _tu2.formatTokenCount(_tok2) : String(_tok2);
+              h += '<div style="display:flex;align-items:center;gap:10px;font-size:10.5px;margin-bottom:5px;color:var(--ck-text-dim);">'
+                 + '<span>对话上下文: <b style="color:var(--ck-text);font-variant-numeric:tabular-nums;">' + esc(_tokStr2) + '</b></span>'
+                 + '<span>输出速度: <b style="color:var(--ck-text);font-variant-numeric:tabular-nums;">' + esc(_tps2) + '</b></span>'
+                 + '</div>';
+            } catch (_) {}
             // 进度条
             if(sum.total > 0){
               h += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
@@ -1315,7 +1327,7 @@
       var box = document.getElementById('sh-all-body');
       if(!box || !box.isConnected){ _stop(); return; }
       draw();
-    }, 10000);
+    }, 2000);
     function _stop(){
       if(_timer){ clearInterval(_timer); _timer = null; }
       if(_unsub){ try{ _unsub(); }catch(_){} _unsub = null; }
@@ -2491,6 +2503,7 @@
       {id:'ai-intercept', label:'AI 回复拦截'},
       {id:'prompt-tpl', label:'提示词管理'},
       {id:'redaction', label:'脱敏规则'},
+      {id:'remote', label:'手机远程'},
       {id:'logs', label:'日志'}
     ];
     var active = 'appearance';
@@ -2652,12 +2665,23 @@
           '</div>' +
           '<div class="ly-set-row" style="margin-top:8px;">' +
             '<button class="sh-btn primary" id="sh-red-new">＋ 新增规则</button>' +
+            '<button class="sh-btn primary" id="sh-red-quick" title="只填真词，自动生成随机密文">⚡ 快速脱敏</button>' +
+            '<button class="sh-btn" id="sh-red-qcfg-open" title="配置密文字符表与长度">⚙ 密文设置</button>' +
             '<button class="sh-btn" id="sh-red-ai-scan" title="扫描全部记忆，自动识别敏感专有名词并加规则">🤖 AI 整理</button>' +
             '<button class="sh-btn" id="sh-red-refresh">刷新</button>' +
+            '<button class="sh-btn" id="sh-red-export" title="把全部规则导出为 JSON（换机/重装后导入即可恢复）">⬇ 导出</button>' +
+            '<button class="sh-btn" id="sh-red-import" title="从 JSON 文件导入规则（同名覆盖，新名追加）">⬆ 导入</button>' +
           '</div>' +
           '<div class="ly-set-row" style="margin-top:6px;">' +
             '<button class="sh-btn" id="sh-red-promote-all" title="把所有 AI 自动加的规则扩展到全局（影响用户输入侧）">⬆ 全部采纳</button>' +
             '<button class="sh-btn" id="sh-red-del-all-auto" style="color:#f87171;" title="删除所有 AI 自动加的规则（保留手动加的）">🗑 全部撤销 AI 规则</button>' +
+          '</div>' +
+          '<div class="ly-set-row" style="margin-top:6px;">' +
+            '<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;">' +
+              '<input type="checkbox" id="sh-red-select-all" /><span>全选 / 反选</span>' +
+            '</label>' +
+            '<button class="sh-btn" id="sh-red-delete-selected" style="color:#fbbf24;" disabled>🗑 删除选中(0)</button>' +
+            '<button class="sh-btn" id="sh-red-delete-all" style="color:#f87171;">🗑 删除全部规则</button>' +
           '</div>' +
         '</div>' +
         '<div id="sh-red-list" class="sh-empty" style="text-align:left;padding:8px 0;">加载中…</div>' +
@@ -2684,6 +2708,39 @@
             '<button class="sh-btn primary" id="sh-red-save">保存</button>' +
           '</div>' +
         '</div>' +
+        // 快速脱敏输入区（2026-11-06）：不依赖 window.prompt
+        '<div class="sh-card" id="sh-red-quick-panel" style="display:none;">' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">快速脱敏：输入真词（一行一个）</div>' +
+            '<div class="ly-set-desc">系统会为每个真词自动生成随机密文占位符。已存在的同真词规则会直接复用。</div>' +
+            '<textarea id="sh-red-quick-words" class="ly-set-input" rows="5" style="width:100%;margin-top:4px;resize:vertical;font-family:Consolas,monospace;" placeholder="C:\\核心机密.txt&#10;bdwkup&#10;另一个真词"></textarea>' +
+          '</div>' +
+          '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;">' +
+            '<button class="sh-btn" id="sh-red-quick-cancel">取消</button>' +
+            '<button class="sh-btn primary" id="sh-red-quick-run">生成密文</button>' +
+          '</div>' +
+          '<div id="sh-red-quick-result" style="margin-top:8px;font-size:12px;line-height:1.6;font-family:Consolas,monospace;color:#2dd4bf;white-space:pre-wrap;"></div>' +
+        '</div>' +
+        // 密文生成设置（2026-11-06）
+        '<div class="sh-card" id="sh-red-qcfg" style="display:none;">' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">密文字符表</div>' +
+            '<div class="ly-set-desc">生成密文时使用的字符。只保留大写字母和数字，其他字符自动过滤。<b>顺序有意义</b>——调整顺序后新生成的密文会完全不同。<br>已被替换进规则表的旧密文不会改变。</div>' +
+            '<input id="sh-red-qcfg-charset" type="text" class="ly-set-input" style="width:100%;margin-top:4px;font-family:Consolas,monospace;" placeholder="ABCDEFGHJKMNPQRSTUVWXYZ23456789" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<div class="ly-set-label">密文长度（3~16）</div>' +
+            '<input id="sh-red-qcfg-length" type="number" min="3" max="16" class="ly-set-input" style="width:120px;margin-top:4px;" placeholder="6" />' +
+          '</div>' +
+          '<div class="ly-set-field">' +
+            '<label class="ly-set-toggle"><input type="checkbox" id="sh-red-qcfg-filter" checked /><span>过滤易混字符（0 O 1 I L）</span></label>' +
+            '<div class="ly-set-desc" style="margin-top:4px;">开启后，即使字符表里写了这些字符，生成时也会跳过。可显著降低 AI 抄错密文的概率。</div>' +
+          '</div>' +
+          '<div class="ly-set-row" style="justify-content:flex-end;margin-top:8px;">' +
+            '<button class="sh-btn" id="sh-red-qcfg-cancel">取消</button>' +
+            '<button class="sh-btn primary" id="sh-red-qcfg-save">保存设置</button>' +
+          '</div>' +
+        '</div>' +
       '</div>' +
       // 日志
       '<div class="ly-set-cat'+(active==='logs'?' active':'')+'" data-cat="logs">' +
@@ -2704,7 +2761,35 @@
             '<button class="sh-btn primary" id="sh-set-data-save">保存并重启</button>' +
           '</div>' +
         '</div></div>' +
-      '</div>';
+      '</div>' +
+      // 手机远程
+      '<div class="ly-set-cat'+(active==='remote'?' active':'')+'" data-cat="remote">' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">远程服务</div>' +
+          '<div class="ly-set-desc">手机通过 Cloudflare 隧道访问电脑上的 AI 窗口。</div>' +
+          '<label class="ly-set-toggle"><input type="checkbox" id="remote-enabled" /><span>启用远程服务</span></label>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">访问令牌</div>' +
+          '<div class="ly-set-row"><input id="remote-token" type="text" readonly class="ly-set-input" style="flex:1;" /><button class="sh-btn" id="remote-copy-token">复制</button><button class="sh-btn" id="remote-reset-token">重置</button></div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">端口</div>' +
+          '<div class="ly-set-row"><input id="remote-port" type="number" class="ly-set-input ly-set-input-md" /><button class="sh-btn" id="remote-save-port">保存</button></div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">公网地址</div>' +
+          '<div class="ly-set-desc" id="remote-public-url" style="word-break:break-all;font-family:monospace;">未启动</div>' +
+          '<div class="ly-set-desc" id="remote-tunnel-status"></div>' +
+          '<div class="ly-set-row"><button class="sh-btn primary" id="remote-start-tunnel">启动隧道</button><button class="sh-btn" id="remote-stop-tunnel">停止隧道</button></div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">已连接设备</div>' +
+          '<div class="ly-set-desc" id="remote-clients">无</div>' +
+          '<div class="ly-set-row"><button class="sh-btn" id="remote-refresh">刷新</button><button class="sh-btn" id="remote-kick-all">断开全部</button></div>' +
+        '</div></div>' +
+      '</div>' ;
+
 
     el.innerHTML = panel('设置',
       '<div class="ly-settings-layout">' +
@@ -2729,6 +2814,29 @@
         }
       });
     });
+
+        // ===== 手机远程 =====
+    (function(){
+      var R=function(id){return document.getElementById(id);};
+      var API=window.shellAPI||{};
+      function fill(st){
+        if(!st) return;
+        if(R('remote-token')) R('remote-token').value=st.token||'';
+        if(R('remote-port')) R('remote-port').value=st.port||7799;
+        if(R('remote-public-url')) R('remote-public-url').textContent=st.publicUrl||'未启动';
+        if(R('remote-enabled')) R('remote-enabled').checked=!!st.enabled;
+      }
+      function refresh(){ if(API.remoteStatus) API.remoteStatus().then(function(st){ fill(st); var c=R('remote-clients'); if(c){ c.textContent=(st.clients&&st.clients.length)?st.clients.map(function(x){return (x.ip||'')+' '+(x.ua||'').slice(0,24);}).join(' | '):'无'; } var ts=R('remote-tunnel-status'); if(ts){ ts.textContent=st.tunnel&&st.tunnel.error?('隧道错误: '+st.tunnel.error):(st.tunnel&&st.tunnel.running?'隧道运行中':''); } })['catch'](function(){}); }
+      var en=R('remote-enabled'); if(en) en.addEventListener('change',function(){ if(!API.remoteSetEnabled) return; API.remoteSetEnabled(en.checked).then(function(st){ fill(st); toast2(en.checked?'已启用':'已停止'); if(st&&st.error) toast2(st.error); })['catch'](function(){ toast2('操作失败'); }); });
+      var ct=R('remote-copy-token'); if(ct) ct.addEventListener('click',function(){ var t=R('remote-token'); if(t&&t.value){ try{ navigator.clipboard.writeText(t.value); toast2('已复制'); }catch(_){ toast2('复制失败'); } } });
+      var rt=R('remote-reset-token'); if(rt) rt.addEventListener('click',function(){ if(!API.remoteResetToken) return; if(!confirm('重置后所有已连接手机需重新登录，确定？')) return; API.remoteResetToken().then(function(st){ fill(st); toast2('令牌已重置'); })['catch'](function(){}); });
+      var sp=R('remote-save-port'); if(sp) sp.addEventListener('click',function(){ var p=parseInt((R('remote-port')||{}).value,10); if(!p) return; if(!API.remoteSetConfig) return; API.remoteSetConfig({port:p}).then(function(st){ fill(st); toast2('端口已保存（重启服务生效）'); })['catch'](function(){}); });
+      var stn=R('remote-start-tunnel'); if(stn) stn.addEventListener('click',function(){ if(!API.remoteStartTunnel) return; toast2('正在启动隧道…'); API.remoteStartTunnel().then(function(st){ fill(st); if(st&&st.error) toast2(st.error); else toast2('隧道已启动'); })['catch'](function(){ toast2('启动失败'); }); });
+      var stp=R('remote-stop-tunnel'); if(stp) stp.addEventListener('click',function(){ if(!API.remoteStopTunnel) return; API.remoteStopTunnel().then(function(st){ fill(st); toast2('隧道已停止'); })['catch'](function(){}); });
+      var rf=R('remote-refresh'); if(rf) rf.addEventListener('click',refresh);
+      var ka=R('remote-kick-all'); if(ka) ka.addEventListener('click',function(){ if(!API.remoteKickAll) return; API.remoteKickAll().then(function(){ refresh(); toast2('已断开全部'); })['catch'](function(){}); });
+      refresh();
+    })();
 
     var ev=function(id){ return document.getElementById(id); };
     var tb=ev('sh-set-theme');
@@ -3227,6 +3335,7 @@
             ? '<button class="sh-tpl-icon-btn" data-red-act="promote" data-red-name="' + esc(r.name) + '" title="扩展到全局（影响用户输入）">⬆</button>'
             : '';
           h += '<div class="sh-tpl-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px;overflow:hidden;">'
+            + '<input type="checkbox" class="sh-red-cb" data-red-name="' + esc(r.name) + '" style="flex-shrink:0;" />'
             + sourceBadge
             + '<span style="background:rgba(45,212,191,0.15);color:#2dd4bf;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;font-weight:600;flex-shrink:0;">⟦' + esc(r.name) + '⟧</span>'
             + '<span style="color:#ddd;font-family:Consolas,monospace;flex-shrink:1;min-width:0;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(words) + '">' + esc(words) + '</span>'
@@ -3240,6 +3349,34 @@
         // 统计信息（放在列表前面）
         var stats = '<div style="font-size:11px;color:var(--ck-text-dim);padding:4px 0;margin-bottom:4px;">共 ' + rules.length + ' 条规则（🤖 AI 自动 ' + autoCount + ' 条，👤 手动 ' + (rules.length - autoCount) + ' 条）</div>';
         box.innerHTML = stats + h;
+        // 2026-11-05: 绑定复选框，更新「删除选中(N)」按钮状态
+        (function bindBatchUI(){
+          var delSelBtn = ev2('sh-red-delete-selected');
+          var selectAll = ev2('sh-red-select-all');
+          function updateCount(){
+            var cbs = box.querySelectorAll('.sh-red-cb');
+            var checked = 0;
+            for(var j=0;j<cbs.length;j++){ if(cbs[j].checked) checked++; }
+            if(delSelBtn){
+              delSelBtn.disabled = checked === 0;
+              delSelBtn.textContent = '🗑 删除选中(' + checked + ')' ;
+            }
+            if(selectAll){ selectAll.checked = cbs.length > 0 && checked === cbs.length; }
+          }
+          var cbs = box.querySelectorAll('.sh-red-cb');
+          for(var j=0;j<cbs.length;j++){ cbs[j].addEventListener('change', updateCount); }
+          if(selectAll){
+            // 移除旧监听，避免重复绑定（renderList 会重复调用）
+            var newAll = selectAll.cloneNode(true);
+            selectAll.parentNode.replaceChild(newAll, selectAll);
+            newAll.addEventListener('change', function(){
+              var boxes = box.querySelectorAll('.sh-red-cb');
+              for(var j=0;j<boxes.length;j++){ boxes[j].checked = newAll.checked; }
+              updateCount();
+            });
+          }
+          updateCount();
+        })();
         // 绑定行内按钮
         var btns = box.querySelectorAll('button[data-red-act]');
         for(var k=0;k<btns.length;k++){
@@ -3347,6 +3484,134 @@
       var rf = ev2('sh-red-refresh');
       if(rf) rf.addEventListener('click', loadList);
 
+      // 导出规则表
+      var rex = ev2('sh-red-export');
+      if(rex) rex.addEventListener('click', function(){
+        if(!window.shellAPI || !window.shellAPI.redactionRulesExport){ toast2('接口不可用'); return; }
+        window.shellAPI.redactionRulesExport().then(function(r){
+          if(r && r.canceled) return;
+          if(r && r.success){ toast2('已导出 ' + r.count + ' 条规则'); }
+          else toast2('导出失败：' + ((r && r.error) || '未知'));
+        })['catch'](function(){ toast2('导出失败'); });
+      });
+
+      // 导入规则表（同名覆盖 + 新名追加）
+      var rim = ev2('sh-red-import');
+      if(rim) rim.addEventListener('click', function(){
+        if(!window.shellAPI || !window.shellAPI.redactionRulesImport){ toast2('接口不可用'); return; }
+        window.shellAPI.redactionRulesImport().then(function(r){
+          if(r && r.canceled) return;
+          if(r && r.success){
+            toast2('导入成功：新增 ' + (r.added||0) + ' 条，覆盖 ' + (r.updated||0) + ' 条');
+            loadList();
+          } else {
+            toast2('导入失败：' + ((r && r.error) || '未知'));
+          }
+        })['catch'](function(){ toast2('导入失败'); });
+      });
+
+      // ===== 快速脱敏（2026-11-06）=====
+      // 内联面板，不依赖 window.prompt（Electron 渲染进程不支持）
+      var quickPanel = ev2('sh-red-quick-panel');
+      var quickBtn = ev2('sh-red-quick');
+      if(quickBtn) quickBtn.addEventListener('click', function(){
+        if(!quickPanel) return;
+        var showing = quickPanel.style.display !== 'none';
+        quickPanel.style.display = showing ? 'none' : '';
+        var resBox = ev2('sh-red-quick-result');
+        if(resBox) resBox.textContent = '';
+        if(!showing){
+          var ta = ev2('sh-red-quick-words');
+          if(ta){ ta.value = ''; ta.focus(); }
+        }
+      });
+      var quickCancel = ev2('sh-red-quick-cancel');
+      if(quickCancel) quickCancel.addEventListener('click', function(){
+        if(quickPanel) quickPanel.style.display = 'none';
+      });
+      var quickRun = ev2('sh-red-quick-run');
+      if(quickRun) quickRun.addEventListener('click', function(){
+        var ta = ev2('sh-red-quick-words');
+        var resBox = ev2('sh-red-quick-result');
+        var raw = ta ? String(ta.value || '') : '';
+        var words = raw.split(/[\r\n]+/).map(function(w){ return w.trim(); }).filter(Boolean);
+        if(words.length === 0){ toast2('没有输入任何真词'); return; }
+        if(!window.shellAPI || !window.shellAPI.redactionRulesQuickAdd){ toast2('接口不可用'); return; }
+        quickRun.disabled = true;
+        quickRun.textContent = '生成中…';
+        var results = [];
+        var errors = [];
+        var chain = Promise.resolve();
+        words.forEach(function(w){
+          chain = chain.then(function(){
+            return window.shellAPI.redactionRulesQuickAdd(w).then(function(r){
+              if(r && r.error) errors.push(w + ' → ' + r.error);
+              else if(r && r.name) results.push({ word: w, name: r.name, reused: !!r.reused });
+            })['catch'](function(e){ errors.push(w + ' → ' + (e && e.message || '失败')); });
+          });
+        });
+        chain.then(function(){
+          quickRun.disabled = false;
+          quickRun.textContent = '生成密文';
+          loadList();
+          try { window.shellAPI.setSetting('redaction-refresh', Date.now()); } catch(_e){}
+          var lines = [];
+          if(results.length > 0){
+            lines.push('已生成 ' + results.length + ' 条：');
+            results.forEach(function(x){
+              lines.push('⟦' + x.name + '⟧ → ' + x.word + (x.reused ? '  （已存在，复用）' : ''));
+            });
+          }
+          if(errors.length > 0){
+            lines.push('');
+            lines.push('失败 ' + errors.length + ' 条：');
+            errors.forEach(function(e){ lines.push(e); });
+          }
+          if(resBox) resBox.textContent = lines.join('\n');
+          if(results.length > 0 && ta) ta.value = '';
+          toast2(results.length > 0 ? '已生成 ' + results.length + ' 条密文' : '未生成任何规则');
+        });
+      });
+
+      // ===== 密文生成设置（2026-11-06）=====
+      var qcfgBox = ev2('sh-red-qcfg');
+      function loadQcfg(){
+        if(!window.shellAPI || !window.shellAPI.redactionQuickConfigGet) return;
+        window.shellAPI.redactionQuickConfigGet().then(function(cfg){
+          if(!cfg || cfg.error) return;
+          var cs = ev2('sh-red-qcfg-charset'); if(cs) cs.value = cfg.charset || '';
+          var ln = ev2('sh-red-qcfg-length'); if(ln) ln.value = cfg.length || 6;
+          var fl = ev2('sh-red-qcfg-filter'); if(fl) fl.checked = cfg.filterConfusable !== false;
+        })['catch'](function(){});
+      }
+      var qcfgOpen = ev2('sh-red-qcfg-open');
+      if(qcfgOpen) qcfgOpen.addEventListener('click', function(){
+        if(qcfgBox){
+          var showing = qcfgBox.style.display !== 'none';
+          qcfgBox.style.display = showing ? 'none' : '';
+          if(!showing) loadQcfg();
+        }
+      });
+      var qcfgSave = ev2('sh-red-qcfg-save');
+      if(qcfgSave) qcfgSave.addEventListener('click', function(){
+        var charset = ((ev2('sh-red-qcfg-charset')||{}).value || '').trim();
+        var length = ((ev2('sh-red-qcfg-length')||{}).value || '').trim();
+        var filterConfusable = !!((ev2('sh-red-qcfg-filter')||{}).checked);
+        if(!charset){ toast2('字符表不能为空'); return; }
+        if(!window.shellAPI || !window.shellAPI.redactionQuickConfigUpdate){ toast2('接口不可用'); return; }
+        window.shellAPI.redactionQuickConfigUpdate({ charset: charset, length: length, filterConfusable: filterConfusable })
+          .then(function(r){
+            if(r && r.error){ toast2('保存失败：' + r.error); return; }
+            toast2('密文设置已保存');
+            if(qcfgBox) qcfgBox.style.display = 'none';
+            try { window.shellAPI.setSetting('redaction-refresh', Date.now()); } catch(_e){}
+          })['catch'](function(){ toast2('保存失败'); });
+      });
+      var qcfgCancel = ev2('sh-red-qcfg-cancel');
+      if(qcfgCancel) qcfgCancel.addEventListener('click', function(){
+        if(qcfgBox) qcfgBox.style.display = 'none';
+      });
+
       var cb = ev2('sh-red-cancel');
       if(cb) cb.addEventListener('click', function(){ showEditor(false); });
 
@@ -3376,6 +3641,36 @@
             loadList();
           })['catch'](function(){ toast2('新增失败'); });
         }
+      });
+
+      // 2026-11-05: 批量删除选中规则
+      var delSelectedBtn = ev2('sh-red-delete-selected');
+      if(delSelectedBtn) delSelectedBtn.addEventListener('click', function(){
+        var box = ev2('sh-red-list');
+        if(!box) return;
+        var cbs = box.querySelectorAll('.sh-red-cb');
+        var names = [];
+        for(var j=0;j<cbs.length;j++){ if(cbs[j].checked) names.push(cbs[j].getAttribute('data-red-name')); }
+        if(names.length === 0){ toast2('未选中任何规则'); return; }
+        if(!confirm('确定删除选中的 ' + names.length + ' 条规则？\n\n' + names.slice(0, 10).join('、') + (names.length > 10 ? ' 等' : '') + '\n\n删除前会自动备份规则表（*.bak-batch-时间戳），可从文件恢复。')) return;
+        window.shellAPI.redactionRulesDeleteBatch(names).then(function(r){
+          if(r && r.error){ toast2('删除失败：' + r.error); return; }
+          toast2('已删除 ' + ((r && r.deleted) || names.length) + ' 条，剩余 ' + ((r && r.remaining) || '?') + ' 条');
+          loadList();
+          try { window.shellAPI.setSetting('redaction-refresh', Date.now()); } catch(_e){}
+        })['catch'](function(){ toast2('删除失败'); });
+      });
+
+      // 2026-11-05: 删除全部规则
+      var delAllBtn = ev2('sh-red-delete-all');
+      if(delAllBtn) delAllBtn.addEventListener('click', function(){
+        if(!confirm('⚠️ 确定删除【全部】规则？\n\n这将清空规则表（含手动添加和 AI 自动添加的所有规则）。\n删除前会自动备份到 *.bak-all-时间戳，可从文件恢复。\n\n如果只是想去掉 AI 自动加的，请用「全部撤销 AI 规则」按钮。')) return;
+        window.shellAPI.redactionRulesDeleteAll().then(function(r){
+          if(r && r.error){ toast2('删除失败：' + r.error); return; }
+          toast2('已删除全部 ' + ((r && r.deleted) || 0) + ' 条规则');
+          loadList();
+          try { window.shellAPI.setSetting('redaction-refresh', Date.now()); } catch(_e){}
+        })['catch'](function(){ toast2('删除失败'); });
       });
 
       loadList();
@@ -3496,7 +3791,7 @@
       '<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;">' +
         '<button class="sh-btn" id="ws-refresh">刷新</button>' +
         '<button class="sh-btn" id="ws-init">初始化项目</button>' +
-        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button>' +
+        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后生成建议标题（不会自动改名，由你手动应用）">AI 建议标题</button>' +
       '</div>' +
       '<div id="ws-list" class="sh-empty">加载中…</div>');
 
@@ -3728,6 +4023,15 @@
     }
     var rf = document.getElementById('ws-refresh');
     if(rf) rf.addEventListener('click', load);
+    // 搜索框：输入即过滤（防抖 150ms，避免每键都重渲染）
+    var searchBox = document.getElementById('ws-search');
+    if(searchBox){
+      var _searchTimer = null;
+      searchBox.addEventListener('input', function(){
+        if(_searchTimer) clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(function(){ _searchTimer = null; load(); }, 150);
+      });
+    }
     var ini = document.getElementById('ws-init');
     if(ini) ini.addEventListener('click', function(){
       if(window.shellAPI && window.shellAPI.initProject) window.shellAPI.initProject().then(function(){ toast2('已触发初始化'); })['catch'](function(){});
@@ -3735,7 +4039,7 @@
     var ar = document.getElementById('ws-ai-rename');
     if(ar) ar.addEventListener('click', function(){
       if(!window.shellAPI || !window.shellAPI.runAction){ toast2('接口不可用'); return; }
-      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 重新命名' : '失败'); })['catch'](function(){ toast2('失败'); });
+      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 生成建议标题（不会自动改名）' : '失败'); })['catch'](function(){ toast2('失败'); });
     });
     load();
   }
@@ -4540,72 +4844,34 @@
       return [];
     }
 
+    // 【004 v6】底部只显示三项：全部窗口总量 / 主窗口 token / 主窗口速度
+    // 不再为每个窗口生成分栏，也不再有 +N 与浮窗（跨窗口详情看「全部分屏」面板）。
     function renderTokens() {
       if (!barEl || !ctxEl) return;
-      var keys = activeViewKeys();
-      // 单视图 / 未分屏：维持原样，只显示默认栏
-      if (keys.length <= 1) {
-        var single = keys.length === 1 ? tokenByView.get(keys[0]) : undefined;
-        ctxEl.textContent = formatTokenCount(typeof single === 'number' ? single : (tokenByView.get('') || 0));
-        // 清理动态分栏（若之前是分屏状态）
-        var extras = barEl.querySelectorAll('[data-sb-multi]');
-        for (var i = 0; i < extras.length; i++) extras[i].remove();
-        var singleItem = ctxEl.parentNode;
-        if (singleItem && singleItem.style) singleItem.style.display = '';
-        var tpsItem2 = document.getElementById('sb-tps-item');
-        if (tpsItem2 && tpsItem2.style) tpsItem2.style.display = '';
-        return;
+      // 同步到全局，供「全部分屏」面板读取
+      window.__lyViewTokens = tokenByView;
+      window.__lyViewTps = tpsByView;
+
+      var keys = window.__lySplitViewKeys || [];
+      var mainViewId = window.__lyMainViewId != null ? String(window.__lyMainViewId) : null;
+
+      // 主窗口 token：优先按 mainViewId 取，取不到则用第一个视图 / 旧兼容键 ''
+      var mainToken = 0;
+      if (mainViewId && typeof tokenByView.get(mainViewId) === 'number') {
+        mainToken = tokenByView.get(mainViewId);
+      } else if (keys.length > 0 && typeof tokenByView.get(keys[0]) === 'number') {
+        mainToken = tokenByView.get(keys[0]);
+      } else if (typeof tokenByView.get('') === 'number') {
+        mainToken = tokenByView.get('');
       }
 
-      // 多视图：隐藏默认栏和默认 tps 栏（速度已并入各分栏），按视图生成
-      var singleParent = ctxEl.parentNode;
-      if (singleParent && singleParent.style) singleParent.style.display = 'none';
-      var tpsItem = document.getElementById('sb-tps-item');
-      if (tpsItem && tpsItem.style) tpsItem.style.display = 'none';
-      // 移除旧的分栏
-      var old = barEl.querySelectorAll('[data-sb-multi]');
-      for (var j = 0; j < old.length; j++) old[j].remove();
+      ctxEl.textContent = formatTokenCount(mainToken);
 
-      // 逐个视图插入分栏：x号窗口 对话上下文:x 输出速度:x
-      var anchor = tpsItem || null;
-      for (var k = 0; k < keys.length; k++) {
-        var vk = keys[k];
-        var val = tokenByView.get(vk);
-        var tps = tpsByView.get(vk);
-        var winNo = viewInfoByKey.get(vk);
-        var item = document.createElement('div');
-        item.className = 'sb-item';
-        item.setAttribute('data-sb-multi', '1');
-        item.setAttribute('title', '窗口' + (winNo != null ? winNo : '?') + ' 的对话上下文与输出速度');
-        // 窗口号
-        if (winNo != null) {
-          var wLbl = document.createElement('span');
-          wLbl.style.cssText = 'font-size:11px;color:var(--ck-text);font-weight:600;margin-right:6px;';
-          wLbl.textContent = winNo + '号窗口';
-          item.appendChild(wLbl);
-        }
-        // 对话上下文
-        var lbl = document.createElement('span');
-        lbl.className = 'sb-label';
-        lbl.textContent = '对话上下文:';
-        var v = document.createElement('span');
-        v.className = 'sb-value';
-        v.textContent = formatTokenCount(typeof val === 'number' ? val : 0);
-        item.appendChild(lbl);
-        item.appendChild(v);
-        // 输出速度
-        var tLbl = document.createElement('span');
-        tLbl.className = 'sb-label';
-        tLbl.style.marginLeft = '8px';
-        tLbl.textContent = '输出速度:';
-        var tV = document.createElement('span');
-        tV.className = 'sb-value';
-        tV.textContent = (tps && tps !== '--') ? tps : '--';
-        item.appendChild(tLbl);
-        item.appendChild(tV);
-        if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(item, anchor);
-        else barEl.appendChild(item);
-      }
+      // 主窗口速度：按 mainViewId 取，取不到用第一个视图
+      var mainTps = null;
+      if (mainViewId) mainTps = tpsByView.get(mainViewId);
+      if (!mainTps && keys.length > 0) mainTps = tpsByView.get(keys[0]);
+      tpsEl.textContent = (mainTps && mainTps !== '--') ? mainTps : '--';
     }
 
     if (window.shellAPI.onTokenUpdated) {
@@ -4662,11 +4928,11 @@
           }
         } catch (_) {}
         viewInfoByKey = infoMap;
-        
+        window.__lyMainViewId = r.mainViewId != null ? r.mainViewId : null;
+
         // 调试日志
         console.log('[LingYa StatusBar] refreshViews keys=' + JSON.stringify(keys) + ', scroll=' + JSON.stringify(r.scroll));
 
-        // 未分屏时 keys 只有主视图一个 → renderTokens 走单栏分支
         window.__lySplitViewKeys = keys;
         // 多视图保留 "" 作为旧数据兼容键（旧版本 payload 可能不带 viewKey）
         tokenByView = tokenUtils.pruneTokenEntries(tokenByView, keys.concat(['']));
@@ -4960,7 +5226,11 @@
     rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>',
     export: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
-    expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>'
+    expand: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>',
+    checklist: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h3M4 12h3M4 18h3"/><path d="M11 6h9M11 12h9M11 18h9"/></svg>',
+    import: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>',
+    syncTitle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>'
   };
 
   // ================ 主视图 ================
@@ -4968,6 +5238,41 @@
   var _wsArchivedOpen = {};
   var _wsArchivedProjOpen = false;
   var _wsTipEl = null;
+
+  // ===== 工作区多选批量删除（2026-11-06）=====
+  // 每个项目组独立维护多选模式与选中集合：
+  //   _wsSelectMode[dir]   = true 表示该项目组处于多选模式
+  //   _wsSelected[dir]     = Set<sessionId>，该组内已勾选的会话
+  // 设计要点：
+  //   - 只作用于当前项目组，避免跨组勾选造成"删了不知道哪里的"误解
+  //   - 跨窗口会话（带 profile 徽标）禁选，避免跨 profile 写入风险
+  //   - 归档会话不纳入多选，降低误删完整归档的可能性
+  var _wsSelectMode = {};
+  var _wsSelected = {};
+
+  /** 取某项目组的选中集合（懒创建） */
+  function wsSelSet(dir){
+    if(!_wsSelected[dir]) _wsSelected[dir] = {};
+    return _wsSelected[dir];
+  }
+  /** 该项目组已选数量 */
+  function wsSelCount(dir){
+    var s = _wsSelected[dir];
+    return s ? Object.keys(s).length : 0;
+  }
+  /** 是否处于多选模式 */
+  function wsIsSelectMode(dir){
+    return !!_wsSelectMode[dir];
+  }
+  /** 退出多选模式并清空选中 */
+  function wsExitSelectMode(dir){
+    _wsSelectMode[dir] = false;
+    _wsSelected[dir] = {};
+  }
+  /** 清空某组全部选中 */
+  function wsClearSelected(dir){
+    _wsSelected[dir] = {};
+  }
 
   function wsShowDirTip(dir, anchor){
     if(!_wsTipEl){
@@ -5005,26 +5310,89 @@
   }
 
   // 渲染单个会话项（Cuckoo renderItem 复刻）
-  function wsRenderItem(s, currentSessionId, archived, hasChildren, sub){
+  // 第 6 参数 dir：所属项目目录，多选模式下用于读写勾选状态
+  function wsRenderItem(s, currentSessionId, archived, hasChildren, sub, dir){
     var label = s.title || s.sessionId;
     var time = wsRelTime(s.updatedAt);
     var isCur = s.sessionId === currentSessionId;
     var renameBtn = '<span class="ck-ws-act" data-act="rename" title="重命名">' + WS_ICON.rename + '</span>';
     var exportBtn = '<span class="ck-ws-act" data-act="export" title="导出为 .md">' + WS_ICON.export + '</span>';
     var delBtn = '<span class="ck-ws-act" data-act="delete" title="删除会话" style="color:#f87171;">' + WS_ICON.trash + '</span>';
+    // ===== 导入到当前对话（2026-11-06）=====
+    // 禁用条件：当前会话自身（防循环）、跨窗口会话（存档按 profile 隔离，读不到）、无 sessionId
+    // 注意 isOtherWin 在下方才计算，这里先用 s.profileId 与 curPid 的判断（curPid 也需下方变量）
+    // 为保证顺序，importBtn 在 isOtherWin 计算之后再拼接，先占位空串
+    var importBtn = '';
     var act = archived
       ? '<span class="ck-ws-act" data-act="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
       : (sub ? '' : '<span class="ck-ws-act" data-act="archive" title="归档">' + WS_ICON.archive + '</span>');
     var open = hasChildren && _wsExpandedDirs['node:' + s.sessionId];
     var caret = '<span class="ck-ws-expand' + (open ? ' open' : '') + (hasChildren ? '' : ' ck-ws-expand-hidden') + '">' + WS_ICON.expand + '</span>';
-    return '<div class="ck-ws-item' + (isCur ? ' current' : '') + (sub ? ' sub' : '') + '"' +
+    // 跨窗口徽标：会话来自别的 profile 时显示
+    var curPid = window.__lyCurrentProfileId || null;
+    var isOtherWin = !!(s.profileId && curPid && s.profileId !== curPid);
+    var badge = isOtherWin
+      ? '<span class="ck-ws-badge" title="该会话来自另一个窗口">' + esc(s.profileName || s.profileId) + '</span>'
+      : '';
+    // ===== 导入到当前对话按钮（2026-11-06）=====
+    // 禁用条件：
+    //   - 无 sessionId
+    //   - 当前会话自身（防循环导入）
+    //   - 跨窗口会话（conversation-archive-read 按 sender 所在 profile 读取）
+    //   - 归档会话允许导入（历史归档往往正是要复用的素材）
+    var canImport = !!s.sessionId && !isCur && !isOtherWin;
+    if(canImport){
+      importBtn = '<span class="ck-ws-act" data-act="import" title="导入到当前对话">' + (WS_ICON.import || '📥') + '</span>';
+    } else {
+      var importTip = !s.sessionId ? '无会话 ID'
+        : (isCur ? '不能导入当前对话本身' : '跨窗口会话暂不支持导入');
+      importBtn = '<span class="ck-ws-act ck-ws-act-disabled" data-act="import" title="' + attr(importTip) + '" style="opacity:.3;cursor:not-allowed;">' + (WS_ICON.import || '📥') + '</span>';
+    }
+    // ===== 同步标题按钮（2026-11-06）=====
+    // 从 AI 网页读取真实标题回写本地 store。
+    // 限制：只有「当前会话」能读——主进程 get-ai-view-title 读的是当前窗口 AI 视图，
+    // 非当前会话的网页 DOM 不在当前视图里，读不到。跨窗口会话同理。
+    var syncTitleBtn = '';
+    if(s.sessionId && isCur && !isOtherWin){
+      syncTitleBtn = '<span class="ck-ws-act" data-act="sync-title" title="从网页同步标题">' + (WS_ICON.syncTitle || '🔄') + '</span>';
+    } else {
+      var syncTip = isCur ? '跨窗口会话无法读取标题'
+        : '只有当前打开的会话能同步标题（请先切换过去）';
+      syncTitleBtn = '<span class="ck-ws-act ck-ws-act-disabled" data-act="sync-title" title="' + attr(syncTip) + '" style="opacity:.3;cursor:not-allowed;">' + (WS_ICON.syncTitle || '🔄') + '</span>';
+    }
+    // ===== 多选模式（2026-11-06）=====
+    // 规则：只有「本组处于多选模式 + 非归档 + 非跨窗口」的会话才渲染 checkbox。
+    // 跨窗口会话禁选：删除涉及别的 profile 写入，风险不对等，直接不给勾。
+    var selectMode = dir ? wsIsSelectMode(dir) : false;
+    var canSelect = selectMode && !archived && !isOtherWin;
+    var cbHtml = '';
+    var checked = false;
+    if(canSelect){
+      var sel = _wsSelected[dir] || {};
+      checked = !!sel[s.sessionId];
+      cbHtml = '<input type="checkbox" class="ck-ws-cb" data-session-id="' + attr(s.sessionId) + '"' +
+        (checked ? ' checked' : '') + ' />';
+    } else if(selectMode && (archived || isOtherWin)){
+      // 多选模式下，不可选的项也留一个占位（灰格），保持行对齐
+      cbHtml = '<span class="ck-ws-cb-placeholder" title="' +
+        (archived ? '归档会话不参与批量删除' : '跨窗口会话不参与批量删除') + '"></span>';
+    }
+    // 多选模式下隐藏单项操作按钮，避免与 checkbox 语义打架
+    var actsHtml = selectMode
+      ? '<span class="ck-ws-acts" style="display:none;">' + renameBtn + syncTitleBtn + exportBtn + importBtn + act + delBtn + '</span>'
+      : '<span class="ck-ws-acts">' + renameBtn + syncTitleBtn + exportBtn + importBtn + act + delBtn + '</span>';
+    return '<div class="ck-ws-item' + (isCur ? ' current' : '') + (sub ? ' sub' : '') + (isOtherWin ? ' other-win' : '') +
+      (checked ? ' ws-selected' : '') + (selectMode ? ' ws-select-mode' : '') + '"' +
       ' data-session-id="' + attr(s.sessionId) + '"' +
+      ' data-profile-id="' + attr(s.profileId || '') + '"' +
       ' data-name="' + attr(label) + '"' +
       ' title="' + attr(s.sessionId) + '">' +
+      cbHtml +
       caret +
       '<span class="ck-ws-name">' + esc(label) + '</span>' +
+      badge +
       (time ? '<span class="ck-ws-time">' + esc(time) + '</span>' : '') +
-      '<span class="ck-ws-acts">' + renameBtn + exportBtn + act + delBtn + '</span>' +
+      actsHtml +
       '</div>';
   }
 
@@ -5039,13 +5407,41 @@
       ? !!_wsExpandedDirs[_gkey]
       : (dir === currentDir);
     var isArchOpen = !!_wsArchivedOpen[dir];
-    var gactHtml = '<span class="ck-ws-gacts">' +
-      '<span class="ck-ws-gact" data-gact="new" title="用该项目新建对话">' + WS_ICON.plus + '</span>' +
-      (archivedProjects.indexOf(dir) !== -1
-        ? '<span class="ck-ws-gact" data-gact="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
-        : '<span class="ck-ws-gact" data-gact="archive" title="归档项目">' + WS_ICON.archive + '</span>') +
-      '<span class="ck-ws-gact" data-gact="delete" title="删除项目（含所有会话）" style="color:#f87171;">' + WS_ICON.trash + '</span>' +
-      '</span>';
+    // ===== 多选模式按钮（2026-11-06）=====
+    // 多选模式下：gacts 换成「全选 + 删除选中(N) + 退出」
+    var selectMode = wsIsSelectMode(dir);
+    var selCount = wsSelCount(dir);
+    var gactHtml;
+    if(selectMode){
+      // 本组可多选的会话数（非归档、非跨窗口），用于「全选」按钮
+      var selectableIds = [];
+      for(var ai2=0; ai2<g.active.length; ai2++){
+        var sx = g.active[ai2];
+        var pidCur = window.__lyCurrentProfileId || '';
+        var otherWin = !!(sx.profileId && pidCur && sx.profileId !== pidCur);
+        if(!otherWin) selectableIds.push(sx.sessionId);
+      }
+      var allSel = selectableIds.length > 0 && selCount >= selectableIds.length;
+      gactHtml = '<span class="ck-ws-gacts ck-ws-gacts-sel">' +
+        '<label class="ck-ws-gsel-all" title="全选/取消全选本组">' +
+          '<input type="checkbox" class="ck-ws-select-all" data-dir="' + attr(dir) + '"' + (allSel ? ' checked' : '') + ' />' +
+          '<span>全选</span>' +
+        '</label>' +
+        '<button class="ck-ws-batch-del" data-dir="' + attr(dir) + '"' + (selCount === 0 ? ' disabled' : '') + '>' +
+          '删除选中(' + selCount + ')' +
+        '</button>' +
+        '<span class="ck-ws-gact" data-gact="exit-select" title="退出多选">✕</span>' +
+        '</span>';
+    } else {
+      gactHtml = '<span class="ck-ws-gacts">' +
+        '<span class="ck-ws-gact" data-gact="select" title="多选批量删除">' + (WS_ICON.checklist || '☑') + '</span>' +
+        '<span class="ck-ws-gact" data-gact="new" title="用该项目新建对话">' + WS_ICON.plus + '</span>' +
+        (archivedProjects.indexOf(dir) !== -1
+          ? '<span class="ck-ws-gact" data-gact="unarchive" title="取消归档">' + WS_ICON.unarchive + '</span>'
+          : '<span class="ck-ws-gact" data-gact="archive" title="归档项目">' + WS_ICON.archive + '</span>') +
+        '<span class="ck-ws-gact" data-gact="delete" title="删除项目（含所有会话）" style="color:#f87171;">' + WS_ICON.trash + '</span>' +
+        '</span>';
+    }
     var html = '<div class="ck-ws-group' + (isOpen ? ' open' : '') + '" data-dir="' + attr(dir) + '">' +
       '<div class="ck-ws-group-title" title="' + attr(dir) + '">' +
         WS_ICON.caret +
@@ -5054,12 +5450,12 @@
         gactHtml +
       '</div>' +
       '<div class="ck-ws-items">';
-    for(var i=0;i<g.active.length;i++) html += wsRenderItem(g.active[i], currentSessionId, false, false, false);
+    for(var i=0;i<g.active.length;i++) html += wsRenderItem(g.active[i], currentSessionId, false, false, false, dir);
     if(g.archived.length){
       html += '<div class="ck-ws-archived' + (isArchOpen ? ' open' : '') + '" data-dir="' + attr(dir) + '">' +
         '<div class="ck-ws-archived-title">已归档 ' + g.archived.length + ' 对话</div>' +
         '<div class="ck-ws-archived-items">';
-      for(var j=0;j<g.archived.length;j++) html += wsRenderItem(g.archived[j], currentSessionId, true, false, false);
+      for(var j=0;j<g.archived.length;j++) html += wsRenderItem(g.archived[j], currentSessionId, true, false, false, dir);
       html += '</div></div>';
     }
     html += '</div></div>';
@@ -5071,7 +5467,10 @@
       '<div class="ck-actions" style="margin-bottom:6px;">' +
         '<button class="sh-btn" id="ws-refresh">刷新</button>' +
         '<button class="sh-btn" id="ws-init">初始化项目</button>' +
-        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后重新命名当前对话">AI 重命名</button>' +
+        '<button class="sh-btn" id="ws-ai-rename" title="让 AI 回顾完整上下文后生成建议标题（不会自动改名，由你手动应用）">AI 建议标题</button>' +
+      '</div>' +
+      '<div class="ck-search-row" style="margin-bottom:6px;">' +
+        '<input type="text" id="ws-search" class="ck-search-input" placeholder="搜索项目或会话…" style="width:100%;box-sizing:border-box;padding:5px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:inherit;font-size:12px;">' +
       '</div>' +
       '<div class="ck-list" id="ws-list"><div class="ck-list-empty">加载中…</div></div>');
 
@@ -5089,9 +5488,25 @@
         var currentSessionId = r.currentSessionId || null;
         var currentDir = r.currentProjectDir || null;
         var archivedProjects = r.archivedProjects || [];
+        // 记录当前窗口 profileId（用于跨窗口徽标判定）
+        if(r.currentProfileId) window.__lyCurrentProfileId = r.currentProfileId;
         if(!sessions.length){
           listEl.innerHTML = '<div class="ck-list-empty">暂无会话（先「初始化项目」）</div>'; return;
         }
+        // 搜索过滤（纯前端，字面匹配）
+        try {
+          var searchEl = document.getElementById('ws-search');
+          var kw = searchEl ? searchEl.value : '';
+          if(kw && kw.trim()){
+            var H = require('./shell-renderer-helpers');
+            var filtered = H.filterSessions(sessions, kw);
+            if(!filtered.length){
+              listEl.innerHTML = '<div class="ck-list-empty">无匹配结果</div>';
+              return;
+            }
+            sessions = filtered;
+          }
+        } catch(_) {}
         // 按项目分组
         var groups = {};
         for(var i=0;i<sessions.length;i++){
@@ -5131,9 +5546,130 @@
     var ar = document.getElementById('ws-ai-rename');
     if(ar) ar.addEventListener('click', function(){
       if(!window.shellAPI || !window.shellAPI.runAction){ toast2('接口不可用'); return; }
-      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 重新命名' : '失败'); })['catch'](function(){ toast2('失败'); });
+      window.shellAPI.runAction('ai-rename').then(function(r){ toast2(r && r.success ? '已请求 AI 生成建议标题（不会自动改名）' : '失败'); })['catch'](function(){ toast2('失败'); });
     });
     load();
+  }
+
+  /**
+   * 把存档 entries 格式化为「参考上下文」文本（2026-11-06）
+   * 设计要点：
+   *   - 明确标注这是历史上下文，不是新任务
+   *   - 结尾加一句「等我提出具体问题」，避免 AI 收到后立刻自作主张长篇输出
+   *   - 剥离工具代码块（与导出 Markdown 一致的过滤），避免把 js 代码块塞给 AI 造成误解
+   *   - 过滤系统消息 tag（拒绝改写/工具结果回传等）
+   * @param {Array<{role:string,text:string,ts:number,tag?:string}>} entries
+   * @param {string} title 会话标题
+   * @returns {string}
+   */
+  function wsFormatImportText(entries, title){
+    var list = Array.isArray(entries) ? entries : [];
+    // 与 conversation-log.js 保持一致的过滤集合（此处不复用 require，避免壳页面加载主世界模块）
+    var SKIP_TAGS = ['拒绝改写请求','拒绝改写回传','拒绝拦截','XML工具调用提示',
+      'CTF注入','飞书','压缩-摘要','定时任务','MCP信息','插入记忆','插入全部记忆',
+      '插入技能','生成文档','沉浸式交流','手动解析','微信','QQ','导入历史'];
+    var SKIP_PREFIXES = ['工具=','JS汇总','工具结果','导入历史','自动重命名','重试','超时重试','AI重命名'];
+    function skipTag(tag){
+      if(!tag) return false;
+      if(SKIP_TAGS.indexOf(tag) !== -1) return true;
+      for(var i=0;i<SKIP_PREFIXES.length;i++){
+        if(String(tag).indexOf(SKIP_PREFIXES[i]) === 0) return true;
+      }
+      return false;
+    }
+    // 剥离 js 代码块
+    var BT3 = String.fromCharCode(96,96,96);
+    function stripJsBlocks(text){
+      if(!text) return '';
+      var out = String(text);
+      // 匹配 ```js / ```javascript / ```lingya ... ```
+      var re = new RegExp(BT3 + '(?:lingya|javascript|js)[\\s\\S]*?' + BT3, 'gi');
+      out = out.replace(re, '');
+      // 未闭合的代码块：截断到结尾
+      var reOpen = new RegExp(BT3 + '(?:lingya|javascript|js)[\\s\\S]*' + String.fromCharCode(36), 'gi');
+      out = out.replace(reOpen, '');
+      return out.trim();
+    }
+    var lines = [];
+    lines.push('我在另一个会话里讨论过以下内容，请作为参考上下文阅读：');
+    lines.push('');
+    // 逐条拼装（保留原角色）
+    var kept = 0;
+    for(var i=0;i<list.length;i++){
+      var e = list[i];
+      if(!e || !e.text) continue;
+      if(e.role === 'user' && skipTag(e.tag)) continue;
+      var body = stripJsBlocks(e.text);
+      if(!body) continue;
+      var roleLabel = (e.role === 'user') ? '用户' : 'AI';
+      lines.push('**' + roleLabel + '**：' + body);
+      kept++;
+    }
+    lines.push('');
+    lines.push('───────────────────────');
+    lines.push('');
+    lines.push('以上是历史对话（共 ' + kept + ' 条消息），来源会话「' + title + '」。');
+    lines.push('请基于此参考，等我提出具体问题。');
+    // 【2026-11-06 修复 #3】返回 kept 有效条数，供调用方判断是否真的为空
+    return { text: lines.join(String.fromCharCode(10)), kept: kept };
+  }
+
+  /**
+   * 执行「导入到当前对话」（2026-11-06）
+   * 流程：读存档 → 统计 → 确认 → 格式化 → sendToChat
+   * @param {string} sessionId
+   * @param {string} title
+   */
+  function wsDoImport(sessionId, title){
+    window.shellAPI.conversationArchiveRead(sessionId).then(function(r){
+      if(!r || !r.success){
+        toast2('读取存档失败：' + ((r && r.error) || '未知错误'));
+        return;
+      }
+      var entries = Array.isArray(r.entries) ? r.entries : [];
+      if(entries.length === 0){
+        toast2('该会话暂无存档内容');
+        return;
+      }
+      // 统计：用户/AI 条数 + 总字符数（粗略估算导入体积）
+      var userCnt = 0, aiCnt = 0, totalChars = 0;
+      for(var i=0;i<entries.length;i++){
+        var e = entries[i];
+        if(!e || !e.text) continue;
+        if(e.role === 'user') userCnt++; else aiCnt++;
+        totalChars += String(e.text).length;
+      }
+      var sizeKB = Math.round(totalChars / 1024);
+      var sizeInfo = sizeKB >= 1 ? ('约 ' + sizeKB + ' KB') : ('约 ' + totalChars + ' 字');
+      // 内容极大时额外提示（>200KB 必然触发附件上传）
+      var bigTip = totalChars > 200 * 1024 ? '\n\n内容较大，导入将自动转为 .md 附件发送。' : '';
+      var msg = '把「' + title + '」导入当前对话？\n\n' +
+        '消息数量：' + entries.length + ' 条（用户 ' + userCnt + ' / AI ' + aiCnt + '）\n' +
+        '内容大小：' + sizeInfo + '\n\n' +
+        '导入后当前对话的 AI 将能看到这段历史内容。' + bigTip;
+      if(!confirm(msg)) return;
+      var fmt = wsFormatImportText(entries, title);
+      // 【2026-11-06 修复 #3】改为按有效消息条数判断，不再用字符长度阈值。
+      // 之前短会话（如「你好」/「在吗」）格式化后 < 50 字符会被误判为空。
+      if(!fmt || !fmt.text || fmt.kept === 0){
+        toast2('该会话没有可导入的有效内容，已取消');
+        return;
+      }
+      // tag 带会话标题，当前会话导出时可追溯来源
+      // 【2026-11-06 修复 #4】文案改为「已提交」，因 sendToChat 只代表转发到 AI 视图，
+      // 不代表 AI 输入框真的填入并发出。AI 页面未就绪时应由下方失败分支兜住。
+      window.shellAPI.sendToChat(fmt.text, '导入历史:' + title).then(function(res){
+        if(res && res.success){
+          toast2('已提交导入请求（' + fmt.kept + ' 条消息），等待 AI 页面接收');
+        } else {
+          toast2('导入失败：' + ((res && res.error) || '未知错误'));
+        }
+      })['catch'](function(err){
+        toast2('导入失败：' + ((err && err.message) || '网络异常'));
+      });
+    })['catch'](function(err){
+      toast2('读取存档异常：' + ((err && err.message) || '未知错误'));
+    });
   }
 
   // 绑定事件（Cuckoo bindWorkspaceEvents 复刻）
@@ -5194,7 +5730,113 @@
             if(r && r.success) { toast2('项目已删除（' + (r.deletedCount||0) + ' 个会话）'); reload(); }
             else toast2('删除失败：' + ((r && r.error) || '未知错误'));
           })['catch'](function(){ toast2('删除失败'); });
+        } else if(act === 'select'){
+          // 进入多选模式
+          _wsSelectMode[dir] = true;
+          _wsSelected[dir] = {};
+          reload();
+        } else if(act === 'exit-select'){
+          // 退出多选模式
+          wsExitSelectMode(dir);
+          reload();
         }
+      });
+    });
+    // ===== 全选 checkbox =====
+    listEl.querySelectorAll('.ck-ws-select-all').forEach(function(cb){
+      cb.addEventListener('click', function(ev){
+        ev.stopPropagation();
+      });
+      cb.addEventListener('change', function(ev){
+        ev.stopPropagation();
+        var dir = cb.getAttribute('data-dir');
+        if(!dir) return;
+        if(cb.checked){
+          // 全选：把所有可选项加入选中集合
+          var grp = cb.closest('.ck-ws-group');
+          if(!grp) return;
+          var sel = wsSelSet(dir);
+          grp.querySelectorAll('.ck-ws-cb').forEach(function(x){
+            var sid = x.getAttribute('data-session-id');
+            if(sid) sel[sid] = true;
+          });
+        } else {
+          // 取消全选
+          _wsSelected[dir] = {};
+        }
+        reload();
+      });
+    });
+    // ===== 批量删除按钮 =====
+    listEl.querySelectorAll('.ck-ws-batch-del').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var dir = btn.getAttribute('data-dir');
+        if(!dir) return;
+        var sel = _wsSelected[dir] || {};
+        var ids = Object.keys(sel);
+        if(ids.length === 0){ toast2('未选中任何会话'); return; }
+        // 收集会话标题用于确认弹窗（从 DOM 上找，避免额外查询）
+        var grp = btn.closest('.ck-ws-group');
+        var names = [];
+        if(grp){
+          grp.querySelectorAll('.ck-ws-item').forEach(function(it){
+            var sid = it.getAttribute('data-session-id');
+            if(sid && sel[sid]){
+              var nm = it.getAttribute('data-name') || sid;
+              names.push(nm);
+            }
+          });
+        }
+        var preview = names.slice(0, 10).map(function(n,i){ return (i+1) + '. ' + n; }).join('\n');
+        var more = names.length > 10 ? ('\n… 等共 ' + names.length + ' 条') : '';
+        if(!confirm('确定删除选中的 ' + ids.length + ' 个会话？\n\n' + preview + more +
+          '\n\n仅从 LingYa 本地记录中移除（不影响 DeepSeek 网页上的对话）。此操作不可恢复。')) return;
+        // 串行删除，失败不中断，结束后汇总
+        // 【2026-11-06 修复竞态 #2】删除期间锁住刷新按钮，避免 DOM 重建导致
+        // 选中状态与按钮计数错乱。删除完成后统一 reload() 解锁。
+        btn.disabled = true;
+        var refreshBtn = document.getElementById('ws-refresh');
+        if(refreshBtn) refreshBtn.disabled = true;
+        var okCount = 0, failCount = 0;
+        var idx = 0;
+        function next(){
+          if(idx >= ids.length){
+            // 收尾：退出多选模式并刷新
+            wsExitSelectMode(dir);
+            toast2('批量删除完成：成功 ' + okCount + '，失败 ' + failCount);
+            // 解锁刷新按钮（reload 后 DOM 会重建，但保险起见先解）
+            if(refreshBtn) refreshBtn.disabled = false;
+            reload();
+            return;
+          }
+          var sid = ids[idx++];
+          toast2('正在删除 ' + idx + '/' + ids.length + '…');
+          try {
+            window.shellAPI.deleteSession(sid).then(function(r){
+              if(r && r.success) okCount++; else failCount++;
+              next();
+            })['catch'](function(){ failCount++; next(); });
+          } catch(_) { failCount++; next(); }
+        }
+        next();
+      });
+    });
+    // ===== 单项 checkbox 勾选 =====
+    listEl.querySelectorAll('.ck-ws-cb').forEach(function(cb){
+      cb.addEventListener('click', function(ev){
+        ev.stopPropagation();
+      });
+      cb.addEventListener('change', function(ev){
+        ev.stopPropagation();
+        var grp = cb.closest('.ck-ws-group');
+        if(!grp) return;
+        var dir = grp.getAttribute('data-dir');
+        var sid = cb.getAttribute('data-session-id');
+        if(!dir || !sid) return;
+        var sel = wsSelSet(dir);
+        if(cb.checked) sel[sid] = true; else delete sel[sid];
+        reload();
       });
     });
     // 会话项：点击导航 + 操作按钮
@@ -5203,6 +5845,37 @@
         var id = item.getAttribute('data-session-id');
         var name = item.getAttribute('data-name') || '';
         var actEl = ev.target.closest('.ck-ws-act');
+        // ===== 多选模式：点击行切换 checkbox，不导航（2026-11-06）=====
+        var grpEl = item.closest('.ck-ws-group');
+        var grpDir = grpEl ? grpEl.getAttribute('data-dir') : '';
+        if(grpDir && wsIsSelectMode(grpDir)){
+          // 点击 checkbox 本身时，由 checkbox 自己的 change 处理，避免重复触发
+          if(ev.target && ev.target.classList && ev.target.classList.contains('ck-ws-cb')) return;
+          // 跨窗口 / 归档项：不参与多选，点击无反应（也不导航，避免误跳）
+          var cbEl = item.querySelector('.ck-ws-cb');
+          if(!cbEl) return;
+          ev.stopPropagation();
+          var sel = wsSelSet(grpDir);
+          if(sel[id]) delete sel[id]; else sel[id] = true;
+          reload();
+          return;
+        }
+        // 跨窗口会话：提示并跳转（不直接导航，避免当前窗口丢失当前上下文）
+        var itemPid = item.getAttribute('data-profile-id') || '';
+        var curPid = window.__lyCurrentProfileId || '';
+        if(!actEl && itemPid && curPid && itemPid !== curPid){
+          ev.stopPropagation();
+          if(confirm('该会话在另一个窗口。要跳转过去吗？\n\n（当前窗口的项目和上下文不受影响）')){
+            try {
+              if(window.shellAPI && window.shellAPI.openProfileWindow) {
+                window.shellAPI.openProfileWindow(itemPid).then(function(r){
+                  if(!r || !r.success) toast2('跳转失败');
+                })['catch'](function(){ toast2('跳转失败'); });
+              }
+            } catch(_){}
+          }
+          return;
+        }
         if(actEl){
           ev.stopPropagation();
           var act = actEl.getAttribute('data-act');
@@ -5262,6 +5935,46 @@
               if(r && r.success) { /* 主进程会异步弹保存框 */ }
               else toast2('导出失败：' + ((r && r.error) || '未知错误'));
             })['catch'](function(){ toast2('导出失败'); });
+          } else if(act === 'sync-title'){
+            // ===== 从网页同步标题（2026-11-06）=====
+            // 主进程代读 AI 视图 DOM（shell 窗口读不到 AI 网页），拿回标题后写本地 store。
+            if(actEl.classList.contains('ck-ws-act-disabled')) return;
+            if(!window.shellAPI || !window.shellAPI.getAiViewTitle){
+              toast2('接口不可用');
+              return;
+            }
+            window.shellAPI.getAiViewTitle().then(function(res){
+              if(!res || !res.success){
+                toast2('读取网页标题失败：' + ((res && res.error) || '未知错误'));
+                return;
+              }
+              if(!res.title || !res.title.trim()){
+                toast2('网页上未找到会话标题');
+                return;
+              }
+              // 校验：读到的 sessionId 必须与点击的会话一致，防止读错会话的标题
+              if(res.sessionId && id && res.sessionId !== id){
+                toast2('当前网页打开的是另一个会话，无法同步该会话标题');
+                return;
+              }
+              window.shellAPI.setSessionTitle(res.title, id).then(function(r2){
+                if(r2 && r2.success){
+                  toast2('已同步标题：' + res.title);
+                  reload();
+                } else {
+                  toast2('保存标题失败：' + ((r2 && r2.error) || '未知错误'));
+                }
+              })['catch'](function(){ toast2('保存标题失败'); });
+            })['catch'](function(err){
+              toast2('读取网页标题异常：' + ((err && err.message) || '未知错误'));
+            });
+          } else if(act === 'import'){
+            // ===== 导入到当前对话（2026-11-06）=====
+            // 禁用项（当前会话/跨窗口/无ID）的按钮带 ck-ws-act-disabled，点击直接返回
+            if(actEl.classList.contains('ck-ws-act-disabled')) return;
+            if(!id || !window.shellAPI || !window.shellAPI.conversationArchiveRead) return;
+            if(!window.shellAPI.sendToChat){ toast2('发送接口不可用'); return; }
+            wsDoImport(id, name || id);
           }
           return;
         }

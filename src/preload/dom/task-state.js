@@ -22,12 +22,12 @@ const STORAGE_KEY = 'lingya-task-state';
 const STALL_THRESHOLDS = {
   // 已发出消息，但 AI 迟迟不开始生成 → 可能没发出去
   // 正常情况 DeepSeek 1-3s 内就会 ai-start，30s 已是极宽松的上限
-  SENT: 30 * 1000,
+  SENT: 60 * 1000,   // 2026-11-05: 30s -> 60s，覆盖最长 40s 随机发送延迟
   // 正在等 AI 回复，但流迟迟不收尾 → 可能事件丢了
   AWAITING: 120 * 1000,
   // 刚收到回复，正在解析/执行工具 → 正常情况下几乎瞬间过渡，30s 足够
   // （处理过程中抛异常时会卡在这里，需要兜底）
-  RESPONDED: 30 * 1000,
+  RESPONDED: 60 * 1000,   // 2026-11-05: 30s -> 60s，覆盖最长 40s 随机发送延迟
   // 工具执行中 → 正常情况 660s 内必结束（JsRunner deadline），留余量
   EXECUTING: 720 * 1000,
 };
@@ -112,10 +112,10 @@ function startTicker() {
     // 此时重置会误报「已结束」，把用户正在等的任务状态抹掉。
     try {
       const stallThreshold = STALL_THRESHOLDS[current.state] || 0;
-      if (current.state === STATES.RESPONDED && !current.queued && stallThreshold > 0) {
+      if ((current.state === STATES.RESPONDED || current.state === STATES.SENT) && !current.queued && stallThreshold > 0) {
         const stalled = Date.now() - current.enteredAt;
         if (stalled > stallThreshold) {
-          console.log('[LingYa][状态机] RESPONDED 已停滞 ' + Math.round(stalled / 1000) +
+          console.log('[LingYa][状态机] ' + current.state + ' 已停滞 ' + Math.round(stalled / 1000) +
             's 超过阈值 ' + Math.round(stallThreshold / 1000) + 's，无后续动作 → 自动恢复 IDLE');
           reset('RESPONDED 超时自动恢复');
         }

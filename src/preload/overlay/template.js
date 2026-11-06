@@ -77,7 +77,7 @@ const OVERLAY_HTML = [
 '        <div class="lingya-session-header">',
 '          <span class="lingya-label">会话列表</span>',
 '          <button id="lingya-btn-refresh-sessions" class="lingya-btn-refresh-sessions" title="刷新会话列表">🔄 刷新</button>',
-'          <button id="lingya-btn-ai-rename" class="lingya-btn-refresh-sessions" title="让 AI 回顾完整上下文后重新命名当前对话">🤖 AI 重命名</button>',
+'          <button id="lingya-btn-ai-rename" class="lingya-btn-refresh-sessions" title="让 AI 回顾完整上下文后生成建议标题（不会自动改名，由你手动应用）">🤖 AI 建议标题</button>',
 '        </div>',
 '        <div id="lingya-session-list" class="lingya-session-list">',
 '          <div class="lingya-session-empty">暂无会话</div>',

@@ -1028,22 +1028,22 @@ function bindEvents() {
   const refreshSessionsBtn = document.getElementById('lingya-btn-refresh-sessions');
   refreshSessionsBtn?.addEventListener('click', renderSessions);
 
-  // AI 重命名按钮：让 AI 回顾完整上下文后用 nameConversation 重新命名本对话
+  // AI 建议标题按钮：让 AI 回顾完整上下文后用 nameConversation 生成建议标题（不自动改名）
   const aiRenameBtn = document.getElementById('lingya-btn-ai-rename');
   aiRenameBtn?.addEventListener('click', () => {
     const prompt = [
       '请回顾本次对话的**完整上下文**（包括所有历史消息与工具执行结果），提炼这次对话真正在做的核心工作，',
-      '然后**只调用一次** nameConversation(title) 工具，给本次对话起一个准确的中文标题（≤20 字）。',
+      '然后**只调用一次** nameConversation(title) 工具，生成一个准确的中文标题建议（≤20 字）。',
       '',
       '要求：',
       '1. 标题要体现对话的**实际核心内容**，不要用"你好""继续"这类开场词，也不要用最后一条消息的主题代替整体。',
       '2. 直接调用工具，不要输出计划、不要解释、不要做任何其他操作。',
-      '3. 调用完只回复一句"已重命名为：<标题>"即可。',
+      '3. 注意：这个工具**只产出建议标题，不会自动改会话名**，由用户手动应用。调用完只回复一句"建议标题：<标题>"即可，不要说"已重命名"。',
     ].join('\n');
     if (!sendToChat(prompt, 'AI重命名', 300)) {
       showToast('未找到输入框，请确保已打开聊天界面', 3000);
     } else {
-      showToast('已请求 AI 重新命名本对话', 2200);
+      showToast('已请求 AI 生成建议标题（不会自动改名）', 2200);
     }
   });
 
@@ -1051,6 +1051,16 @@ function bindEvents() {
   try {
     if (window.electronAPI && window.electronAPI.onSessionTitleUpdated) {
       window.electronAPI.onSessionTitleUpdated(() => { try { renderSessions(); } catch (_) {} });
+    }
+  } catch (_) { /* ignore */ }
+
+  // AI 生成「建议标题」（不自动改会话名）→ Toast 提示，由用户手动改名
+  try {
+    if (window.electronAPI && window.electronAPI.onSessionTitleSuggested) {
+      window.electronAPI.onSessionTitleSuggested((payload) => {
+        const t = payload && payload.title;
+        if (t) showToast('建议标题：' + t + '（未自动应用，请手动改名）', 6000);
+      });
     }
   } catch (_) { /* ignore */ }
 

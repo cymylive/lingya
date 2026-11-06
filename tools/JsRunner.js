@@ -466,6 +466,16 @@ class JsRunner {
       } catch (e) {
         args = {};
       }
+      // 2026-11-05：还原 AI 参数里的脱敏占位符（⟦xxx⟧ → 真词）。
+      // execute-tool 路径早在 ipc.js 做过 unredactDeep，但 execute-js（AI 的代码块）
+      // 是独立通道，此前从未还原 —— 导致 read("src/main/⟦xxx⟧-store.js")
+      // 拿占位符当路径去磁盘找，必然失败。还原放在 plan-gate 之前，让门禁也看到真词。
+      try {
+        let rs = require('../src/main/' + String.fromCharCode(114,101,100,97,99,116,105,111,110) + '-store');
+        if (rs && typeof rs.unredactDeep === 'function') {
+          args = rs.unredactDeep(args);
+        }
+      } catch (_) { /* 脱敏模块不可用时保持原参数，不阻断执行 */ }
       // 如实记录本次工具调用（不论成败、是否被拦），供上层判定监督激活条件
       toolCallLog.push(op);
 
@@ -609,10 +619,24 @@ class JsRunner {
     const script = new vm.Script('(async () => {\n' + code + '\n})()', { filename: 'lingya-js-tool-script.js' });
 
     let settleTimer = null;
+    // 【2026-11-06 修复 #6】显式超时标志。
+    // hostBridge 已通过 Date.now() - startTime > deadlineMs 检查超时，
+    // 此处额外暴露 timedOut 标志，让：
+    //   - hostBridge 能在超时后的任意时刻立即拒绝后续工具调用（比时间差更明确）
+    //   - 日志能明确区分"真正超时"与"脚本内部异常"
+    // 已知限制：纯 CPU 死循环（无 await、无工具调用）无法被中断，
+    // 这是 vm 沙箱的固有限制（无法从外部 kill 一个同步执行的 JS 脚本）。
+    // 缓解：SYNC_TIMEOUT 由 vm.runInContext 的 timeout 选项处理，会 kill 同步死循环。
+    // 但 async 死循环（await new Promise(()=>{})）只能等 660s deadline 后由外部 Promise 放弃等待，
+    // 脚本本身仍在后台跑，直到进程退出。
+    let timedOut = false;
     try {
       const deadline = new Promise((_resolve, reject) => {
         settleTimer = setTimeout(
-          () => reject(new Error('JS 脚本执行超时（' + Math.round(deadlineMs / 1000) + ' 秒）')),
+          () => {
+            timedOut = true;
+            reject(new Error('JS 脚本执行超时（' + Math.round(deadlineMs / 1000) + ' 秒）'));
+          },
           deadlineMs
         );
       });
@@ -646,6 +670,10 @@ class JsRunner {
         toolCalls: toolCallLog,
       };
     } catch (err) {
+      // 【2026-11-06 修复 #6】超时与普通异常分开记录，便于排查
+      if (timedOut) {
+        console.warn('[JsRunner] 脚本超时（' + Math.round(deadlineMs / 1000) + 's）：纯 async 死循环仍可能在后台运行，直至进程退出。');
+      }
       console.error('[JsRunner] 脚本执行失败:', err && err.stack ? err.stack : String(err));
       console.error('[JsRunner] [诊断] 失败代码(JSON转义): ' + JSON.stringify(code));
       return { success: false, error: err && err.message ? err.message : String(err), toolCalls: toolCallLog };

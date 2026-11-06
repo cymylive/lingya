@@ -188,7 +188,10 @@ function initHarnessBridge() {
   }
   try {
     // 【审计 2026-11-02】降频：心跳从 2 秒改 5 秒，减少日志噪音；harness.html 会合并 ai-state
-    setInterval(() => report({ type: 'ai-state', generating: aiGenerating }), 5000);
+    // 【2026-11-06 修复 #5】幂等保护
+    if (!window.__lyHarnessHeartbeat) {
+      window.__lyHarnessHeartbeat = setInterval(() => report({ type: 'ai-state', generating: aiGenerating }), 5000);
+    }
   } catch (_) {}
 
   onStream((ev) => {
@@ -270,10 +273,12 @@ function initHarnessBridge() {
   } catch (_) {}
 
   // 会话切换 → 上报
+  // 【2026-11-06 修复 #5】幂等保护
   (function watchSessionChange() {
+    if (window.__lyHarnessSessionTimer) return;
     let lastSid = getCurrentSessionId();
     try {
-      setInterval(() => {
+      window.__lyHarnessSessionTimer = setInterval(() => {
         const sid = getCurrentSessionId();
         if (sid === lastSid) return;
         lastSid = sid;

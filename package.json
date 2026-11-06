@@ -1,6 +1,6 @@
 {
   "name": "lingya",
-  "version": "0.6.184",
+  "version": "0.6.202",
   "description": "LingYa（灵鸦）——内嵌 AI 网页版的桌面智能体，自动识别回复中的命令与工具调用并执行",
   "main": "main.js",
   "scripts": {
@@ -128,7 +128,7 @@
     },
     "portable": {
       "artifactName": "lingya-win-v${version}-portable.${ext}",
-      "unpackDirName": "LingYa-runtime-0.6.184"
+      "unpackDirName": "LingYa-runtime-0.6.202"
     },
     "asarUnpack": [
       "**/node_modules/@vscode/ripgrep/**",
@@ -163,6 +163,14 @@
       {
         "from": "resources/graphify",
         "to": "graphify"
+      },
+      {
+        "from": "src/main/remote/pwa",
+        "to": "remote-pwa"
+      },
+      {
+        "from": "resources/cloudflared",
+        "to": "cloudflared"
       }
     ],
     "files": [
@@ -191,6 +199,7 @@
       "tools/rules.md",
       "src/prompt/*.md",
       "src/prompt/superpowers/**/*",
+      "src/prompt/speckit/**/*",
       "src/prompt/purge/**/*",
       "src/assets/plugin-dev-skill/**/*",
       "src/assets/security-audit-skill/**/*",

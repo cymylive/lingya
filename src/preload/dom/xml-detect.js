@@ -48,7 +48,11 @@ function detectXmlFormat(raw, customPatterns) {
   const hasXmlClose = BUILTIN_PATTERNS[2].test(text);
   const hasXmlParam = BUILTIN_PATTERNS[3].test(text);
   // 只有 invoke 没有 parameter/close 不算（避免误伤普通 HTML 示例）
-  return hasDsmlMark || (hasXmlInvoke && (hasXmlClose || hasXmlParam));
+  // 2026-11-05: 收紧判定。原条件 hasXmlClose 过松——AI 讨论 XML / 复述工具格式时
+  // 很容易带出 </invoke> 这类文本，被误判为「AI 用了 XML 格式调工具」，进而触发
+  // XML 提示消息 → 随机发送延迟 → 撞 RESPONDED 超时 → 中断。
+  // 改为必须有 invoke + parameter 同时出现（真正的 DSML 调用一定带 parameter）。
+  return hasDsmlMark || (hasXmlInvoke && hasXmlParam);
 }
 
 module.exports = { detectXmlFormat, compileCustomPatterns, BUILTIN_PATTERNS };

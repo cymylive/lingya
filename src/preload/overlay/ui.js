@@ -643,6 +643,16 @@ function handleIgnore() {
  * @param {Object} entry - 历史记录对象，包含 id、command、success、canceled、output、timestamp 等字段
  */
 function addHistory(entry) {
+  // 2026-11-05: 写入面板历史前还原占位符，让用户看到真词
+  try {
+    const { unredactText } = require('../dom/redaction-filter');
+    if (unredactText && entry) {
+      const e = Object.assign({}, entry);
+      if (typeof e.command === 'string') e.command = unredactText(e.command);
+      if (typeof e.output === 'string') e.output = unredactText(e.output);
+      entry = e;
+    }
+  } catch (_) {}
   commandHistory.unshift(entry);
   if (commandHistory.length > 50) commandHistory.pop();
   renderHistory();

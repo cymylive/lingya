@@ -80,4 +80,22 @@ function redactText(text) {
   return out;
 }
 
-module.exports = { redactText, refreshRules };
+/**
+ * 反向还原：把占位符换回真词。
+ * 【2026-11-05 新增】供本地显示/导出/推送使用——
+ * 出站发给 AI 平台的仍是占位符（防泄露），但本地出口（IM 推送、会话存档、
+ * 覆盖层日志、网页 DOM）应还原成真词，让用户看到可读内容。
+ * 使用同一份 cachedPairs（与 redactText 共享规则表），确保双向一致。
+ */
+function unredactText(text) {
+  if (!text || typeof text !== 'string') return text;
+  if (cachedPairs.length === 0) return text;
+  let out = text;
+  for (const { word, placeholder } of cachedPairs) {
+    if (out.indexOf(placeholder) === -1) continue;
+    out = out.split(placeholder).join(word);
+  }
+  return out;
+}
+
+module.exports = { redactText, unredactText, refreshRules };

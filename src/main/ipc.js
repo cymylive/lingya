@@ -8,6 +8,35 @@ const { exec } = require('child_process');
 const windowState = require('./window');
 const profileManager = require('./profile-manager');
 const { toolRegistry, jsRunner } = require('./tool-registry');
+const redactionStore = require('./redaction-store');
+// 2026-11-06: 监听规则文件外部修改，自动通知所有网页刷新缓存
+try {
+  const redactionStore = require('./redaction-store');
+  redactionStore.storeEvents.on('changed', () => {
+    console.log('[Redaction] 收到外部文件变更，广播 refreshRules 通知');
+    try {
+      const windowState = require('./window');
+      const { getAllContexts } = windowState;
+      if (typeof getAllContexts === 'function') {
+        for (const ctx of getAllContexts()) {
+          if (ctx.win && !ctx.win.isDestroyed() && ctx.win.webContents) {
+            ctx.win.webContents.send('redaction-rules-changed', {});
+          }
+          if (ctx.attachedViews) {
+            for (const view of ctx.attachedViews) {
+              if (view && !view.webContents.isDestroyed()) {
+                view.webContents.send('redaction-rules-changed', {});
+              }
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('广播刷新失败:', e.message); }
+  });
+} catch (err) {
+  console.warn('挂载脱敏规则文件监听失败:', err.message);
+}
+
 const { initProject } = require('./project-context');
 const { isDangerous } = require('./dangerous-commands');
 const memoryStore = require('./memory-store');
@@ -27,6 +56,7 @@ const { checkGate } = require('../../tools/plan-gate');
 const memoryJanitor = require('../../tools/memory-janitor');
 const toolLifecycle = require('../../tools/tool-lifecycle');
 const activityTrackerRef = require('./activity-tracker');
+const { createArchiveIpc } = require('./conversation-archive-ipc');
 
 // 【2026-10-30】工具开始/结束时立刻广播「总控台数据已变化」。
 // 此前只有 todo 变化和 AI 生成状态变化会广播，「正在执行：glob」这类
@@ -82,6 +112,9 @@ function logCtxLookupFailure(sender) {
 
 // 初始化项目
 function registerIpcHandlers() {
+  // 会话存档 IPC（每 profile 独立的 jsonl 存档）
+  global.__lingyaArchiveIpc = createArchiveIpc(ipcMain, windowState, app.getPath('userData'));
+
   // 飞书同步 IPC
   registerFeishuIpc();
 
@@ -137,6 +170,8 @@ function registerIpcHandlers() {
     const now = Date.now();
     generationState.prune(now);   // 清掉已关闭视图的残记录
     const out = [];
+    // 全局用量表（跨窗口）：viewKey(webContentsId) → { tokens, tps }
+    const _usage = global.__lingyaViewUsage || new Map();
 
     for (const ctx of windowState.getAllContexts()) {
       // 窗口名 / 平台
@@ -181,6 +216,8 @@ function registerIpcHandlers() {
         }),
         activity: activityTracker.get(hostKey),
         generating: hostGen,
+        tokens: (hostWcId != null && _usage.get(String(hostWcId))) ? (_usage.get(String(hostWcId)).tokens || 0) : 0,
+        tps: (hostWcId != null && _usage.get(String(hostWcId))) ? (_usage.get(String(hostWcId)).tps || '--') : '--',
       });
 
       // 附加面板
@@ -245,6 +282,8 @@ function registerIpcHandlers() {
           }),
           activity: activityTracker.get(key),
           generating: attGen,
+          tokens: _usage.get(String(attWcId)) ? (_usage.get(String(attWcId)).tokens || 0) : 0,
+          tps: _usage.get(String(attWcId)) ? (_usage.get(String(attWcId)).tps || '--') : '--',
         });
       }
 
@@ -777,7 +816,10 @@ function registerIpcHandlers() {
   });
 
   // ========== 底部状态栏数据（对齐 Cuckoo-Code）==========
-  // AI 页面推送 token / TPS → 主进程转发给壳页面
+  // 全局表：viewKey (webContentsId) → { tokens, tps }
+  // 用于「全部分屏」面板跨窗口展示各视图的用量（跨窗口壳进程互不可见）。
+  if (!global.__lingyaViewUsage) global.__lingyaViewUsage = new Map();
+
   ipcMain.handle('update-token-usage', async (event, payload) => {
     try {
       // 常规：事件来源就是某个窗口的壳/AI 视图
@@ -795,6 +837,15 @@ function registerIpcHandlers() {
       const out = Object.assign({}, payload || {});
       // 带上视图标识，让壳页面按视图分别记录用量（多视图分屏时各显示各的）
       try { out.viewKey = String(event.sender.id); } catch (_) {}
+      // 全局表：记录该视图最新 token，供跨窗口的总控台读取
+      try {
+        const _k = out.viewKey;
+        if (_k) {
+          const cur = global.__lingyaViewUsage.get(_k) || { tokens: 0, tps: '--' };
+          if (typeof out.context === 'number') cur.tokens = out.context;
+          global.__lingyaViewUsage.set(_k, cur);
+        }
+      } catch (_) {}
       ctx.rawWin.webContents.send('shell-token-updated', out);
     } catch (_) {}
     return { success: true };
@@ -813,6 +864,15 @@ function registerIpcHandlers() {
       }
       const out = { tps: String(text || '') };
       try { out.viewKey = String(event.sender.id); } catch (_) {}
+      // 全局表：记录该视图最新 tps
+      try {
+        const _k = out.viewKey;
+        if (_k) {
+          const cur = global.__lingyaViewUsage.get(_k) || { tokens: 0, tps: '--' };
+          cur.tps = out.tps || '--';
+          global.__lingyaViewUsage.set(_k, cur);
+        }
+      } catch (_) {}
       ctx.rawWin.webContents.send('shell-tps-updated', out);
     } catch (_) {}
     return { success: true };
@@ -820,13 +880,26 @@ function registerIpcHandlers() {
 
   // ========== 侧栏「工作区」页（对齐 Cuckoo-Code）==========
   // 跨项目聚合所有会话 + 当前会话 + 已归档项目
+  // 2026-11-05：改为跨 profile 聚合（工作区展示所有窗口的项目/会话）
   ipcMain.handle('list-all-sessions', async (event) => {
     const ctx = windowState.getContextByWebContents(event.sender);
-    const store = ctx ? ctx.sessionStore : null;
-    if (!store || typeof store.listAllSessions !== 'function') {
-      return { success: false, error: '会话存储未就绪', sessions: [], currentSessionId: null, archivedProjects: [] };
+    if (!ctx) {
+      return { success: false, error: '窗口上下文不存在', sessions: [], currentSessionId: null, archivedProjects: [] };
     }
-    return store.listAllSessions();
+    try {
+      const { aggregateWorkspaces } = require('./workspace-aggregator');
+      const profiles = profileManager.readProfiles();
+      const agg = aggregateWorkspaces(app.getPath('userData'), ctx.profileId, profiles);
+      // 补上当前窗口的会话/项目信息（前端依赖）
+      const store = ctx.sessionStore;
+      const cur = (store && typeof store.listAllSessions === 'function') ? store.listAllSessions() : null;
+      agg.currentSessionId = cur ? cur.currentSessionId : null;
+      agg.currentProjectDir = cur ? cur.currentProjectDir : null;
+      agg.currentProfileId = ctx.profileId;
+      return agg;
+    } catch (err) {
+      return { success: false, error: err.message, sessions: [], currentSessionId: null, archivedProjects: [] };
+    }
   });
 
   // 归档 / 取消归档项目
@@ -884,6 +957,12 @@ function registerIpcHandlers() {
     if (!command || typeof command !== 'string') {
       return { id, success: false, error: '无效的命令' };
     }
+    // 2026-11-05：还原命令里的脱敏占位符。与 execute-tool / execute-js 一致，
+    // 防止 AI 传来的路径/参数里含占位符导致命令执行失败。
+    try {
+      const rs = require('./redaction-store');
+      if (rs && typeof rs.unredactText === 'function') command = rs.unredactText(command);
+    } catch (_) { /* 脱敏模块不可用时不阻断 */ }
     const trimmed = normalizeCommand(command.trim());
     if (!trimmed) return { id, success: false, error: '命令为空' };
 
@@ -953,6 +1032,29 @@ function registerIpcHandlers() {
       return { error: err.message };
     }
   });
+  // 2026-11-06: 快速脱敏（只给真词，自动生成随机密文）
+  ipcMain.handle('redaction-rules-quick-add', async (_e, { word } = {}) => {
+    try {
+      return require('./redaction-store').addQuickRule(word);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  // 2026-11-06: 密文生成配置读写
+  ipcMain.handle('redaction-quick-config-get', async () => {
+    try {
+      return require('./redaction-store').getQuickGenConfig();
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  ipcMain.handle('redaction-quick-config-update', async (_e, patch) => {
+    try {
+      return require('./redaction-store').updateQuickGenConfig(patch);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
   ipcMain.handle('redaction-rules-update', async (_e, { name, patch }) => {
     try {
       return require('./redaction-store').updateRule(name, patch);
@@ -963,6 +1065,22 @@ function registerIpcHandlers() {
   ipcMain.handle('redaction-rules-delete', async (_e, { name }) => {
     try {
       return require('./redaction-store').deleteRule(name);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  // 2026-11-05: 批量删除选中规则（前端勾选多条后一次提交）
+  ipcMain.handle('redaction-rules-delete-batch', async (_e, { names } = {}) => {
+    try {
+      return require('./redaction-store').deleteRules(names);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+  // 2026-11-05: 删除全部规则（含 manual + auto）
+  ipcMain.handle('redaction-rules-delete-all', async () => {
+    try {
+      return require('./redaction-store').deleteAllRules();
     } catch (err) {
       return { error: err.message };
     }
@@ -998,6 +1116,70 @@ function registerIpcHandlers() {
     try {
       const r = require('./redaction-store').promoteToGlobal(name);
       return { success: true, rule: r };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 导出脱敏规则（弹保存框，写出完整规则表 JSON）
+  ipcMain.handle('redaction-rules-export', async () => {
+    try {
+      const win = windowState.getMainWindow();
+      const defaultName = '⟦自动_2⟧-redaction-' + new Date().toISOString().slice(0, 10) + '.json';
+      const result = dialog.showSaveDialogSync(win, {
+        defaultPath: defaultName,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        title: '导出脱敏规则',
+      });
+      if (!result) return { success: false, canceled: true };
+      const fs = require('fs');
+      const data = require('./redaction-store').exportRules();
+      fs.writeFileSync(result, JSON.stringify(data, null, 2), 'utf-8');
+      return { success: true, count: data.rules.length, path: result };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // 导入脱敏规则（弹文件选择框，合并写入：同名覆盖 + 新名追加）
+  ipcMain.handle('redaction-rules-import', async () => {
+    try {
+      const win = windowState.getMainWindow();
+      const result = dialog.showOpenDialogSync(win, {
+        properties: ['openFile'],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+        title: '选择脱敏规则 JSON 文件',
+      });
+      if (!result || result.length === 0) return { success: false, canceled: true };
+      const fs = require('fs');
+      const raw = fs.readFileSync(result[0], 'utf-8');
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        return { success: false, error: 'JSON 解析失败: ' + err.message };
+      }
+      const store = require('./redaction-store');
+      const stat = store.importRules(parsed);
+      store._clearCache();
+      // 广播给所有窗口：脱敏规则已变，preload 侧需 refreshRules()
+      try {
+        if (windowState && typeof windowState.getAllContexts === 'function') {
+          for (const ctx of windowState.getAllContexts()) {
+            try {
+              const wc = ctx.win && ctx.win.webContents;
+              if (wc && !wc.isDestroyed()) wc.send('redaction-rules-changed', {});
+            } catch (_) {}
+            try {
+              const rawWin = ctx.rawWin;
+              if (rawWin && !rawWin.isDestroyed() && rawWin.webContents) {
+                rawWin.webContents.send('redaction-rules-changed', {});
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      return { success: true, ...stat };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -1256,6 +1438,27 @@ function registerIpcHandlers() {
 
   // ========== Skill 系统 ==========
   // 列出所有技能
+// 贝塞尔曲线点击辅助（P3，2026-11-05）：让可信点击的鼠标轨迹更接近真人。
+const _lastMousePos = new Map();
+function _bezierPath(x0, y0, x1, y1, steps) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 5) return [{ x: x1, y: y1 }];
+  const jitter = (Math.random() - 0.5) * dist * 0.4;
+  const nx = -dy / dist, ny = dx / dist;
+  const cx = (x0 + x1) / 2 + nx * jitter;
+  const cy = (y0 + y1) / 2 + ny * jitter;
+  const pts = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    const px = mt * mt * x0 + 2 * mt * t * cx + t * t * x1;
+    const py = mt * mt * y0 + 2 * mt * t * cy + t * t * y1;
+    pts.push({ x: Math.round(px + (Math.random() - 0.5) * 2), y: Math.round(py + (Math.random() - 0.5) * 2) });
+  }
+  return pts;
+}
+function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
   // ========== Trusted input (isTrusted) ==========
   ipcMain.handle('trusted-click', async (event, args) => {
     try {
@@ -1276,9 +1479,19 @@ function registerIpcHandlers() {
       let cy = Math.round(y);
       if (w > 0) cx = Math.max(0, Math.min(cx, w - 1));
       if (h > 0) cy = Math.max(0, Math.min(cy, h - 1));
+      const prev = _lastMousePos.get(wc.id);
+      const start = prev || { x: Math.round(w / 2), y: Math.round(h / 2) };
+      const steps = 8 + Math.floor(Math.random() * 8);
+      const path = _bezierPath(start.x, start.y, cx, cy, steps);
+      for (const pt of path) {
+        if (wc.isDestroyed()) break;
+        wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+        await _sleep(8 + Math.floor(Math.random() * 20));
+      }
       wc.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
       wc.sendInputEvent({ type: 'mouseDown', x: cx, y: cy, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseUp', x: cx, y: cy, button: 'left', clickCount: 1 });
+      _lastMousePos.set(wc.id, { x: cx, y: cy });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -2198,6 +2411,57 @@ function registerIpcHandlers() {
       setTimeout(() => app.exit(0), 200);
       return { success: true };
     } catch (err) { return { success: false, error: err.message }; }
+  });
+
+  // 【2026-11-06 新增】从 AI 视图读取当前网页标题（供侧栏「同步标题」按钮使用）
+  // shell 窗口是独立 webContents，无法直接读 AI 网页 DOM，必须由主进程代为执行。
+  ipcMain.handle('get-ai-view-title', async (event) => {
+    try {
+      const ctx = windowState.getContextByWebContents(event.sender);
+      if (!ctx) return { success: false, error: '窗口上下文不存在' };
+      const wc = windowState.getViewWebContents(ctx);
+      if (!wc || wc.isDestroyed()) return { success: false, error: 'AI 视图不可用' };
+      // 提取当前 URL 里的 sessionId（与 page-title-sync 同一套正则）
+      const url = String(wc.getURL() || '');
+      let sid = null;
+      let m = url.match(/\/a\/chat\/s\/([a-f0-9-]{8,})/i);
+      if (m) sid = m[1];
+      if (!sid) { m = url.match(/\/chat\/s\/([a-f0-9-]{8,})/i); if (m) sid = m[1]; }
+      if (!sid) { m = url.match(/\/s\/([a-f0-9-]{8,})/i); if (m) sid = m[1]; }
+      if (!sid) return { success: false, error: '无法从当前页面 URL 解析会话 ID' };
+      // 在 AI 视图里执行一段查找顶部标题的脚本（与 findPageTitleEl 同策略）
+      const script = [
+        '(function () {',
+        '  var NOT_TITLE = new Set(["开启新对话","新对话","复制","下载","分享","返回","更多","编辑","已思考","思考中","深度思考","智能搜索","联网搜索","发送","停止","置顶","今天","昨天","7 天内","30 天内"]);',
+        '  var all = document.querySelectorAll("*");',
+        '  var cands = [];',
+        '  for (var i = 0; i < all.length; i++) {',
+        '    var el = all[i];',
+        '    if (el.children.length > 0) continue;',
+        '    var t = (el.textContent || "").trim();',
+        '    if (!t || t.length < 2 || t.length > 80) continue;',
+        '    if (NOT_TITLE.has(t)) continue;',
+        '    var tag = (el.tagName || "").toLowerCase();',
+        '    if (tag === "button" || tag === "a" || tag === "input" || tag === "textarea") continue;',
+        '    var r; try { r = el.getBoundingClientRect(); } catch (_) { continue; }',
+        '    if (r.top < 0 || r.top > 60 || r.left < 150 || r.width < 20) continue;',
+        '    var fs = 0; try { fs = parseFloat(getComputedStyle(el).fontSize) || 0; } catch (_) {}',
+        '    if (fs < 13) continue;',
+        '    cands.push({ t: t, top: r.top, fs: fs });',
+        '  }',
+        '  if (cands.length === 0) return { ok: false };',
+        '  cands.sort(function (a, b) { return (a.top - b.top) || (b.fs - a.fs); });',
+        '  return { ok: true, title: cands[0].t };',
+        '})()',
+      ].join('\n');
+      const result = await wc.executeJavaScript(script, true);
+      if (!result || !result.ok || !result.title) {
+        return { success: false, error: '未能从页面读取到标题' };
+      }
+      return { success: true, sessionId: sid, title: result.title };
+    } catch (err) {
+      return { success: false, error: (err && err.message) || String(err) };
+    }
   });
 
   ipcMain.handle('harness-event-report', async (event, payload) => {

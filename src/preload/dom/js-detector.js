@@ -32,6 +32,37 @@ function looksLikeToolScript(code) {
 }
 
 /**
+ * 2026-11-05 新增：更严格的工具脚本判定，用于「正文 + 代码块」场景。
+ *
+ * 背景：原 extractJsToolBlocks 对 js / javascript 围栏要求 onlyFences（整条回复只有代码块），
+ * 导致 AI 在「我来查一下，代码如下：」+ 代码块的混合回复里的代码块被漏掉，任务被误判完成。
+ *
+ * 但放宽 onlyFences 会误伤文档示例代码。所以这里要求「代码块第一行实质内容（跳过注释 / 空行）
+ * 就是工具调用」，比 looksLikeToolScript 更严格，避免把示例代码当工具脚本执行。
+ *
+ * @param {string} code 代码块内容
+ * @returns {boolean} true = 第一行实质内容是工具调用
+ */
+function looksLikeRealToolScript(code) {
+  if (!code || typeof code !== 'string') return false;
+  const lines = code.split(String.fromCharCode(10));
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    // 跳过空行和注释
+    if (!t) continue;
+    if (t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')) continue;
+    // 第一行实质内容：必须是工具调用
+    // 允许两种形态：
+    //   await read(...)
+    //   const x = await read(...)
+    if (/^await\s+[A-Za-z_$][\w$]*\s*\(/.test(t)) return true;
+    if (/^(?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+[A-Za-z_$][\w$]*\s*\(/.test(t)) return true;
+    return false;
+  }
+  return false;
+}
+
+/**
  * 判断原始文本去掉所有围栏代码块后是否只剩空白（整条回复只包含代码块）
  */
 function hasOnlyFences(text) {
@@ -74,8 +105,13 @@ function extractJsToolBlocks(text) {
     if (code) {
       if (l === 'lingya') {
         blocks.push(code);
-      } else if ((l === 'js' || l === 'javascript') && onlyFences && looksLikeToolScript(code)) {
-        blocks.push(code);
+      } else if (l === 'js' || l === 'javascript') {
+        // 2026-11-05 放宽：纯代码块（onlyFences）用宽松判定，避免误伤文档示例；
+        // 正文+代码块混合场景用严格判定（第一行实质内容必须是工具调用），
+        // 修复「AI 说『我来查一下』+ 代码块被漏掉 → 任务误判完成」的问题。
+        if ((onlyFences && looksLikeToolScript(code)) || looksLikeRealToolScript(code)) {
+          blocks.push(code);
+        }
       }
     }
     inBlock = false;
@@ -173,6 +209,7 @@ module.exports = {
   JS_TOOL_CALL_RE,
   looksLikeIncompleteCodeError,
   looksLikeToolScript,
+  looksLikeRealToolScript,
   hasOnlyFences,
   extractJsToolBlocks,
   extractLingyaTags,

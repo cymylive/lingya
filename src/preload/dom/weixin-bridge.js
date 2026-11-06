@@ -23,6 +23,13 @@ function report(payload) {
   try {
     const api = window.electronAPI;
     if (!api || typeof api.weixinReport !== 'function') return;
+    // 2026-11-05: 上报前还原占位符，让用户收到的推送是真词
+    try {
+      const { unredactText } = require('./redaction-filter');
+      if (unredactText && payload && typeof payload.text === 'string') {
+        payload = Object.assign({}, payload, { text: unredactText(payload.text) });
+      }
+    } catch (_) {}
     api.weixinReport(payload).catch(() => {});
   } catch (_) { /* ignore */ }
 }
@@ -65,6 +72,8 @@ function initWeixinBridge() {
     if (!enabled || !text) return;
     const SYSTEM_TAGS = ['拒绝改写请求', '拒绝改写回传', '拒绝拦截', 'XML工具调用提示', 'CTF注入', '微信'];
     if (tag && SYSTEM_TAGS.indexOf(tag) !== -1) return;
+    // 2026-11-06: 会话导入不推送到 IM
+    if (tag && String(tag).indexOf('导入历史') === 0) return;
     report({ type: 'user-message', text: text, tag: tag || '' });
   });
 

@@ -27,6 +27,8 @@ const SENSITIVE_CHANNELS = new Set([
   // 记忆系统（读写用户记忆库）
   'memory-status', 'memory-collect', 'memory-list',
   'memory-import', 'memory-export',
+  // 脱敏规则（读写用户脱敏映射，含真词明文）
+  'redaction-rules-export', 'redaction-rules-import',
   // 技能系统（读任意目录）
   'skill-import-folder',
   // 插件系统（加载任意代码、打开任意目录）
@@ -102,4 +104,42 @@ function install(ipcMain) {
   console.log('[IPC-Guard] 已安装，敏感通道白名单 ' + SENSITIVE_CHANNELS.size + ' 个');
 }
 
-module.exports = { install, SENSITIVE_CHANNELS, isTrustedSender };
+/**
+ * 路径越界校验（2026-11-06 审计 #9）
+ *
+ * 【问题】shell-create-file / shell-rename / shell-delete-file 等 handler 的路径校验
+ * 依赖下游函数逐个判断。若某个 handler 漏检，恶意网页可构造 ../../etc/passwd 穿越。
+ *
+ * 【方案】提供一个通用工具，让 handler 在接收 filePath 后立即调用本函数，
+ * 校验解析后的绝对路径是否落在 allowedBases 之内。不强制改动所有 handler（避免大面积破坏），
+ * 但提供统一入口供后续新增 handler 使用，并给现有高风险 handler 补上。
+ *
+ * @param {string} filePath 用户传入的路径（相对或绝对）
+ * @param {string[]} allowedBases 允许的根目录列表（绝对路径）
+ * @returns {{ ok: true, absPath: string } | { ok: false, error: string }}
+ */
+function assertPathSafe(filePath, allowedBases) {
+  const path = require('path');
+  try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { ok: false, error: '路径为空或类型错误' };
+    }
+    if (!Array.isArray(allowedBases) || allowedBases.length === 0) {
+      return { ok: false, error: '未配置允许的根目录' };
+    }
+    const abs = path.resolve(filePath);
+    // 逐条 base 比较：abs 必须严格等于 base 或以 base + sep 开头
+    for (const base of allowedBases) {
+      if (!base) continue;
+      const baseAbs = path.resolve(base);
+      if (abs === baseAbs) return { ok: true, absPath: abs };
+      const prefix = baseAbs.endsWith(path.sep) ? baseAbs : baseAbs + path.sep;
+      if (abs.startsWith(prefix)) return { ok: true, absPath: abs };
+    }
+    return { ok: false, error: '路径越界：不在允许的根目录内' };
+  } catch (e) {
+    return { ok: false, error: '路径校验异常: ' + (e && e.message ? e.message : String(e)) };
+  }
+}
+
+module.exports = { install, SENSITIVE_CHANNELS, isTrustedSender, assertPathSafe };

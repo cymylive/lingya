@@ -54,6 +54,10 @@ const api = {
   // 跨上下文：插入文本到聊天输入框 / 新会话
   insertToChat: (text, tag, delay) => ipcRenderer.invoke('shell-insert-to-chat', { text, tag, delay }),
   sendToChat: (text, tag) => ipcRenderer.invoke('shell-send-to-chat', { text, tag }),
+  // 读取会话存档（用于「导入到当前对话」，2026-11-06）
+  conversationArchiveRead: (sessionId) => ipcRenderer.invoke('conversation-archive-read', { sessionId }),
+  // 从 AI 视图读取当前网页标题（供「同步标题」按钮，2026-11-06）
+  getAiViewTitle: () => ipcRenderer.invoke('get-ai-view-title'),
   newChat: () => ipcRenderer.invoke('shell-new-chat'),
   runAction: (action) => ipcRenderer.invoke('shell-run-action', { action }),
   setSetting: (key, value) => ipcRenderer.invoke('shell-set-setting', { key, value }),
@@ -179,12 +183,20 @@ const api = {
   // ===== 脱敏规则（2026-11-02 新增）=====
   redactionRulesList: () => ipcRenderer.invoke('redaction-rules-list'),
   redactionRulesAdd: (rule) => ipcRenderer.invoke('redaction-rules-add', rule),
+  redactionRulesQuickAdd: (word) => ipcRenderer.invoke('redaction-rules-quick-add', { word }),
+  redactionQuickConfigGet: () => ipcRenderer.invoke('redaction-quick-config-get'),
+  redactionQuickConfigUpdate: (patch) => ipcRenderer.invoke('redaction-quick-config-update', patch),
   redactionRulesUpdate: (name, patch) => ipcRenderer.invoke('redaction-rules-update', { name, patch }),
   redactionRulesDelete: (name) => ipcRenderer.invoke('redaction-rules-delete', { name }),
+  // 2026-11-05: 批量删除 / 删除全部
+  redactionRulesDeleteBatch: (names) => ipcRenderer.invoke('redaction-rules-delete-batch', { names }),
+  redactionRulesDeleteAll: () => ipcRenderer.invoke('redaction-rules-delete-all'),
   redactionAutoScan: () => ipcRenderer.invoke('redaction-auto-scan'),
   redactionDeleteAllAuto: () => ipcRenderer.invoke('redaction-delete-all-auto'),
   redactionPromoteAllAuto: () => ipcRenderer.invoke('redaction-promote-all-auto'),
   redactionPromoteOne: (name) => ipcRenderer.invoke('redaction-promote-one', { name }),
+  redactionRulesExport: () => ipcRenderer.invoke('redaction-rules-export'),
+  redactionRulesImport: () => ipcRenderer.invoke('redaction-rules-import'),
   // ===== 提示词草稿管理（2026-11-01 新增）=====
   promptTplList: () => ipcRenderer.invoke('prompt-tpl-list'),
   promptTplCreate: (payload) => ipcRenderer.invoke('prompt-tpl-create', payload || {}),
@@ -219,6 +231,10 @@ const api = {
   // ===== 下拉浮层（标签列表 / 收藏夹）=====
   // 必须走主进程独立窗口：AI 网页是 WebContentsView，会盖住壳页面的 DOM
   openDropdown: (payload) => ipcRenderer.invoke('lingya-dropdown-open', payload || {}),
+  openOverflowWindow: (payload) => ipcRenderer.invoke('lingya-overflow-open', payload || {}),
+  toggleOverflowWindow: (payload) => ipcRenderer.invoke('lingya-overflow-toggle', payload || {}),
+  updateOverflowWindow: (payload) => ipcRenderer.invoke('lingya-overflow-update', payload || {}),
+  closeOverflowWindow: () => ipcRenderer.invoke('lingya-overflow-close', {}),
   closeDropdown: () => ipcRenderer.invoke('lingya-dropdown-close'),
   onBookmarkAdd: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-bookmark-add',h); return ()=>ipcRenderer.removeListener('lingya-bookmark-add',h); },
   onBookmarkRemove: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('lingya-bookmark-remove',h); return ()=>ipcRenderer.removeListener('lingya-bookmark-remove',h); },
@@ -238,6 +254,15 @@ const api = {
   dataPathReset: () => ipcRenderer.invoke('data-path-reset'),
   dataPathChoose: () => ipcRenderer.invoke('data-path-choose'),
   dataPathRestart: () => ipcRenderer.invoke('data-path-restart'),
+  // ===== Phone Remote =====
+  remoteStatus: () => ipcRenderer.invoke('remote-status'),
+  remoteSetEnabled: (enabled) => ipcRenderer.invoke('remote-set-enabled', !!enabled),
+  remoteSetConfig: (patch) => ipcRenderer.invoke('remote-set-config', patch || {}),
+  remoteResetToken: () => ipcRenderer.invoke('remote-reset-token'),
+  remoteStartTunnel: () => ipcRenderer.invoke('remote-start-tunnel'),
+  remoteStopTunnel: () => ipcRenderer.invoke('remote-stop-tunnel'),
+  remoteListClients: () => ipcRenderer.invoke('remote-list-clients'),
+  remoteKickAll: () => ipcRenderer.invoke('remote-kick-all'),
 };
 
 try {

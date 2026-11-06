@@ -162,3 +162,69 @@ test('BUG I 修复：超过去重窗口后可再记', () => {
   assert.strictEqual(typeof log.DEDUP_WINDOW_MS, 'number');
   assert.ok(log.DEDUP_WINDOW_MS > 0);
 });
+
+// ===== 附件消息（长文本转 .md 附件）=====
+
+test('isAttachmentTag / getAttachmentName 解析附件 tag', () => {
+  assert.strictEqual(log.isAttachmentTag('附件:笔记-053800.md'), true);
+  assert.strictEqual(log.isAttachmentTag('手动输入'), false);
+  assert.strictEqual(log.getAttachmentName('附件:笔记-053800.md'), '笔记-053800.md');
+  assert.strictEqual(log.getAttachmentName('手动输入'), '');
+});
+
+test('addEntry 带 attachment 时记录全文并打上附件 tag', () => {
+  log.clearEntries();
+  const longText = '这是一段很长的正文。'.repeat(50);
+  log.addEntry('user', longText, '用户发送', { attachment: { name: '笔记-053800.md' } });
+  const e = log.getEntries();
+  assert.strictEqual(e.length, 1);
+  assert.strictEqual(e[0].text, longText.trim(), '正文应为附件全文而非引导语');
+  assert.strictEqual(e[0].tag, '附件:笔记-053800.md');
+  assert.strictEqual(e[0].attachmentName, '笔记-053800.md');
+});
+
+test('addEntry 过滤附件引导语（短文本含 .md 文件名）', () => {
+  log.clearEntries();
+  // 先记录附件全文
+  log.addEntry('user', '正文内容'.repeat(100), '用户发送', { attachment: { name: '资料-053801.md' } });
+  // 再模拟来源3 上报的引导语 —— 应被丢弃
+  log.addEntry('user', '帮我看看附件 资料-053801.md', '手动输入');
+  assert.strictEqual(log.getCount(), 1, '引导语应被过滤，不产生第二条记录');
+});
+
+test('notePendingAttachment 提前登记后，来源3 引导语先到也被过滤（竞态 #1 修复）', () => {
+  log.clearEntries();
+  // 模拟：上传成功后立即登记（chat-input.js 调用）
+  log.notePendingAttachment('资料-061500.md');
+  // 模拟：来源3 的引导语先到（竞态场景）
+  log.addEntry('user', '帮我看看附件 资料-061500.md', '手动输入');
+  assert.strictEqual(log.getCount(), 0, '提前登记的附件名应让先到的引导语被过滤');
+  // 随后来源2 的全文到达 —— 应正常记录
+  log.addEntry('user', '真正的正文内容'.repeat(50), '用户发送', { attachment: { name: '资料-061500.md' } });
+  assert.strictEqual(log.getCount(), 1, '全文应正常记录');
+  assert.strictEqual(log.getEntries()[0].attachmentName, '资料-061500.md');
+});
+
+test('addEntry 不过滤与附件无关的短文本', () => {
+  log.clearEntries();
+  log.addEntry('user', '正文内容'.repeat(100), '用户发送', { attachment: { name: '资料-053802.md' } });
+  // 不含 .md 的普通短消息，即使刚上传过附件也应保留
+  log.addEntry('user', '继续', '手动输入');
+  assert.strictEqual(log.getCount(), 2, '普通消息不应被引导语过滤误杀');
+});
+
+test('buildMarkdown 为附件消息渲染「> 附件：xxx」', () => {
+  const md = log.buildMarkdown(
+    [{ role: 'user', text: '正文', ts: 1, tag: '附件:笔记-053800.md', attachmentName: '笔记-053800.md' }],
+    { now: 1 }
+  );
+  assert.ok(md.indexOf('> 附件：笔记-053800.md') !== -1, md);
+});
+
+test('buildMarkdown 旧存档（无 attachmentName）也能从 tag 反解附件名', () => {
+  const md = log.buildMarkdown(
+    [{ role: 'user', text: '正文', ts: 1, tag: '附件:旧存档-000000.md' }],
+    { now: 1 }
+  );
+  assert.ok(md.indexOf('> 附件：旧存档-000000.md') !== -1, md);
+});

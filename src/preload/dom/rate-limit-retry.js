@@ -181,10 +181,11 @@ function onSuccessResponse(detail) {
     return;
   }
   if (normalCount > 0 || count429 > 0) {
-    console.log('[LingYa][重试] 成功回复，清零计数（原 普通=' + normalCount + ' 429=' + count429 + '）');
+    console.log('[LingYa][重试] 成功回复，清零重试计数');
     normalCount = 0;
     count429 = 0;
   }
+
   watchdogCount = 0;
   clearTimer();
 }

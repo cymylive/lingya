@@ -104,8 +104,18 @@ let electronAPI = {
   getRedactionRules: (scope) => ipcRenderer.invoke('get-redaction-rules', scope || null),
   redactionRulesList: () => ipcRenderer.invoke('redaction-rules-list'),
   redactionRulesAdd: (rule) => ipcRenderer.invoke('redaction-rules-add', rule),
+  redactionRulesQuickAdd: (word) => ipcRenderer.invoke('redaction-rules-quick-add', { word }),
+  redactionQuickConfigGet: () => ipcRenderer.invoke('redaction-quick-config-get'),
+  redactionQuickConfigUpdate: (patch) => ipcRenderer.invoke('redaction-quick-config-update', patch),
   redactionRulesUpdate: (name, patch) => ipcRenderer.invoke('redaction-rules-update', { name, patch }),
   redactionRulesDelete: (name) => ipcRenderer.invoke('redaction-rules-delete', { name }),
+  // 2026-11-05: 批量删除 / 删除全部
+  redactionRulesDeleteBatch: (names) => ipcRenderer.invoke('redaction-rules-delete-batch', { names }),
+  redactionRulesDeleteAll: () => ipcRenderer.invoke('redaction-rules-delete-all'),
+  // 导出/导入完整规则表（换机/重装后不丢）
+  redactionRulesExport: () => ipcRenderer.invoke('redaction-rules-export'),
+  redactionRulesImport: () => ipcRenderer.invoke('redaction-rules-import'),
+  onRedactionRulesChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('redaction-rules-changed',h); return ()=>ipcRenderer.removeListener('redaction-rules-changed',h); },
   toolLifecycleStats: () => ipcRenderer.invoke('tool-lifecycle-stats'),
   toolLifecycleSweep: (sessionKey) => ipcRenderer.invoke('tool-lifecycle-sweep', { sessionKey }),
   clearAbort: () => {
@@ -125,6 +135,16 @@ let electronAPI = {
   },
   setSessionArchived: (sessionId, archived) => {
     return ipcRenderer.invoke('set-session-archived', { sessionId, archived: !!archived });
+  },
+  // 会话本地存档（jsonl 追加存储）
+  conversationArchiveAppend: (sessionId, entry) => {
+    return ipcRenderer.invoke('conversation-archive-append', { sessionId, entry });
+  },
+  conversationArchiveRead: (sessionId) => {
+    return ipcRenderer.invoke('conversation-archive-read', { sessionId });
+  },
+  conversationArchiveHas: (sessionId) => {
+    return ipcRenderer.invoke('conversation-archive-has', { sessionId });
   },
   createProfileWindow: () => {
     return ipcRenderer.invoke('create-profile-window');
@@ -287,6 +307,8 @@ let electronAPI = {
   getPluginPreloads: () => ipcRenderer.invoke('plugin-preloads'),
   onPluginsChanged: (cb) => { const h=()=>cb(); ipcRenderer.on('lingya-tools-changed',h); return ()=>ipcRenderer.removeListener('lingya-tools-changed',h); },
   onSessionTitleUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-title-updated',h); return ()=>ipcRenderer.removeListener('session-title-updated',h); },
+  // AI 生成「建议标题」（不自动改会话名，由用户手动应用）→ 覆盖层弹 Toast
+  onSessionTitleSuggested: (cb) => { const h=(_e,p)=>cb(p||{}); ipcRenderer.on('session-title-suggested',h); return ()=>ipcRenderer.removeListener('session-title-suggested',h); },
   onSessionArchivedUpdated: (cb) => { const h=(_e,p)=>cb(p); ipcRenderer.on('session-archived-updated',h); return ()=>ipcRenderer.removeListener('session-archived-updated',h); },
   // 手动触发拒绝改写（侧边栏「立即改写」按钮 → 主进程转发 → AI 视图执行）
   onManualRewrite: (cb) => { const h=(_e,p)=>cb(p||{}); ipcRenderer.on('lingya-manual-rewrite',h); return ()=>ipcRenderer.removeListener('lingya-manual-rewrite',h); },
@@ -506,7 +528,16 @@ let electronAPI = {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('schedule-run', handler);
     return () => ipcRenderer.removeListener('schedule-run', handler);
-  },
+  },  // ========== Phone Remote API ==========
+  remoteStatus: () => ipcRenderer.invoke('remote-status'),
+  remoteSetEnabled: (enabled) => ipcRenderer.invoke('remote-set-enabled', !!enabled),
+  remoteSetConfig: (patch) => ipcRenderer.invoke('remote-set-config', patch || {}),
+  remoteResetToken: () => ipcRenderer.invoke('remote-reset-token'),
+  remoteStartTunnel: () => ipcRenderer.invoke('remote-start-tunnel'),
+  remoteStopTunnel: () => ipcRenderer.invoke('remote-stop-tunnel'),
+  remoteListClients: () => ipcRenderer.invoke('remote-list-clients'),
+  remoteKickAll: () => ipcRenderer.invoke('remote-kick-all'),
+
 };
 
 // 【安全隔离】contextBridge 暴露到主世界（页面可见）的 API 需要过滤掉高危方法。
