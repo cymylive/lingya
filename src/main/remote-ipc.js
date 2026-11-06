@@ -170,7 +170,10 @@ async function initRemoteOnBoot() {
   const s = await startService();
   if (!s.ok) return s;
   if (cfg.tunnelEnabled || cfg.tunnelToken) {
-    try { await startTunnelNow(); } catch (_) {}
+    try {
+      console.log('[Remote] 检测到已启用隧道配置，正在自动拉起隧道...');
+      await startTunnelNow();
+    } catch (_) {}
   }
   return { ok: true };
 }

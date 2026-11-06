@@ -528,14 +528,12 @@ function onAiStop(msg) {
   if (msg.reason !== 'watchdog') {
     addSystem('已停止生成');
   }
-  petState('idle');
 }
 
 function onAiError(msg) {
   finalizeStream(null);
   setGenerating(false);
   addError('出错了：' + (msg.text || '未知错误'));
-  petState('error');
 }
 
 function onTool(msg) {
@@ -617,7 +615,6 @@ async function doConnect() {
     });
     if (res.status === 401) {
       showLoginError('令牌错误，请检查后重试');
-      localStorage.removeItem(LS_TOKEN);
       elConnect.disabled = false;
       elConnect.textContent = '连接';
       return;
@@ -629,7 +626,7 @@ async function doConnect() {
       return;
     }
   } catch (err) {
-    showLoginError('无法连接到 ' + (addr || '服务器') + '：' + (err.message || '网络错误'));
+    showLoginError('无法连接到 ' + (addr || '服务器') + '。如果是局域网，请确保同一 WiFi；如果使用隧道，地址可能已变化，请检查电脑端最新地址。');
     elConnect.disabled = false;
     elConnect.textContent = '连接';
     return;
@@ -655,7 +652,6 @@ function enterApp() {
     }
   }, STARTUP_WATCHDOG);
   connect();
-  petState('idle');
 }
 
 function disconnect() {
@@ -801,12 +797,6 @@ function init() {
     enterApp();
   }
 
-  // 桌宠初始化
-  try {
-    if (window.LingyaPet && window.LingyaPet.mount) {
-      window.LingyaPet.mount(elPetLayer, { storageKey: LS_PET_X });
-    }
-  } catch (_) {}
 }
 
 if (document.readyState === 'loading') {

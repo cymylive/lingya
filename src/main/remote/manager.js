@@ -179,6 +179,26 @@ function broadcastAiEvent(webContentsId, kind, data) {
     if (!s.timer) s.timer = setTimeout(() => flushStream(pid), STREAM_THROTTLE_MS);
     return;
   }
+  if (kind === 'task-state') {
+    const s = getStreamState(pid);
+    if (p.visible) {
+      markBusy(webContentsId);
+      if (!s.active) {
+        s.active = true; s.sent = ''; s.think = ''; s.thinkSent = ''; s.toolCount = 0;
+        broadcast({ type: 'ai-start', profileId: pid });
+      }
+      if (p.kind === 'tool') {
+        broadcast({ type: 'tool', profileId: pid, name: p.text || '工具', at: Date.now() });
+      }
+    } else {
+      clearBusy(webContentsId);
+      if (s.active) {
+        s.active = false;
+        broadcast({ type: 'ai-stop', profileId: pid, reason: 'user' });
+      }
+    }
+    return;
+  }
   if (kind === 'ai-start') {
     markBusy(webContentsId);
     const s = getStreamState(pid);

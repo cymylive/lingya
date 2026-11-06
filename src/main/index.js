@@ -2313,7 +2313,15 @@ ipcMainForProfile.handle('shell-set-setting', async (event, { key, value } = {})
 // backgroundTasks）在 AI 视图侧。不上报的话，侧边栏完全看不到「AI 正在跑」。
 ipcMain.on('lingya-report-task-state', (event, payload) => {
   try {
-    // 1) 记录下来，供「全部分屏」总控台判定 AI 是否在生成
+    // 1) 转发给手机远程服务
+    try {
+      const remoteMgr = require('./remote/manager');
+      if (remoteMgr && typeof remoteMgr.broadcastAiEvent === 'function') {
+        remoteMgr.broadcastAiEvent(event.sender.id, 'task-state', payload);
+      }
+    } catch (_) {}
+
+    // 2) 记录下来，供「全部分屏」总控台判定 AI 是否在生成
     //    键用 AI 视图自己的 webContents.id —— 总控台按面板视图 id 查
     try {
       const wcId = event.sender && event.sender.id;
