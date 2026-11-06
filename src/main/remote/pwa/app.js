@@ -105,10 +105,27 @@ function wsUrl() {
   return b.replace(/^http/, 'ws') + '/ws';
 }
 function normalizeAddr(raw) {
+  // 1. 先转字符串，去掉首尾空格
   var s = String(raw || '').trim();
   if (!s) return '';
-  if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
-  try { var u = new URL(s); return u.protocol + '//' + u.host; } catch (_) { return ''; }
+  
+  // 2. 移除所有中间的空格（防止 https:// xxx 这种）
+  s = s.replace(/\s+/g, '');
+  
+  // 3. 如果末尾多复制了 http: 或 https:，强行切掉
+  s = s.replace(/https?:?$/i, '');
+  
+  // 4. 如果没带协议，默认加上 https://（尝试连接隧道）
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  
+  try {
+    // 用 URL 解析一次，自动去掉多余的路径和后缀
+    var u = new URL(s);
+    return u.protocol + '//' + u.host;
+  } catch (_) {
+    // 如果 URL 解析失败，直接返回清洗后的字符串，让 fetch 去报错
+    return s;
+  }
 }
 function ensureClientId() {
   var c = localStorage.getItem(LS_CLIENT);
