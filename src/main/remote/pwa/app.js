@@ -700,16 +700,50 @@ function bindSessionItem(el) {
 }
 
 function renderTodoPanel(todos) {
-  var panel = $('todo-panel');
-  var list = $('todo-list');
-  var prog = $('todo-progress');
-  var currentText = $('todo-current');
-  if (!panel || !list || !prog || !currentText) return;
+  try {
+    var panel = $('todo-panel');
+    var list = $('todo-list');
+    var prog = $('todo-progress');
+    if (!panel || !list || !prog) {
+      console.error('Todo 面板 DOM 缺失!');
+      return;
+    }
 
-  if (!todos || todos.length === 0) {
-    panel.hidden = true;
-    return;
+    if (!todos || todos.length === 0) {
+      panel.hidden = true;
+      panel.style.display = 'none';
+      return;
+    }
+
+    var done = 0;
+    var htmlStr = '';
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i] || {};
+      var status = t.status || 'pending';
+      if (status === 'completed') done++;
+      
+      var icon = '○';
+      var cls = '';
+      if (status === 'completed') { icon = '✅'; cls = 'done'; }
+      else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
+      
+      htmlStr += '<div class="todo-item ' + cls + '">' +
+              '<span class="todo-icon">' + icon + '</span>' +
+              '<span>' + escapeHtml(t.content || '') + '</span>' +
+              '</div>';
+    }
+    
+    list.innerHTML = htmlStr;
+    prog.textContent = done + '/' + todos.length;
+    
+    // 暴力解除所有隐藏属性
+    panel.hidden = false;
+    panel.style.display = 'flex';
+    console.log('✅ Todo 面板已渲染，包含 ' + todos.length + ' 项任务');
+  } catch (err) {
+    console.error('渲染 Todo 面板出错:', err);
   }
+}
 
   var done = 0;
   var inProgressText = '';

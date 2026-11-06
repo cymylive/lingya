@@ -359,23 +359,7 @@ html.light #btn-theme .ico-moon { display: inline; }
 }
 
 /* AI 计划面板 */
-.todo-panel {
-  position: absolute;
-  top: calc(var(--safe-t) + 54px);
-  left: 12px;
-  right: 12px;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  z-index: 18;
-  max-height: 40vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  font-size: 13px;
-  transition: max-height 0.3s ease;
-}
+
 
 .todo-header {
   padding: 8px 12px;
@@ -413,9 +397,7 @@ html.light #btn-theme .ico-moon { display: inline; }
   color: var(--text-dim);
   transition: transform 0.3s;
 }
-.todo-panel.collapsed .todo-chevron {
-  transform: rotate(-90deg); /* 收起时箭头朝右 */
-}
+
 .todo-list {
   padding: 8px 12px;
   overflow-y: auto;
@@ -664,10 +646,39 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 }
 
 /* AI 计划面板折叠样式 */
-.todo-panel.collapsed {
-  max-height: 38px;
-  overflow: hidden;
+
+
+
+/* 极其暴力的计划面板样式，确保在 APK 里绝对可见 */
+#todo-panel {
+  position: fixed !important;
+  top: calc(var(--safe-t) + 54px) !important; 
+  left: 12px !important;
+  right: 12px !important;
+  background: var(--bg-2) !important;
+  border: 2px solid var(--accent) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.8) !important;
+  z-index: 99999 !important;
+  max-height: 40vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  transition: max-height 0.3s ease !important;
 }
-.todo-panel.collapsed #todo-chevron {
-  transform: rotate(-90deg);
+#todo-panel[hidden] {
+  display: none !important;
+}
+#todo-panel.collapsed {
+  max-height: 38px !important;
+}
+#todo-panel.collapsed #todo-chevron {
+  transform: rotate(-90deg) !important;
+}
+#todo-panel .todo-header {
+  padding: 10px 12px !important;
+  background: var(--bg-3) !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  border-bottom: 1px solid var(--border) !important;
 }

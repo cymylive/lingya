@@ -202,6 +202,19 @@ function clearEmpty() {
   if (elEmpty && elEmpty.parentNode) elEmpty.parentNode.removeChild(elEmpty);
   elEmpty = null;
 }
+function addDownloadCard(filePath, fileName, size) {
+  clearEmpty();
+  var el = document.createElement('div');
+  el.className = 'msg system';
+  el.style.cssText = 'text-align:left;background:var(--bg-2);border:1px solid var(--accent);padding:12px;border-radius:8px;';
+  var sizeStr = size ? (size/1024/1024).toFixed(2) + ' MB' : '';
+  el.innerHTML = '<div style="font-weight:600;color:var(--accent);margin-bottom:8px;">📁 电脑发送了一个文件</div>' +
+                 '<div style="font-size:13px;word-break:break-all;margin-bottom:12px;">' + escapeHtml(fileName) + ' <span style="color:var(--text-dim);">(' + sizeStr + ')</span></div>' +
+                 '<a href="' + baseUrl() + '/api/download?file=' + encodeURIComponent(filePath) + '&token=' + getToken() + '" target="_blank" style="display:inline-block;padding:8px 16px;background:var(--accent);color:#052e2b;text-decoration:none;border-radius:4px;font-size:13px;font-weight:600;">点击下载</a>';
+  elMessages.appendChild(el);
+  if (stickToBottom) scrollToBottom(true);
+}
+
 function addMessage(kind, text) {
   clearEmpty();
   var el = document.createElement('div');
@@ -358,17 +371,15 @@ function markLastToolDone() {
 function setGenerating(v) {
   generating = !!v;
   
-  // 发送按钮永远显示，生成中变暗防误触
+  // 发送按钮永远显示
   elSend.hidden = false;
   elSend.style.opacity = generating ? '0.5' : '1';
   
-  // 停止按钮：只在生成时高亮可点，平时是暗色不可点
-  if (generating) {
-    elStop.classList.remove('disabled');
-    elStop.disabled = false;
-  } else {
-    elStop.classList.add('disabled');
-    elStop.disabled = true;
+  // 停止按钮：永远可点！不管什么状态，哪怕看着像空闲，点一下也能强行发中断
+  elStop.classList.remove('disabled');
+  elStop.disabled = false;
+  
+  if (!generating) {
     hideTool();
   }
 }
@@ -493,6 +504,10 @@ function handleServerMessage(msg) {
     }
     return;
   }
+  if (t === 'file-download') {
+    addDownloadCard(msg.filePath, msg.fileName, msg.size);
+    return;
+  }
   if (t === 'todo-update') {
     renderTodoPanel(msg.todos || []);
     return;
@@ -514,87 +529,226 @@ function handleServerMessage(msg) {
   if (t === 'sessions-data') return onSessionsData(msg);
 }
 
+var currentDrawerTab = 'workspace';
+
 function onSessionsData(msg) {
   var list = $('session-list');
   if (!list) return;
   var sessions = msg.sessions || [];
-  var html = '';
-  sessions.sort(function(a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); });
+  var archivedProjects = msg.archivedProjects || [];
   
-  for (var i = 0; i < sessions.length; i++) {
-    var s = sessions[i];
-    var title = s.title || s.sessionId || '未命名会话';
-    var project = s.projectDir ? s.projectDir.split(/[\\/]/).pop() : '无项目';
-    var activeCls = (s.sessionId === currentProfileId) ? ' active' : ''; // 这里简单的对比，不完全准，靠 ID 匹配更好
-    
-    html += '<div class="session-item" data-sid="' + escapeHtml(s.sessionId) + '" data-url="' + escapeHtml(s.url || '') + '">' +
-            '<div class="s-title" style="padding-right:20px;">' + escapeHtml(title) + '</div>' +
-            '<div class="s-meta">' + escapeHtml(project) + '</div>' +
-            '<div class="session-more-btn" data-sid="' + escapeHtml(s.sessionId) + '">⋮</div>' +
-            '</div>';
-  }
-  
-  if (!html) html = '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px;">暂无历史会话</div>';
-  list.innerHTML = html;
-  
-  var items = list.querySelectorAll('.session-item');
-  for (var j = 0; j < items.length; j++) {
-    (function(el) {
-      // 点击菜单按钮
-      var moreBtn = el.querySelector('.session-more-btn');
-      if (moreBtn) {
-        moreBtn.addEventListener('click', function(ev) {
-          ev.stopPropagation();
-          var sid = el.getAttribute('data-sid');
-          var action = prompt('输入操作：1 = 重命名，2 = 导入历史到当前对话');
-          if (action === '1') {
-            var newName = prompt('输入新的会话名称：');
-            if (newName) {
-              send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });
-              setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
-            }
-          } else if (action === '2') {
-            send({ type: 'action-import', profileId: currentProfileId, sourceSessionId: sid });
-            alert('历史导入指令已发送，请查看当前对话。');
-            var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
-            var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
-          }
-        });
-      }
+  var isProjArchived = {};
+  archivedProjects.forEach(function(dir) { isProjArchived[dir] = true; });
 
-      // 点击整个会话项
-      el.addEventListener('click', function() {
-        var sid = el.getAttribute('data-sid');
-        var url = el.getAttribute('data-url');
-        send({ type: 'action-switch-session', profileId: currentProfileId, session: { sessionId: sid, url: url } });
+  var projects = {};
+  sessions.forEach(function(s) {
+    var pDir = s.projectDir || '未分类项目';
+    if (!projects[pDir]) projects[pDir] = { dir: pDir, sessions: [] };
+    projects[pDir].sessions.push(s);
+  });
+
+  var html = '';
+  var pKeys = Object.keys(projects).sort();
+  
+  pKeys.forEach(function(pDir) {
+    var proj = projects[pDir];
+    var projArchived = isProjArchived[pDir] === true;
+
+    if (currentDrawerTab === 'workspace' && projArchived) return;
+    if (currentDrawerTab === 'archived' && !projArchived) return;
+
+    var pName = pDir.split(/[\\/]/).pop();
+    var isOpen = proj.sessions.some(function(s) { return s.sessionId === currentProfileId; });
+    var openCls = isOpen ? 'open' : '';
+
+    var activeSessions = proj.sessions.filter(function(s) { return !s.archived; });
+    var archSessions = proj.sessions.filter(function(s) { return !!s.archived; });
+
+    html += '<div class="project-group ' + openCls + '">';
+    html += '<div class="project-header">' +
+            '<div class="project-title">📁 ' + escapeHtml(pName) + '</div>' +
+            '<div class="project-actions" data-pdir="' + escapeHtml(pDir) + '" data-arch="' + projArchived + '">⋮</div>' +
+            '<div class="project-add-session" data-pdir="' + escapeHtml(pDir) + '" title="在该项目下新建会话">+</div>' +
+            '<div class="todo-chevron" style="margin-left:8px;">▾</div>' +
+            '</div>';
+    
+    html += '<div class="project-sessions">';
+    activeSessions.forEach(function(s) { html += renderItem(s); });
+
+    if (archSessions.length > 0) {
+      html += '<div class="archived-group">' +
+              '<div class="archived-header">▶ 已归档 ' + archSessions.length + ' 对话</div>' +
+              '<div class="archived-sessions">';
+      archSessions.forEach(function(s) { html += renderItem(s); });
+      html += '</div></div>';
+    }
+    html += '</div></div>';
+  });
+
+  if (!html) html = '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px;">暂无会话</div>';
+  list.innerHTML = html;
+
+  list.querySelectorAll('.project-header').forEach(function(h) {
+    h.addEventListener('click', function(e) {
+      if (e.target.classList.contains('project-actions')) return;
+      h.parentNode.classList.toggle('open');
+    });
+  });
+
+  list.querySelectorAll('.archived-header').forEach(function(h) {
+    h.addEventListener('click', function(e) {
+      e.stopPropagation();
+      h.parentNode.classList.toggle('open');
+    });
+  });
+
+
+
+  list.querySelectorAll('.project-actions').forEach(function(el) {
+    el.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var pDir = el.getAttribute('data-pdir');
+      var isArch = el.getAttribute('data-arch') === 'true';
+      var action = prompt('输入操作：1=归档项目, 2=取消归档项目');
+      if (action === '1' && !isArch) {
+        send({ type: 'action-archive-project', profileId: currentProfileId, projectDir: pDir, archived: true });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      } else if (action === '2' && isArch) {
+        send({ type: 'action-archive-project', profileId: currentProfileId, projectDir: pDir, archived: false });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      }
+    });
+  });
+
+  list.querySelectorAll('.session-item').forEach(bindSessionItem);
+
+  // 统一使用事件委托处理 + 号点击，避免动态插入导致绑定失效
+  list.onclick = function(e) {
+    var target = e.target;
+    if (target.classList.contains('project-add-session')) {
+      e.stopPropagation();
+      var pDir = target.getAttribute('data-pdir');
+      if (!pDir) return;
+      
+      // 直接执行，不弹 confirm，因为新建会话不是破坏性操作
+      send({ type: 'action-new-session-in-project', profileId: currentProfileId, projectDir: pDir });
+      var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+      var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+      elMessages.innerHTML = '';
+      if (!elEmpty) {
+        elEmpty = document.createElement('div');
+        elEmpty.className = 'empty-state';
+        elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在新建项目会话...</p>';
+        elMessages.appendChild(elEmpty);
+      }
+    }
+  };
+}
+
+function renderItem(s) {
+  var title = s.title || s.sessionId || '未命名会话';
+  var activeCls = (s.sessionId === currentProfileId) ? ' active' : '';
+  return '<div class="session-item ' + activeCls + '" data-sid="' + escapeHtml(s.sessionId) + '">' +
+         '<div class="s-title" style="padding-right:20px;">' + escapeHtml(title) + '</div>' +
+         '<div class="session-more-btn" data-sid="' + escapeHtml(s.sessionId) + '">⋮</div>' +
+         '</div>';
+}
+
+function bindSessionItem(el) {
+  var moreBtn = el.querySelector('.session-more-btn');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var sid = el.getAttribute('data-sid');
+      var action = prompt('输入操作：1=重命名, 2=导入历史, 3=删除, 4=归档/取消归档');
+      if (action === '4') {
+        send({ type: 'action-archive-session', profileId: currentProfileId, sessionId: sid, archived: !el.closest('.archived-sessions') });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      } else if (action === '3') {
+        if (confirm('确定要删除这个会话吗？此操作不可恢复！')) {
+          send({ type: 'action-delete-session', profileId: currentProfileId, sessionId: sid });
+        }
+      } else if (action === '1') {
+        var newName = prompt('输入新的会话名称：');
+        if (newName) {
+          send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });
+          setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+        }
+      } else if (action === '2') {
+        send({ type: 'action-import', profileId: currentProfileId, sourceSessionId: sid });
+        alert('历史导入指令已发送，请查看当前对话。');
         var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
         var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
-        elMessages.innerHTML = '';
-        if (!elEmpty) {
-          elEmpty = document.createElement('div');
-          elEmpty.className = 'empty-state';
-          elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
-          elMessages.appendChild(elEmpty);
-        }
-        setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
-      });
-    })(items[j]);
+      }
+    });
   }
+
+  el.addEventListener('click', function() {
+    var sid = el.getAttribute('data-sid');
+    send({ type: 'action-switch-session', profileId: currentProfileId, session: { sessionId: sid } });
+    var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+    var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+    elMessages.innerHTML = '';
+    if (!elEmpty) {
+      elEmpty = document.createElement('div');
+      elEmpty.className = 'empty-state';
+      elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
+      elMessages.appendChild(elEmpty);
+    }
+    setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
+  });
 }
 
 function renderTodoPanel(todos) {
-  var panel = $('todo-panel');
-  var list = $('todo-list');
-  var prog = $('todo-progress');
-  if (!panel || !list || !prog) return;
+  try {
+    var panel = $('todo-panel');
+    var list = $('todo-list');
+    var prog = $('todo-progress');
+    if (!panel || !list || !prog) {
+      console.error('Todo 面板 DOM 缺失!');
+      return;
+    }
 
-  if (!todos || todos.length === 0) {
-    panel.hidden = true;
-    return;
+    if (!todos || todos.length === 0) {
+      panel.hidden = true;
+      panel.style.display = 'none';
+      return;
+    }
+
+    var done = 0;
+    var htmlStr = '';
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i] || {};
+      var status = t.status || 'pending';
+      if (status === 'completed') done++;
+      
+      var icon = '○';
+      var cls = '';
+      if (status === 'completed') { icon = '✅'; cls = 'done'; }
+      else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
+      
+      htmlStr += '<div class="todo-item ' + cls + '">' +
+              '<span class="todo-icon">' + icon + '</span>' +
+              '<span>' + escapeHtml(t.content || '') + '</span>' +
+              '</div>';
+    }
+    
+    list.innerHTML = htmlStr;
+    prog.textContent = done + '/' + todos.length;
+    
+    // 暴力解除所有隐藏属性
+    panel.hidden = false;
+    panel.style.display = 'flex';
+    console.log('✅ Todo 面板已渲染，包含 ' + todos.length + ' 项任务');
+  } catch (err) {
+    console.error('渲染 Todo 面板出错:', err);
   }
+}
 
   var done = 0;
-  var html = '';
+  var inProgressText = '';
+  var htmlStr = '';
+  
   for (var i = 0; i < todos.length; i++) {
     var t = todos[i] || {};
     var status = t.status || 'pending';
@@ -602,17 +756,31 @@ function renderTodoPanel(todos) {
     
     var icon = '○';
     var cls = '';
-    if (status === 'completed') { icon = '✅'; cls = 'done'; }
-    else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
+    if (status === 'completed') { 
+      icon = '✅'; cls = 'done'; 
+    } else if (status === 'in_progress') { 
+      icon = '⏳'; cls = 'in-progress'; 
+      if (!inProgressText) inProgressText = t.content || '';
+    }
     
-    html += '<div class="todo-item ' + cls + '">' +
+    htmlStr += '<div class="todo-item ' + cls + '">' +
             '<span class="todo-icon">' + icon + '</span>' +
             '<span>' + escapeHtml(t.content || '') + '</span>' +
             '</div>';
   }
   
-  list.innerHTML = html;
+  list.innerHTML = htmlStr;
   prog.textContent = done + '/' + todos.length;
+  
+  if (done === todos.length) {
+    currentText.textContent = '所有任务已完成 ✅';
+  } else if (inProgressText) {
+    currentText.textContent = '正在执行：' + inProgressText;
+  } else {
+    var firstPending = todos.find(function(x) { return x.status !== 'completed'; });
+    currentText.textContent = firstPending ? ('准备执行：' + (firstPending.content || '')) : 'AI 计划执行中';
+  }
+  
   panel.hidden = false;
 }
 
@@ -756,7 +924,9 @@ function stopGeneration() {
 
 function autoResize() {
   elInput.style.height = 'auto';
-  elInput.style.height = Math.min(elInput.scrollHeight, 140) + 'px';
+  // 加上一点余量（比如 2px）防止部分安卓 WebView 的 scrollHeight 计算偏小导致文字被切
+  var newHeight = elInput.scrollHeight + 2;
+  elInput.style.height = Math.min(newHeight, 140) + 'px';
 }
 
 /* ========== 登录 ========== */
@@ -971,7 +1141,17 @@ function bind() {
   var elMenu = $('btn-menu');
   var elDrawer = $('sidebar-drawer');
   var elDrawerOverlay = $('drawer-overlay');
-  var elNewChat = $('btn-new-chat');
+  var tabs = document.querySelectorAll('.drawer-tab');
+  tabs.forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      tabs.forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      currentDrawerTab = tab.getAttribute('data-tab');
+      send({ type: 'req-sessions', profileId: currentProfileId });
+    });
+  });
+
+  var elNewProject = $('btn-new-project');
   var elSessionList = $('session-list');
 
   function toggleDrawer(open) {
@@ -990,7 +1170,7 @@ function bind() {
   if (elMenu) elMenu.addEventListener('click', function() { toggleDrawer(true); });
   if (elDrawerOverlay) elDrawerOverlay.addEventListener('click', function() { toggleDrawer(false); });
 
-  var elNewProject = $('btn-new-project');
+  // 重复声明已移除
   var elModalOverlay = $('modal-overlay');
   var elModalTitle = $('modal-title');
   var elModalInput = $('modal-input');
@@ -1032,15 +1212,68 @@ function bind() {
     });
   }
 
+  // === AI 计划面板折叠交互 ===
+  var elTodoPanel = $('todo-panel');
+  var elTodoHeader = $('todo-header');
+  if (elTodoHeader) {
+    elTodoHeader.addEventListener('click', function() {
+      if (elTodoPanel) {
+        elTodoPanel.classList.toggle('collapsed');
+      }
+    });
+  }
+
   elTheme.addEventListener('click', toggleTheme);
   elDisconnect.addEventListener('click', function () {
     if (confirm('确定断开连接？')) disconnect();
   });
 
+  var elAttach = $('btn-attach');
+  var elFileUpload = $('file-upload');
+  if (elAttach && elFileUpload) {
+    elAttach.addEventListener('click', function() { elFileUpload.click(); });
+    elFileUpload.addEventListener('change', async function() {
+      if (!this.files || this.files.length === 0) return;
+      var files = Array.from(this.files);
+      this.value = ''; // 清空允许重复上传
+      
+      for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        addSystem('⏳ 正在上传: ' + file.name + ' (' + (file.size/1024/1024).toFixed(2) + ' MB)');
+        
+        try {
+          var base = baseUrl().replace(/\/+$/, '');
+          var res = await fetch(base + '/api/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + getToken(),
+              'X-File-Name': encodeURIComponent(file.name)
+            },
+            body: file
+          });
+          if (res.ok) {
+            var json = await res.json();
+            addSystem('✅ 上传成功: ' + file.name);
+            // 通知电脑端将文件插入输入框
+            send({ type: 'file-uploaded-notify', filePath: json.filePath, fileName: json.fileName });
+          } else {
+            addError('上传失败: ' + file.name);
+          }
+        } catch (err) {
+          addError('上传异常: ' + err.message);
+        }
+      }
+    });
+  }
+
   elSend.addEventListener('click', sendText);
   elStop.addEventListener('click', function() {
-    if (!generating) return;
-    stopGeneration();
+    // 强行中断，不管前端的 generating 状态是什么，直接向电脑端发送 stop
+    send({ type: 'stop' });
+    // 本地先乐观地恢复状态
+    setGenerating(false);
+    finalizeStream(null);
+    addSystem('已发送停止指令');
   });
   elInput.addEventListener('input', function () {
     autoResize();

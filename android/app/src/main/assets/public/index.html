@@ -136,20 +136,37 @@
   <div id="drawer-overlay" class="drawer-overlay" hidden></div>
   <aside id="sidebar-drawer" class="sidebar-drawer">
     <div class="drawer-header">
-      <div class="drawer-title">历史会话</div>
+      <div class="drawer-title">工作区</div>
       <button id="btn-new-project" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;">+ 新建项目</button>
+    </div>
+    <div class="drawer-tabs">
+      <div class="drawer-tab active" data-tab="workspace">工作区</div>
+      <div class="drawer-tab" data-tab="archived">已归档</div>
     </div>
     <div id="session-list" class="session-list"></div>
   </aside>
 
-  <div id="offline-banner" class="offline-banner" hidden>连接已断开，正在重连…</div>
+  
+  
 
   <!-- AI 计划面板 -->
-  <div id="todo-panel" class="todo-panel" hidden>
-    <div class="todo-header">
-      <span>📋 AI 执行计划</span>
-      <span id="todo-progress" class="todo-progress">0/0</span>
+  <div id="todo-panel" class="todo-panel collapsed" hidden>
+    <div class="todo-header" id="todo-header">
+      <div class="todo-header-left">
+        <span class="todo-icon">📋</span>
+        <span id="todo-current" class="todo-current-text">等待 AI 规划...</span>
+      </div>
+      <div class="todo-header-right">
+        <span id="todo-progress" class="todo-progress">0/0</span>
+        <span class="todo-chevron" id="todo-chevron">▾</span>
+      </div>
     </div>
+    <div id="todo-list" class="todo-list"></div>
+  </div>
+
+  <div id="offline-banner" class="offline-banner" hidden>连接已断开，正在重连…</div>
+
+  
     <div id="todo-list" class="todo-list"></div>
   </div>
 
@@ -173,6 +190,10 @@
   <footer class="composer">
     <textarea id="input" class="composer-input" rows="1" placeholder="发消息…" autocomplete="off"></textarea>
     <div class="composer-actions">
+      <input type="file" id="file-upload" multiple style="display:none;" />
+      <button id="btn-attach" class="btn-icon" type="button" title="上传文件" style="width:40px;height:40px;color:var(--text-dim);">
+        <svg class="ico"><use href="#i-plus" /></svg>
+      </button>
       <button id="stop" class="btn-stop disabled" type="button" title="停止" disabled>
         <svg class="ico"><use href="#i-stop" /></svg>
       </button>
