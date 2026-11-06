@@ -124,6 +124,26 @@ function listProfilesForRemote() {
   return out;
 }
 
+function sendFileToPhone(filePath) {
+  if (!remoteServer) return { ok: false, error: '远程服务未启动' };
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    if (!fs.existsSync(filePath)) return { ok: false, error: '文件不存在' };
+    const stat = fs.statSync(filePath);
+    const fileName = path.basename(filePath);
+    broadcast({ 
+      type: 'file-download', 
+      filePath: filePath, 
+      fileName: fileName, 
+      size: stat.size 
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 function broadcast(msg) {
   if (!remoteServer) return;
   try { remoteServer.broadcast(msg); } catch (_) {}
@@ -710,6 +730,7 @@ module.exports = {
   onActionRename,
   onActionImport,
   onActionDeleteSession,
+  sendFileToPhone,
   findContextByWcId,
   findContextByProfileId,
   markBusy,
