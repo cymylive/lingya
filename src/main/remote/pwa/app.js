@@ -216,7 +216,8 @@ function addMessage(kind, text) {
     hasNewWhileScrolled = true;
     elScrollBadge.hidden = false;
   } else {
-    scrollToBottom(true);
+    // 不强制滚动，只依靠当前的 stickToBottom 状态
+    scrollToBottom(false);
   }
   return el;
 }
@@ -700,6 +701,11 @@ function sendText() {
   autoResize();
   localStorage.removeItem(LS_DRAFT);
   addUser(text);
+  // 用户自己发消息时，强制滚到底部让他看到
+  stickToBottom = true;
+  isUserScrolling = false;
+  scrollToBottom(true);
+  
   if (!send({ type: 'user-message', text: text })) {
     if (offlineQueue.length >= OFFLINE_QUEUE_MAX) offlineQueue.shift();
     offlineQueue.push(text);
@@ -1027,6 +1033,13 @@ function bind() {
     stickToBottom = false;
     updateScrollBtn();
   }, { passive: true });
+  
+  // 只要手指碰了屏幕，立刻把底部强制跟随关掉，哪怕还没滑动
+  elMessages.addEventListener('mousedown', function () {
+    isUserScrolling = true;
+    stickToBottom = false;
+    updateScrollBtn();
+  });
   
   elMessages.addEventListener('wheel', function () {
     isUserScrolling = true;
