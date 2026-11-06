@@ -2797,6 +2797,11 @@
           '<div class="ly-set-desc" id="remote-lan-urls" style="word-break:break-all;font-family:monospace;">未启动</div>' +
         '</div></div>' +
         '<div class="sh-card"><div class="ly-set-field">' +
+          '<div class="ly-set-label">手机扫码直连（推荐）</div>' +
+          '<div class="ly-set-desc">点击下方按钮，用手机端 APP 扫码即可自动填入地址和密钥。</div>' +
+          '<div class="ly-set-row"><button class="sh-btn primary" id="remote-show-qrcode">显示连接二维码</button></div>' +
+        '</div></div>' +
+        '<div class="sh-card"><div class="ly-set-field">' +
           '<div class="ly-set-label">公网地址</div>' +
           '<div class="ly-set-desc" id="remote-public-url" style="word-break:break-all;font-family:monospace;">未启动</div>' +
           '<div class="ly-set-desc" id="remote-tunnel-status"></div>' +
@@ -2853,6 +2858,24 @@
       var sp=R('remote-save-port'); if(sp) sp.addEventListener('click',function(){ var p=parseInt((R('remote-port')||{}).value,10); if(!p) return; if(!API.remoteSetConfig) return; API.remoteSetConfig({port:p}).then(function(st){ fill(st); toast2('端口已保存（重启服务生效）'); })['catch'](function(){}); });
       var stn=R('remote-start-tunnel'); if(stn) stn.addEventListener('click',function(){ if(!API.remoteStartTunnel) return; toast2('正在启动隧道…'); API.remoteStartTunnel().then(function(st){ fill(st); if(st&&st.error) toast2(st.error); else toast2('隧道已启动'); })['catch'](function(){ toast2('启动失败'); }); });
       var stp=R('remote-stop-tunnel'); if(stp) stp.addEventListener('click',function(){ if(!API.remoteStopTunnel) return; API.remoteStopTunnel().then(function(st){ fill(st); toast2('隧道已停止'); })['catch'](function(){}); });
+      var qrBtn=R('remote-show-qrcode');
+      if(qrBtn) qrBtn.addEventListener('click', function(){
+        if(!API.remoteGetQrcode) return;
+        API.remoteGetQrcode().then(function(res){
+          if(res.success && res.dataUrl) {
+            var modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;';
+            modal.innerHTML = '<div style="background:#fff;padding:20px;border-radius:12px;text-align:center;">' +
+              '<img src="'+res.dataUrl+'" style="width:250px;height:250px;display:block;" />' +
+              '<div style="margin-top:12px;font-size:12px;color:#666;">打开手机 APP 扫码连接</div>' +
+              '<button style="margin-top:16px;padding:8px 24px;background:#2dd4bf;color:#fff;border:none;border-radius:4px;cursor:pointer;" id="close-qr">关闭</button></div>';
+            document.body.appendChild(modal);
+            document.getElementById('close-qr').onclick = function() { document.body.removeChild(modal); };
+          } else {
+            toast2('生成二维码失败: ' + (res.error || '未知错误'));
+          }
+        })['catch'](function(){ toast2('生成失败'); });
+      });
       var rf=R('remote-refresh'); if(rf) rf.addEventListener('click',refresh);
       var ka=R('remote-kick-all'); if(ka) ka.addEventListener('click',function(){ if(!API.remoteKickAll) return; API.remoteKickAll().then(function(){ refresh(); toast2('已断开全部'); })['catch'](function(){}); });
       refresh();

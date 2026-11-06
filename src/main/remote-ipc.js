@@ -151,6 +151,27 @@ function registerRemoteIpc() {
 
   ipcMain.handle('remote-list-clients', async () => ({ success: true, clients: server.listClients() }));
 
+  // 生成包含连接信息的二维码 (Base64)
+  ipcMain.handle('remote-get-qrcode', async () => {
+    const cfg = getRemoteConfig();
+    const ts = tunnel.getTunnelStatus();
+    const lanUrls = listLanUrls(cfg.port);
+    
+    // 优先用公网地址，没有的话用局域网地址
+    const addr = cfg.publicUrl || ts.url || (lanUrls.length > 0 ? lanUrls[0] : 'http://127.0.0.1:' + cfg.port);
+    
+    // 构造专用扫码协议：lingya://connect?addr=xxx&token=xxx
+    const qrContent = 'lingya://connect?addr=' + encodeURIComponent(addr) + '&token=' + encodeURIComponent(cfg.token);
+    
+    try {
+      const QRCode = require('qrcode');
+      const dataUrl = await QRCode.toDataURL(qrContent, { margin: 1, width: 300 });
+      return { success: true, dataUrl, addr, token: cfg.token };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('remote-kick-all', async () => {
     try { server.kickAll(); } catch (_) {}
     return { success: true, ...getStatus() };

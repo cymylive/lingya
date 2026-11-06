@@ -683,6 +683,43 @@ function toggleTheme() {
 function bind() {
   elConnect.addEventListener('click', doConnect);
 
+  // 扫码连接逻辑
+  var elScan = $('login-scan');
+  if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+    if (elScan) elScan.style.display = 'flex';
+  }
+  if (elScan) {
+    elScan.addEventListener('click', async function () {
+      try {
+        const { BarcodeScanner } = Capacitor.Plugins;
+        const result = await BarcodeScanner.scan();
+        if (result && result.barcodes && result.barcodes.length > 0) {
+          const rawValue = result.barcodes[0].rawValue;
+          if (rawValue && rawValue.startsWith('lingya://connect')) {
+            // 解析 lingya://connect?addr=xxx&token=yyy
+            const queryStr = rawValue.split('?')[1];
+            const params = new URLSearchParams(queryStr);
+            const addr = params.get('addr');
+            const token = params.get('token');
+            if (addr && token) {
+              elAddr.value = addr;
+              elToken.value = token;
+              showLoginError('');
+              doConnect(); // 自动连接
+            } else {
+              showLoginError('二维码格式不正确');
+            }
+          } else {
+            showLoginError('请扫描灵鸦专属二维码');
+          }
+        }
+      } catch (err) {
+        if (err.message && err.message.includes('cancel')) return;
+        showLoginError('扫码失败：' + (err.message || '请检查相机权限'));
+      }
+    });
+  }
+
   elPaste.addEventListener('click', async function () {
     try {
       var t = await navigator.clipboard.readText();

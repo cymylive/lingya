@@ -553,6 +553,7 @@ let electronAPI = {
   remoteStopTunnel: () => ipcRenderer.invoke('remote-stop-tunnel'),
   remoteListClients: () => ipcRenderer.invoke('remote-list-clients'),
   remoteKickAll: () => ipcRenderer.invoke('remote-kick-all'),
+  remoteGetQrcode: () => ipcRenderer.invoke('remote-get-qrcode'),
 
 };
 
