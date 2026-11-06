@@ -163,8 +163,35 @@ async function handleFeishuCommand(text, chatId, ctx) {
       '/list — 列出会话：标题 + 相对时间，当前置顶、归档垫底',
       '/say <ID> — 切换到指定会话（ID 用 /list 查看，支持前缀）',
       '/stop — 停止当前任务（中断 AI 生成 + 终止工具执行）',
+      '/proxy — 重启远程隧道，获取最新公网地址与访问令牌',
       '/help — 显示本帮助',
     ].join('\n'));
+  }
+
+  // ---------- /proxy 或 /pxory ----------
+  if (name === 'proxy' || name === 'pxory') {
+    await reply('⏳ 正在重启隧道并获取新地址，请稍候…');
+    try {
+      const tunnel = require('./remote/tunnel');
+      const remoteIpc = require('./remote-ipc');
+      const config = require('./remote/config');
+      await tunnel.stopTunnel();
+      const r = await remoteIpc.startTunnelNow();
+      const cfg = config.readConfig();
+      if (r.ok && r.url) {
+        await reply(
+          '🌐 新的连接信息已生成：\n\n' +
+          '电脑地址：' + r.url + '\n' +
+          '访问令牌：' + cfg.token + '\n\n' +
+          '💡 直接复制以上两条信息，填入手机端即可连接。'
+        );
+      } else {
+        await reply('❌ 启动隧道失败：' + (r.error || '未知错误，请检查网络或 cloudflared 安装'));
+      }
+    } catch (err) {
+      await reply('❌ 执行异常：' + err.message);
+    }
+    return true;
   }
 
   if (name === 'new') {
