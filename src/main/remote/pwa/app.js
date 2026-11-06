@@ -639,6 +639,29 @@ function onSessionsData(msg) {
   });
 
   list.querySelectorAll('.session-item').forEach(bindSessionItem);
+
+  // 统一使用事件委托处理 + 号点击，避免动态插入导致绑定失效
+  list.onclick = function(e) {
+    var target = e.target;
+    if (target.classList.contains('project-add-session')) {
+      e.stopPropagation();
+      var pDir = target.getAttribute('data-pdir');
+      if (!pDir) return;
+      var pName = pDir.split(/[\\/]/).pop();
+      if (confirm('确定要在项目 [' + pName + '] 下新建会话吗？')) {
+        send({ type: 'action-new-session-in-project', profileId: currentProfileId, projectDir: pDir });
+        var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+        var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+        elMessages.innerHTML = '';
+        if (!elEmpty) {
+          elEmpty = document.createElement('div');
+          elEmpty.className = 'empty-state';
+          elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在新建项目会话...</p>';
+          elMessages.appendChild(elEmpty);
+        }
+      }
+    }
+  };
 }
 
 function renderItem(s) {
