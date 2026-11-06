@@ -329,10 +329,16 @@ function petState(s) {
 /* 生成态 */
 function setGenerating(v) {
   generating = !!v;
-  elSend.hidden = generating;
-  elStop.hidden = !generating;
-  petState(generating ? 'thinking' : 'idle');
-  if (!generating) hideTool();
+  if (generating) {
+    elSend.hidden = true;
+    elStop.hidden = false;
+    petState('thinking');
+  } else {
+    elSend.hidden = false;
+    elStop.hidden = true;
+    petState('idle');
+    hideTool(); // 强制清理工具状态
+  }
 }
 
 /* ========== 连接 ========== */
@@ -473,6 +479,11 @@ function onProfiles(msg) {
     sel.value = profilesCache[0].id;
     currentProfileId = profilesCache[0].id;
     send({ type: 'select-profile', profileId: currentProfileId });
+  } else if (profilesCache.length > 1 && !currentProfileId) {
+    // 多窗口且当前未选中：默认选第一个
+    sel.value = profilesCache[0].id;
+    currentProfileId = profilesCache[0].id;
+    send({ type: 'select-profile', profileId: currentProfileId });
   }
 }
 
@@ -522,6 +533,7 @@ function onAiReply(msg) {
   if (pid && currentProfileId && pid !== currentProfileId) return;
   finalizeStream(msg.text || '');
   setGenerating(false);
+  hideTool(); // 强制清理
   petState('done');
 }
 
@@ -751,6 +763,10 @@ function bind() {
 /* ========== 初始化 ========== */
 function init() {
   ensureClientId();
+  // 原生 APK 环境标记（用于处理状态栏安全区）
+  if (window.Capacitor) {
+    document.documentElement.classList.add('is-native');
+  }
   applyTheme(localStorage.getItem(LS_THEME) || 'dark');
 
   var savedTok = getToken();

@@ -22,6 +22,17 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
+/* 原生 APK 环境下，强制兜底顶部安全区（防 Android 状态栏遮挡） */
+html.is-native {
+  --safe-t: max(32px, env(safe-area-inset-top, 0px));
+}
+html.is-native .topbar {
+  padding-top: calc(12px + var(--safe-t));
+}
+html.is-native .login {
+  padding-top: calc(24px + var(--safe-t));
+}
+
 html.light {
   --bg: #f7f8fa;
   --bg-2: #ffffff;
@@ -173,7 +184,7 @@ html.light #btn-theme .ico-moon { display: inline; }
 
 .messages {
   flex: 1; overflow-y: auto; overflow-x: hidden;
-  padding: 16px 12px;
+  padding: 16px 12px 80px 12px; /* 底部加 80px 给桌宠留空间 */
   display: flex; flex-direction: column; gap: 12px;
   overscroll-behavior: contain;
 }
@@ -329,7 +340,7 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 /* ===== 桌宠层 ===== */
 .pet-layer {
   position: fixed; bottom: 0; left: 0; right: 0; height: 0;
-  pointer-events: none; z-index: 12;
+  pointer-events: none; z-index: 5; /* 调低层级，防止挡住输入框和内容 */
 }
 .pet-layer .mobile-pet {
   pointer-events: auto;
