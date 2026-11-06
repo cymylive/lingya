@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<meta name="theme-color" content="#0f1113" />
+<meta name="color-scheme" content="dark light" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>灵鸦远程</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<svg class="icon-sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12h18M3 6h18M3 18h18" />
+  </symbol>
+  <symbol id="i-bird" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15.2 4.1a5.2 5.2 0 0 1 4.6 3.6" />
+    <path d="M19.8 7.7 22.4 6.6 19.8 5.5" />
+    <path d="M15.2 4.1c-2.9 0-5.3 2.2-5.5 5.1C6.2 9.6 3.5 12.5 3.5 16c0 2.4 2 4.4 4.4 4.4h6.5c3.6 0 6.5-2.9 6.5-6.5 0-1.7-.6-3.2-1.7-4.4" />
+    <circle cx="16.1" cy="7.5" r="0.95" fill="currentColor" stroke="none" />
+    <path d="M9.6 20.4V18.6M12.9 20.4V18.6" />
+    <path d="M4.6 19.9 2.4 21.9" />
+  </symbol>
+  <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7z" />
+  </symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+  </symbol>
+  <symbol id="i-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.4 14.5a9 9 0 0 1-12.9-12.9" /><path d="M6 18l12-12" />
+  </symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5v14M19 12l-7 7-7-7" />
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5v14M5 12h14" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </symbol>
+  <symbol id="i-think" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3a6 6 0 0 0-6 6c0 1.7.7 3.2 1.8 4.3.4.4.7 1 .7 1.7v1h7v-1c0-.7.3-1.3.7-1.7A6 6 0 0 0 12 3z" />
+    <path d="M9 20h6M10 22h4" />
+  </symbol>
+  <symbol id="i-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.7 6.3a4 4 0 0 0 5 5l-9 9a2.8 2.8 0 1 1-4-4l9-9z" />
+    <path d="M18 3.5 20.5 6" />
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 4v6h-6M1 20v-6h6" />
+    <path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15" />
+  </symbol>
+</svg>
+
+<section id="login" class="login">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg class="ico ico-36"><use href="#i-bird" /></svg>
+    </div>
+    <h1 class="login-title">灵鸦远程</h1>
+    <p class="login-sub">连接电脑上的灵鸦，在手机上继续对话</p>
+
+    <label class="login-field">
+      <span>电脑地址</span>
+      <input id="login-addr" type="text" inputmode="url" placeholder="http://192.168.1.10:7799 或隧道地址" autocomplete="off" />
+    </label>
+
+    <label class="login-field">
+      <span>访问令牌</span>
+      <div class="login-token-row">
+        <input id="login-token" type="password" placeholder="32 位十六进制令牌" autocomplete="off" />
+        <button id="login-history-btn" class="btn-ghost" type="button" title="历史记录"><svg class="ico"><use href="#i-refresh" /></svg></button>
+      </div>
+      <div id="login-history" class="login-history-menu" hidden></div>
+    </label>
+
+    <div id="login-error" class="login-error" hidden></div>
+
+    <button id="login-connect" class="btn-primary" type="button">连接</button>
+
+    <p class="login-hint">令牌在电脑端「设置 → 手机远程」里复制</p>
+  </div>
+</section>
+
+<section id="app" class="app" hidden>
+
+  <header class="topbar">
+    <button id="btn-menu" class="btn-icon" type="button" title="菜单">
+      <svg class="ico"><use href="#i-menu" /></svg>
+    </button>
+    <div id="conn" class="conn-badge" title="连接状态">
+      <span id="conn-dot" class="conn-dot"></span>
+      <span id="conn-text">未连接</span>
+    </div>
+
+    <select id="profile-select" class="profile-select" title="选择窗口">
+      <option value="">选择窗口…</option>
+    </select>
+    
+    <div id="token-badge" class="token-badge" title="上下文 Token 用量" hidden>
+      <span id="token-text">0 tk</span>
+    </div>
+
+    <div class="topbar-actions">
+      <button id="btn-refresh" class="btn-icon" type="button" title="同步当前对话历史" style="margin-right:4px;">
+        <svg class="ico"><use href="#i-refresh" /></svg>
+      </button>
+      <button id="btn-theme" class="btn-icon" type="button" title="切换主题">
+        <svg class="ico ico-sun"><use href="#i-sun" /></svg>
+        <svg class="ico ico-moon"><use href="#i-moon" /></svg>
+      </button>
+      <button id="btn-disconnect" class="btn-icon" type="button" title="断开连接">
+        <svg class="ico"><use href="#i-off" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="drawer-overlay" class="drawer-overlay" hidden></div>
+  <aside id="sidebar-drawer" class="sidebar-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">历史会话</div>
+      <button id="btn-new-project" class="btn-primary" style="width:auto; padding:4px 12px; font-size:12px;">+ 新建项目</button>
+    </div>
+    <div id="session-list" class="session-list"></div>
+  </aside>
+
+  <div id="offline-banner" class="offline-banner" hidden>连接已断开，正在重连…</div>
+
+  <main id="messages" class="messages">
+    <div id="empty-state" class="empty-state">
+      <svg class="ico ico-48"><use href="#i-bird" /></svg>
+      <p>连接成功，发一条消息开始对话</p>
+    </div>
+  </main>
+
+  <div id="exec-status" class="exec-status" hidden>
+    <svg class="ico"><use href="#i-tool" /></svg>
+    <span id="exec-text">工具执行中…</span>
+  </div>
+
+  <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" title="回到底部" hidden>
+    <svg class="ico"><use href="#i-down" /></svg>
+    <span id="scroll-new-badge" class="scroll-new-badge" hidden>新</span>
+  </button>
+
+  <footer class="composer">
+    <textarea id="input" class="composer-input" rows="1" placeholder="发消息…" autocomplete="off"></textarea>
+    <div class="composer-actions">
+      <button id="stop" class="btn-stop disabled" type="button" title="停止" disabled>
+        <svg class="ico"><use href="#i-stop" /></svg>
+      </button>
+      <button id="send" class="btn-send" type="button" title="发送">
+        <svg class="ico"><use href="#i-send" /></svg>
+      </button>
+    </div>
+  </footer>
+
+  <!-- 通用弹窗 -->
+  <div id="modal-overlay" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <h3 id="modal-title" class="modal-title">标题</h3>
+      <input id="modal-input" type="text" class="modal-input" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn-ghost">取消</button>
+        <button id="modal-confirm" class="btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<script src="/app.js"></script>
+</body>
+</html>
