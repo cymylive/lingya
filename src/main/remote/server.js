@@ -239,6 +239,27 @@ function handleWsMessage(ws, raw) {
     return;
   }
 
+  if (msg.type === 'action-init-project') {
+    if (typeof deps.onActionInitProject === 'function') {
+      try { deps.onActionInitProject(msg.profileId, msg.projectName); } catch (_) {}
+    }
+    return;
+  }
+
+  if (msg.type === 'action-rename') {
+    if (typeof deps.onActionRename === 'function') {
+      try { deps.onActionRename(msg.profileId, msg.sessionId, msg.title); } catch (_) {}
+    }
+    return;
+  }
+
+  if (msg.type === 'action-import') {
+    if (typeof deps.onActionImport === 'function') {
+      try { deps.onActionImport(msg.profileId, msg.sourceSessionId); } catch (_) {}
+    }
+    return;
+  }
+
   if (msg.type === 'action-new-chat') {
     if (typeof deps.onActionNewChat === 'function') {
       try { deps.onActionNewChat(msg.profileId); } catch (_) {}
