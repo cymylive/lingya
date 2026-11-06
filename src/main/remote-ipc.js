@@ -38,9 +38,9 @@ async function startService() {
       onRefresh: (ws) => manager.refreshHistory(ws),
       onReqSessions: (pid, ws) => {
         const ctx = pid ? manager.findContextByProfileId(pid) : manager.getTargetContext();
-        const sessions = manager.getSessionsForContext(ctx);
+        const data = manager.getSessionsForContext(ctx);
         if (ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'sessions-data', sessions }));
+          ws.send(JSON.stringify({ type: 'sessions-data', sessions: data.sessions || [], archivedProjects: data.archivedProjects || [] }));
         }
       },
       onActionNewChat: (pid) => manager.onActionNewChat(pid),

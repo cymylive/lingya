@@ -488,15 +488,22 @@ function busyWatchdogTick() {
 }
 
 function getSessionsForContext(ctx) {
-  if (!ctx) return [];
+  if (!ctx) return { sessions: [], archivedProjects: [] };
   try {
     const { app } = require('electron');
     const { aggregateWorkspaces } = require('../workspace-aggregator');
     const profileManager = require('../profile-manager');
     const profiles = profileManager.readProfiles();
     const agg = aggregateWorkspaces(app.getPath('userData'), ctx.profileId, profiles);
-    return agg.sessions || [];
+    return {
+      sessions: agg.sessions || [],
+      archivedProjects: agg.archivedProjects || []
+    };
   } catch (e) {
+    console.error('[Remote] getSessionsForContext error:', e);
+    return { sessions: [], archivedProjects: [] };
+  }
+} catch (e) {
     console.error('[Remote] getSessionsForContext error:', e);
     return [];
   }

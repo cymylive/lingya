@@ -535,7 +535,11 @@ function onSessionsData(msg) {
   var list = $('session-list');
   if (!list) return;
   var sessions = msg.sessions || [];
+  var archivedProjects = msg.archivedProjects || [];
   
+  var isProjArchived = {};
+  archivedProjects.forEach(function(dir) { isProjArchived[dir] = true; });
+
   var projects = {};
   sessions.forEach(function(s) {
     var pDir = s.projectDir || '未分类项目';
@@ -548,33 +552,35 @@ function onSessionsData(msg) {
   
   pKeys.forEach(function(pDir) {
     var proj = projects[pDir];
-    var filtered = proj.sessions.filter(function(s) {
-      var isArchived = !!s.archived;
-      return currentDrawerTab === 'workspace' ? !isArchived : isArchived;
-    });
+    var projArchived = isProjArchived[pDir] === true;
 
-    if (filtered.length === 0) return;
+    if (currentDrawerTab === 'workspace' && projArchived) return;
+    if (currentDrawerTab === 'archived' && !projArchived) return;
 
     var pName = pDir.split(/[\\/]/).pop();
-    var isOpen = filtered.some(function(s) { return s.sessionId === currentProfileId; });
+    var isOpen = proj.sessions.some(function(s) { return s.sessionId === currentProfileId; });
     var openCls = isOpen ? 'open' : '';
+
+    var activeSessions = proj.sessions.filter(function(s) { return !s.archived; });
+    var archSessions = proj.sessions.filter(function(s) { return !!s.archived; });
 
     html += '<div class="project-group ' + openCls + '">';
     html += '<div class="project-header">' +
             '<div class="project-title">📁 ' + escapeHtml(pName) + '</div>' +
-            '<div class="todo-chevron">▾</div>' +
+            '<div class="project-actions" data-pdir="' + escapeHtml(pDir) + '" data-arch="' + projArchived + '">⋮</div>' +
+            '<div class="todo-chevron" style="margin-left:8px;">▾</div>' +
             '</div>';
+    
     html += '<div class="project-sessions">';
+    activeSessions.forEach(function(s) { html += renderItem(s); });
 
-    filtered.forEach(function(s) {
-      var title = s.title || s.sessionId || '未命名会话';
-      var activeCls = (s.sessionId === currentProfileId) ? ' active' : '';
-      html += '<div class="session-item ' + activeCls + '" data-sid="' + escapeHtml(s.sessionId) + '">' +
-              '<div class="s-title" style="padding-right:20px;">' + escapeHtml(title) + '</div>' +
-              '<div class="session-more-btn" data-sid="' + escapeHtml(s.sessionId) + '">⋮</div>' +
-              '</div>';
-    });
-
+    if (archSessions.length > 0) {
+      html += '<div class="archived-group">' +
+              '<div class="archived-header">▶ 已归档 ' + archSessions.length + ' 对话</div>' +
+              '<div class="archived-sessions">';
+      archSessions.forEach(function(s) { html += renderItem(s); });
+      html += '</div></div>';
+    }
     html += '</div></div>';
   });
 
@@ -582,56 +588,89 @@ function onSessionsData(msg) {
   list.innerHTML = html;
 
   list.querySelectorAll('.project-header').forEach(function(h) {
-    h.addEventListener('click', function() {
+    h.addEventListener('click', function(e) {
+      if (e.target.classList.contains('project-actions')) return;
       h.parentNode.classList.toggle('open');
     });
   });
 
-  list.querySelectorAll('.session-item').forEach(function(el) {
-    var moreBtn = el.querySelector('.session-more-btn');
-    if (moreBtn) {
-      moreBtn.addEventListener('click', function(ev) {
-        ev.stopPropagation();
-        var sid = el.getAttribute('data-sid');
-        var action = prompt('输入操作：1=重命名, 2=导入历史, 3=删除, 4=归档/取消归档');
-        
-        if (action === '4') {
-          var isArch = currentDrawerTab === 'archived';
-          send({ type: 'action-archive-session', profileId: currentProfileId, sessionId: sid, archived: !isArch });
-          setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
-        } else if (action === '3') {
-          if (confirm('确定要删除这个会话吗？此操作不可恢复！')) {
-            send({ type: 'action-delete-session', profileId: currentProfileId, sessionId: sid });
-          }
-        } else if (action === '1') {
-          var newName = prompt('输入新的会话名称：');
-          if (newName) {
-            send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });
-            setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
-          }
-        } else if (action === '2') {
-          send({ type: 'action-import', profileId: currentProfileId, sourceSessionId: sid });
-          alert('历史导入指令已发送，请查看当前对话。');
-          var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
-          var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
-        }
-      });
-    }
-
-    el.addEventListener('click', function() {
-      var sid = el.getAttribute('data-sid');
-      send({ type: 'action-switch-session', profileId: currentProfileId, session: { sessionId: sid } });
-      var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
-      var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
-      elMessages.innerHTML = '';
-      if (!elEmpty) {
-        elEmpty = document.createElement('div');
-        elEmpty.className = 'empty-state';
-        elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
-        elMessages.appendChild(elEmpty);
-      }
-      setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
+  list.querySelectorAll('.archived-header').forEach(function(h) {
+    h.addEventListener('click', function(e) {
+      e.stopPropagation();
+      h.parentNode.classList.toggle('open');
     });
+  });
+
+  list.querySelectorAll('.project-actions').forEach(function(el) {
+    el.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var pDir = el.getAttribute('data-pdir');
+      var isArch = el.getAttribute('data-arch') === 'true';
+      var action = prompt('输入操作：1=归档项目, 2=取消归档项目');
+      if (action === '1' && !isArch) {
+        send({ type: 'action-archive-project', profileId: currentProfileId, projectDir: pDir, archived: true });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      } else if (action === '2' && isArch) {
+        send({ type: 'action-archive-project', profileId: currentProfileId, projectDir: pDir, archived: false });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      }
+    });
+  });
+
+  list.querySelectorAll('.session-item').forEach(bindSessionItem);
+}
+
+function renderItem(s) {
+  var title = s.title || s.sessionId || '未命名会话';
+  var activeCls = (s.sessionId === currentProfileId) ? ' active' : '';
+  return '<div class="session-item ' + activeCls + '" data-sid="' + escapeHtml(s.sessionId) + '">' +
+         '<div class="s-title" style="padding-right:20px;">' + escapeHtml(title) + '</div>' +
+         '<div class="session-more-btn" data-sid="' + escapeHtml(s.sessionId) + '">⋮</div>' +
+         '</div>';
+}
+
+function bindSessionItem(el) {
+  var moreBtn = el.querySelector('.session-more-btn');
+  if (moreBtn) {
+    moreBtn.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var sid = el.getAttribute('data-sid');
+      var action = prompt('输入操作：1=重命名, 2=导入历史, 3=删除, 4=归档/取消归档');
+      if (action === '4') {
+        send({ type: 'action-archive-session', profileId: currentProfileId, sessionId: sid, archived: !el.closest('.archived-sessions') });
+        setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+      } else if (action === '3') {
+        if (confirm('确定要删除这个会话吗？此操作不可恢复！')) {
+          send({ type: 'action-delete-session', profileId: currentProfileId, sessionId: sid });
+        }
+      } else if (action === '1') {
+        var newName = prompt('输入新的会话名称：');
+        if (newName) {
+          send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });
+          setTimeout(function() { send({ type: 'req-sessions', profileId: currentProfileId }); }, 500);
+        }
+      } else if (action === '2') {
+        send({ type: 'action-import', profileId: currentProfileId, sourceSessionId: sid });
+        alert('历史导入指令已发送，请查看当前对话。');
+        var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+        var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+      }
+    });
+  }
+
+  el.addEventListener('click', function() {
+    var sid = el.getAttribute('data-sid');
+    send({ type: 'action-switch-session', profileId: currentProfileId, session: { sessionId: sid } });
+    var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+    var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+    elMessages.innerHTML = '';
+    if (!elEmpty) {
+      elEmpty = document.createElement('div');
+      elEmpty.className = 'empty-state';
+      elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
+      elMessages.appendChild(elEmpty);
+    }
+    setTimeout(function() { send({ type: 'refresh-history' }); }, 1500);
   });
 }
 
