@@ -42,7 +42,6 @@ var elScrollBadge = $('scroll-new-badge');
 var elInput = $('input');
 var elSend = $('send');
 var elStop = $('stop');
-var elPetLayer = $('pet-layer');
 
 /* ========== 状态 ========== */
 var ws = null;
@@ -297,7 +296,6 @@ function showTool(name) {
     elExecText.textContent = '工具执行中' + (toolName ? '：' + toolName : '') + ' ' + sec + 's';
   }, 1000);
   addToolCard(toolName, false);
-  petState('working');
 }
 function hideTool() {
   elExec.hidden = true;
@@ -321,17 +319,12 @@ function markLastToolDone() {
   }
 }
 
-/* 桌宠 */
-function petState(s) {
-  try { if (window.LingyaPet && window.LingyaPet.setState) window.LingyaPet.setState(s); } catch (_) {}
-}
 
 /* 生成态 */
 function setGenerating(v) {
   generating = !!v;
   elSend.hidden = generating;
   elStop.hidden = !generating;
-  petState(generating ? 'thinking' : 'idle');
   if (!generating) hideTool();
 }
 
@@ -371,7 +364,6 @@ function connect() {
     send({ type: 'auth', clientId: clientId });
     flushOfflineQueue();
     startHeartbeat();
-    petState('idle');
   };
   ws.onclose = function () {
     if (myGen !== wsGen) return;
@@ -528,7 +520,6 @@ function onAiReply(msg) {
   finalizeStream(msg.text || '');
   setGenerating(false);
   hideTool(); // 强制清理
-  petState('done');
 }
 
 function onAiStop(msg) {
