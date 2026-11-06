@@ -766,6 +766,9 @@ function init() {
   // 原生 APK 环境标记（用于处理状态栏安全区）
   if (window.Capacitor) {
     document.documentElement.classList.add('is-native');
+    if (window.Capacitor.getPlatform() === 'android') {
+      document.documentElement.classList.add('is-android');
+    }
   }
   applyTheme(localStorage.getItem(LS_THEME) || 'dark');
 

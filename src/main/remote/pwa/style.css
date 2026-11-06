@@ -22,12 +22,20 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
-/* 原生 APK 环境下，强制兜底顶部安全区（防 Android 状态栏遮挡） */
+/* 原生 APK 环境下，强制兜底顶部安全区 */
 html.is-native {
   --safe-t: max(32px, env(safe-area-inset-top, 0px));
 }
+
+/* Android 专用：暴力避开状态栏（不同机型状态栏高度不一，统一给 48px 保证绝对点得到） */
+html.is-android {
+  --safe-t: 48px;
+}
+
 html.is-native .topbar {
   padding-top: calc(12px + var(--safe-t));
+  /* 增加一点上边距的呼吸感 */
+  margin-top: 2px; 
 }
 html.is-native .login {
   padding-top: calc(24px + var(--safe-t));
