@@ -36,17 +36,26 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup JDK 17
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
       - name: Sync Android version
         run: node scripts/sync-android-version.js
+
+      - name: Diagnose Capacitor
+        run: |
+          echo "--- node_modules/@capacitor ---"
+          ls -la node_modules/@capacitor/ || true
+          echo "--- cap cli version ---"
+          node -e "console.log(require('@capacitor/cli/package.json').version)" || true
+          echo "--- webDir exists ---"
+          ls -la src/main/remote/pwa/ | head -5 || true
 
       - name: Restore keystore
         env:
@@ -60,11 +69,11 @@ jobs:
           fi
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: npx cap sync android --verbose 2>&1
 
       - name: Build Debug APK
         working-directory: android
-        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -85,11 +94,11 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup JDK 17
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -109,7 +118,7 @@ jobs:
           fi
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: npx cap sync android 2>&1
 
       - name: Build Release APK
         working-directory: android
