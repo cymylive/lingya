@@ -16,7 +16,7 @@ var DISCONNECT_DEBOUNCE = 3000;
 var STARTUP_WATCHDOG = 8000;
 var HEARTBEAT_INTERVAL = 25000;
 var OFFLINE_QUEUE_MAX = 50;
-var BOTTOM_THRESHOLD = 60;
+var BOTTOM_THRESHOLD = 20;
 
 /* ========== DOM ========== */
 function $(id) { return document.getElementById(id); }
@@ -1006,9 +1006,21 @@ function bind() {
   });
 
   elMessages.addEventListener('scroll', function () {
+    // 如果代码是在自动滚动，忽略此次事件（可选）
     stickToBottom = nearBottom();
     updateScrollBtn();
   });
+
+  // 核心修复：只要用户手指触碰（手机端）或滚动滚轮（电脑端），立刻解除底部的强制跟随
+  elMessages.addEventListener('touchstart', function () {
+    stickToBottom = false;
+    updateScrollBtn();
+  }, { passive: true });
+  
+  elMessages.addEventListener('wheel', function () {
+    stickToBottom = false;
+    updateScrollBtn();
+  }, { passive: true });
 
   elScrollBtn.addEventListener('click', function () {
     stickToBottom = true;
