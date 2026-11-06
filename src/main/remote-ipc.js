@@ -48,6 +48,7 @@ async function startService() {
       onActionRename: (pid, sid, title) => manager.onActionRename(pid, sid, title),
       onActionImport: (pid, srcId) => manager.onActionImport(pid, srcId),
       onActionSwitchSession: (pid, session) => manager.onActionSwitchSession(pid, session),
+      onActionDeleteSession: (pid, sid, ws) => manager.onActionDeleteSession(pid, sid, ws),
     },
   });
   if (!r.ok) return { ok: false, error: r.error };

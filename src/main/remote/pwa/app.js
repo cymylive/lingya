@@ -544,8 +544,12 @@ function onSessionsData(msg) {
         moreBtn.addEventListener('click', function(ev) {
           ev.stopPropagation();
           var sid = el.getAttribute('data-sid');
-          var action = prompt('输入操作：1 = 重命名，2 = 导入历史到当前对话');
-          if (action === '1') {
+          var action = prompt('输入操作：1 = 重命名，2 = 导入历史，3 = 删除');
+          if (action === '3') {
+            if (confirm('确定要删除这个会话吗？此操作不可恢复！')) {
+              send({ type: 'action-delete-session', profileId: currentProfileId, sessionId: sid });
+            }
+          } else if (action === '1') {
             var newName = prompt('输入新的会话名称：');
             if (newName) {
               send({ type: 'action-rename', profileId: currentProfileId, sessionId: sid, title: newName });

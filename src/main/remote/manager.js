@@ -600,6 +600,41 @@ function onActionNewChat(profileId) {
   if (homeUrl) wc.loadURL(homeUrl).catch(() => {});
 }
 
+function onActionDeleteSession(profileId, sessionId, ws) {
+  const ctx = findContextByProfileId(profileId) || getTargetContext();
+  if (!ctx) return;
+
+  try {
+    // 1. 删电脑端会话记录
+    if (ctx.sessionStore && typeof ctx.sessionStore.deleteSession === 'function') {
+      ctx.sessionStore.deleteSession(sessionId);
+    }
+
+    // 2. 删本地存档文件
+    try {
+      const { app } = require('electron');
+      const { createConversationArchive } = require('../conversation-archive');
+      const archive = createConversationArchive(String(ctx.profileId || ''), app.getPath('userData'));
+      archive.deleteArchive(sessionId);
+    } catch (_) {}
+
+    // 3. 如果删除的是当前正在进行的对话，让电脑端退回首页
+    if (ctx.sessionStore && ctx.sessionStore.state && ctx.sessionStore.state.currentSessionId === sessionId) {
+      onActionNewChat(profileId);
+    }
+
+    // 4. 推送最新的会话列表给手机
+    const list = getSessionsForContext(ctx);
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'sessions-data', sessions: list }));
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[Remote] 删除会话失败:', err);
+    return { success: false, error: err.message };
+  }
+}
+
 function onActionSwitchSession(profileId, session) {
   const ctx = findContextByProfileId(profileId) || getTargetContext();
   if (!ctx || !ctx.view) return;
@@ -674,6 +709,7 @@ module.exports = {
   onActionInitProject,
   onActionRename,
   onActionImport,
+  onActionDeleteSession,
   findContextByWcId,
   findContextByProfileId,
   markBusy,

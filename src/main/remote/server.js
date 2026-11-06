@@ -253,6 +253,13 @@ function handleWsMessage(ws, raw) {
     return;
   }
 
+  if (msg.type === 'action-delete-session') {
+    if (typeof deps.onActionDeleteSession === 'function') {
+      try { deps.onActionDeleteSession(msg.profileId, msg.sessionId, ws); } catch (_) {}
+    }
+    return;
+  }
+
   if (msg.type === 'action-import') {
     if (typeof deps.onActionImport === 'function') {
       try { deps.onActionImport(msg.profileId, msg.sourceSessionId); } catch (_) {}
