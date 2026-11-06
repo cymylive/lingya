@@ -712,8 +712,34 @@ function bind() {
   elProfileSel.addEventListener('change', function () {
     var pid = elProfileSel.value;
     currentProfileId = pid;
-    if (pid) send({ type: 'select-profile', profileId: pid });
+    if (pid) {
+      // 切换窗口：清空界面并提示同步中
+      elMessages.innerHTML = '';
+      elEmpty = document.createElement('div');
+      elEmpty.className = 'empty-state';
+      elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
+      elMessages.appendChild(elEmpty);
+      send({ type: 'select-profile', profileId: pid });
+    }
   });
+
+  var elRefresh = $('btn-refresh');
+  if (elRefresh) {
+    elRefresh.addEventListener('click', function () {
+      elRefresh.style.opacity = '0.5';
+      // 显示同步中状态
+      if (elMessages.querySelectorAll('.msg').length === 0) {
+        if (!elEmpty) {
+          elEmpty = document.createElement('div');
+          elEmpty.className = 'empty-state';
+          elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
+          elMessages.appendChild(elEmpty);
+        }
+      }
+      send({ type: 'refresh-history' });
+      setTimeout(function() { elRefresh.style.opacity = '1'; }, 500);
+    });
+  }
 
   elTheme.addEventListener('click', toggleTheme);
   elDisconnect.addEventListener('click', function () {

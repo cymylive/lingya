@@ -34,6 +34,7 @@ async function startService() {
       onStop: () => manager.onStop(''),
       onSelectProfile: (pid, ws) => manager.onSelectProfile(pid, ws),
       onNewClient: (ws) => manager.onNewClient(ws),
+      onRefresh: (ws) => manager.refreshHistory(ws),
     },
   });
   if (!r.ok) return { ok: false, error: r.error };

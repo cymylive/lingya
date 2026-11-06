@@ -224,6 +224,13 @@ function handleWsMessage(ws, raw) {
     }
     return;
   }
+
+  if (msg.type === 'refresh-history') {
+    if (typeof deps.onRefresh === 'function') {
+      try { deps.onRefresh(ws); } catch (_) {}
+    }
+    return;
+  }
 }
 
 /** 启动服务。port 传 0 由系统分配（测试用）。 */

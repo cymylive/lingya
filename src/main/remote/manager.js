@@ -272,7 +272,14 @@ function onSelectProfile(profileId, ws) {
   const list = listProfilesForRemote();
   if (ws && ws.readyState === 1) {
     try { ws.send(JSON.stringify({ type: 'profiles', profiles: list, currentProfileId: targetProfileId })); } catch (_) {}
+    // 切换窗口后，自动拉取该窗口历史
+    pushHistoryToNewClient(ws).catch(() => {});
   }
+}
+
+function refreshHistory(ws) {
+  if (!ws || ws.readyState !== 1) return;
+  pushHistoryToNewClient(ws).catch(() => {});
 }
 
 function onNewClient(ws) {
@@ -435,6 +442,7 @@ module.exports = {
   onStop,
   onSelectProfile,
   onNewClient,
+  refreshHistory,
   findContextByWcId,
   findContextByProfileId,
   markBusy,
