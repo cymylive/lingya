@@ -215,10 +215,8 @@ function addMessage(kind, text) {
   if (!stickToBottom) {
     hasNewWhileScrolled = true;
     elScrollBadge.hidden = false;
-  } else {
-    // 不强制滚动，只依靠当前的 stickToBottom 状态
-    scrollToBottom(false);
   }
+  // 彻底取消这里的自动滚动
   return el;
 }
 function addSystem(text) { return addMessage('system', text); }
