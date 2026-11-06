@@ -309,15 +309,22 @@ function readHistoryForContext(ctx, limit) {
     const pid = String(ctx.profileId || '');
     if (!pid) return [];
     let sid = '';
+    // 方案一：直接从当前网页的 URL 中提取 sessionId（最准确）
     try {
-      if (ctx.sessionStore) {
-        if (ctx.sessionStore.state && ctx.sessionStore.state.currentSessionId) {
-          sid = String(ctx.sessionStore.state.currentSessionId);
-        } else if (ctx.sessionStore.currentSessionId) {
-          sid = String(ctx.sessionStore.currentSessionId);
+      const url = ctx.view && ctx.view.webContents ? ctx.view.webContents.getURL() : '';
+      if (url) {
+        const { getProviderByUrl } = require('../../providers');
+        const p = getProviderByUrl(url);
+        if (p && typeof p.extractSessionId === 'function') {
+          sid = p.extractSessionId(url) || '';
         }
       }
     } catch (_) {}
+
+    // 方案二：如果 URL 没提取到，尝试从 sessionStore 获取（兜底）
+    if (!sid && ctx.sessionStore && ctx.sessionStore.state) {
+      sid = String(ctx.sessionStore.state.currentSessionId || '');
+    }
     
     if (!sid) {
       console.log('[Remote] readHistoryForContext: 没有找到当前 sessionId');
