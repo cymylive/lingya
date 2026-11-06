@@ -60,6 +60,11 @@ html.light {
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* 强制覆盖 display:flex 导致的 hidden 属性失效问题 */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   margin: 0; padding: 0; height: 100%; overflow: hidden;
   background: var(--bg); color: var(--text);
