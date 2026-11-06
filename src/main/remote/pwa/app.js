@@ -329,16 +329,10 @@ function petState(s) {
 /* 生成态 */
 function setGenerating(v) {
   generating = !!v;
-  if (generating) {
-    elSend.hidden = true;
-    elStop.hidden = false;
-    petState('thinking');
-  } else {
-    elSend.hidden = false;
-    elStop.hidden = true;
-    petState('idle');
-    hideTool(); // 强制清理工具状态
-  }
+  elSend.hidden = generating;
+  elStop.hidden = !generating;
+  petState(generating ? 'thinking' : 'idle');
+  if (!generating) hideTool();
 }
 
 /* ========== 连接 ========== */

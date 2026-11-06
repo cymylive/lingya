@@ -301,13 +301,12 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 @keyframes pulse { 50% { opacity: .7; } }
 
 .scroll-bottom-btn {
-  position: absolute; bottom: calc(80px + var(--safe-b)); right: 16px;
+  position: fixed; bottom: calc(74px + var(--safe-b)); right: 16px;
   width: 40px; height: 40px;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 50%;
   box-shadow: var(--shadow); cursor: pointer; z-index: 15;
-  position: fixed;
 }
 .scroll-new-badge {
   position: absolute; top: -4px; right: -4px;

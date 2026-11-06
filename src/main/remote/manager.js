@@ -276,7 +276,13 @@ function onSelectProfile(profileId, ws) {
 }
 
 function onNewClient(ws) {
-  // 顺序关键：先历史，后活跃流（防历史到达时被"已有消息"判据拦下）
+  // 1. 新客户端连上，立刻把当前电脑上打开的窗口列表推给它
+  try {
+    const list = listProfilesForRemote();
+    ws.send(JSON.stringify({ type: 'profiles', profiles: list, currentProfileId: targetProfileId || '' }));
+  } catch (_) {}
+
+  // 2. 顺序关键：先历史，后活跃流（防历史到达时被"已有消息"判据拦下）
   pushHistoryToNewClient(ws).then(() => pushActiveStreamsToNewClient(ws), () => pushActiveStreamsToNewClient(ws));
 }
 
