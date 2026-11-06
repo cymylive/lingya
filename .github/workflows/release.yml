@@ -48,6 +48,15 @@ jobs:
       - name: Build graphify binaries
         run: node scripts/build-graphify.mjs
 
+      - name: Download cloudflared (windows only)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path resources/cloudflared | Out-Null
+          $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe'
+          Invoke-WebRequest -Uri $url -OutFile resources/cloudflared/cloudflared.exe
+          Write-Output ("cloudflared size: " + (Get-Item resources/cloudflared/cloudflared.exe).Length)
+
       - name: Apply portable.nsi patch (windows only)
         if: ${{ matrix.os == 'windows-latest' }}
         shell: cmd
