@@ -160,6 +160,11 @@ function stopStreamForProfile(pid, reason) {
   broadcast({ type: 'ai-stop', profileId: pid, reason: reason || 'user' });
 }
 
+function broadcastTodoUpdate(profileId, todos) {
+  if (!remoteServer) return;
+  broadcast({ type: 'todo-update', profileId: profileId, todos: todos || [] });
+}
+
 function broadcastTokenUsage(profileId, payload) {
   if (!remoteServer) return;
   const p = payload || {};
@@ -677,4 +682,5 @@ module.exports = {
   cleanupStreamState,
   readHistoryForContext,
   broadcastTokenUsage,
+  broadcastTodoUpdate,
 };

@@ -59,6 +59,7 @@ var profilesCache = [];
 var offlineQueue = [];
 var clientId = '';
 var stickToBottom = true;
+var isUserScrolling = false; // 用户是否正在主动滑动（用于阻断流式拽回）
 var hasNewWhileScrolled = false;
 
 /* 流式状态（当前气泡） */
@@ -178,7 +179,7 @@ function renderMarkdown(raw) {
 
 /* ========== 消息渲染 ========== */
 function scrollToBottom(force) {
-  if (!force && !stickToBottom) return;
+  if (!force && (!stickToBottom || isUserScrolling)) return; // 双重拦截
   requestAnimationFrame(function () {
     elMessages.scrollTop = elMessages.scrollHeight;
   });
@@ -192,6 +193,7 @@ function updateScrollBtn() {
     elScrollBtn.hidden = true;
     elScrollBadge.hidden = true;
     hasNewWhileScrolled = false;
+    isUserScrolling = false; // 回到底部了，解除用户滑动锁
   } else {
     elScrollBtn.hidden = false;
   }
@@ -213,9 +215,8 @@ function addMessage(kind, text) {
   if (!stickToBottom) {
     hasNewWhileScrolled = true;
     elScrollBadge.hidden = false;
-  } else {
-    scrollToBottom(true);
   }
+  // 彻底取消这里的自动滚动
   return el;
 }
 function addSystem(text) { return addMessage('system', text); }
@@ -245,7 +246,8 @@ function ensureStreamEl() {
   elMessages.appendChild(streamEl);
   streamText = '';
   streamThink = '';
-  scrollToBottom(true);
+  // 彻底移除强制滚动，不再抢夺用户视线
+  scrollToBottom(false);
 }
 function updateStream(thinkDelta, textDelta, reset) {
   ensureStreamEl();
@@ -339,7 +341,8 @@ function addToolCard(name, done) {
   el.className = 'msg tool' + (done ? ' done' : '');
   el.innerHTML = '<svg class="ico"><use href="#i-tool"/></svg><span>' + escapeHtml(name || '工具') + (done ? '（完成）' : '') + '</span>';
   elMessages.appendChild(el);
-  scrollToBottom(true);
+  // 移除强制滚动
+  scrollToBottom(false);
 }
 function markLastToolDone() {
   var cards = elMessages.querySelectorAll('.msg.tool:not(.done)');
@@ -698,6 +701,11 @@ function sendText() {
   autoResize();
   localStorage.removeItem(LS_DRAFT);
   addUser(text);
+  // 用户自己发消息时，强制滚到底部让他看到
+  stickToBottom = true;
+  isUserScrolling = false;
+  scrollToBottom(true);
+  
   if (!send({ type: 'user-message', text: text })) {
     if (offlineQueue.length >= OFFLINE_QUEUE_MAX) offlineQueue.shift();
     offlineQueue.push(text);
@@ -1008,18 +1016,33 @@ function bind() {
   });
 
   elMessages.addEventListener('scroll', function () {
-    // 如果代码是在自动滚动，忽略此次事件（可选）
-    stickToBottom = nearBottom();
+    var isAtBottom = nearBottom();
+    // 只有真正滑到底部，才允许重置 stickToBottom
+    if (isAtBottom) {
+      stickToBottom = true;
+      isUserScrolling = false; // 到底了，解除锁定
+    } else if (isUserScrolling) {
+      stickToBottom = false;
+    }
     updateScrollBtn();
   });
 
-  // 核心修复：只要用户手指触碰（手机端）或滚动滚轮（电脑端），立刻解除底部的强制跟随
+  // 只要手指触碰或滚动滚轮，立刻上锁，禁止任何流式拽回
   elMessages.addEventListener('touchstart', function () {
+    isUserScrolling = true;
     stickToBottom = false;
     updateScrollBtn();
   }, { passive: true });
   
+  // 只要手指碰了屏幕，立刻把底部强制跟随关掉，哪怕还没滑动
+  elMessages.addEventListener('mousedown', function () {
+    isUserScrolling = true;
+    stickToBottom = false;
+    updateScrollBtn();
+  });
+  
   elMessages.addEventListener('wheel', function () {
+    isUserScrolling = true;
     stickToBottom = false;
     updateScrollBtn();
   }, { passive: true });

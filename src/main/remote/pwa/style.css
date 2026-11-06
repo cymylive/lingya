@@ -260,6 +260,61 @@ html.light #btn-theme .ico-moon { display: inline; }
   background: var(--warn); color: #1a1d20;
 }
 
+/* AI 计划面板 */
+.todo-panel {
+  position: absolute;
+  top: calc(var(--safe-t) + 54px);
+  left: 12px;
+  right: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 18;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: 13px;
+}
+.todo-header {
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  color: var(--accent);
+}
+.todo-progress {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.todo-list {
+  padding: 8px 12px;
+  overflow-y: auto;
+}
+.todo-item {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--text);
+  line-height: 1.4;
+}
+.todo-item.done {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.todo-item.in-progress {
+  color: var(--accent);
+  font-weight: 500;
+}
+.todo-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
 .messages {
   flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 16px 12px 80px 12px; /* 底部加 80px 给桌宠留空间 */
