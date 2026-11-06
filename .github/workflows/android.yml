@@ -5,8 +5,6 @@ on:
     branches:
       - main
       - master
-    tags:
-      - 'v*'
     paths:
       - 'android/**'
       - 'capacitor.config.json'
@@ -19,6 +17,8 @@ on:
       - 'capacitor.config.json'
       - 'src/main/remote/pwa/**'
   workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -57,7 +57,6 @@ jobs:
         if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/lingya-release.keystore
-          echo "::add-mask::${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
           echo "keystore restored"
 
       - name: Sync Capacitor
@@ -67,11 +66,6 @@ jobs:
         working-directory: android
         run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
 
-      - name: Build Release APK
-        if: startsWith(github.ref, 'refs/tags/v')
-        working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
-
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -79,8 +73,44 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
+  release-apk:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Sync Android version
+        run: node scripts/sync-android-version.js
+
+      - name: Restore keystore (from secrets)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/lingya-release.keystore
+          echo "keystore restored"
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build Release APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+
       - name: Upload Release APK
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
           name: lingya-android-release
@@ -88,12 +118,9 @@ jobs:
           retention-days: 90
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            android/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/release/*.apk
+          files: android/app/build/outputs/apk/release/*.apk
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: false
         env:
