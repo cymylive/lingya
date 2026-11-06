@@ -364,8 +364,8 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 @keyframes pulse { 50% { opacity: .7; } }
 
 .scroll-bottom-btn {
-  position: fixed; bottom: calc(74px + var(--safe-b)); right: 16px;
-  width: 40px; height: 40px;
+  position: fixed; bottom: calc(80px + var(--safe-b)); right: 16px;
+  width: 40px; height: 40px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 50%;
@@ -395,11 +395,17 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
 }
 .composer-input:focus { border-color: var(--accent); }
 
+.composer-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
 .btn-send, .btn-stop {
   display: flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; padding: 0;
+  width: 44px; height: 40px; padding: 0;
   border: none; border-radius: var(--radius-sm); cursor: pointer;
-  transition: background .15s;
+  transition: background .15s, opacity .15s;
 }
 .btn-send { background: var(--accent); color: #052e2b; }
 .btn-send:hover { background: var(--accent-dim); }
