@@ -54,3 +54,4 @@ jobs:
           name: lingya-android-debug
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+# force update 
