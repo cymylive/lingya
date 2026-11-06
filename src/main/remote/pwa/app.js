@@ -1325,33 +1325,11 @@ function init() {
       document.documentElement.classList.add('is-android');
     }
   }
-  applyTheme(localStorage.getItem(LS_THEME) || 'dark');
-
-  var savedTok = getToken();
-  var savedAddr = getAddr();
-  if (savedAddr) elAddr.value = savedAddr;
-  if (savedTok) elToken.value = savedTok;
-
-  var draft = localStorage.getItem(LS_DRAFT);
-  if (draft) elInput.value = draft;
-
-  bind();
-  autoResize();
-
-  // 自动连接：有保存的 token 且非 Capacitor（PWA 同源）
-  if (savedTok && !window.Capacitor) {
-    enterApp();
-  } else if (savedTok && window.Capacitor && savedAddr) {
-    enterApp();
-  }
 
 }
-
-if (document.radyState === 'loading') {
+if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
 }
-
 })();
-
