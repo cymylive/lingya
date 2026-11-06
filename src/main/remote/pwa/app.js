@@ -59,6 +59,7 @@ var profilesCache = [];
 var offlineQueue = [];
 var clientId = '';
 var stickToBottom = true;
+var isUserScrolling = false; // 用户是否正在主动滑动（用于阻断流式拽回）
 var hasNewWhileScrolled = false;
 
 /* 流式状态（当前气泡） */
@@ -178,7 +179,7 @@ function renderMarkdown(raw) {
 
 /* ========== 消息渲染 ========== */
 function scrollToBottom(force) {
-  if (!force && !stickToBottom) return;
+  if (!force && (!stickToBottom || isUserScrolling)) return; // 双重拦截
   requestAnimationFrame(function () {
     elMessages.scrollTop = elMessages.scrollHeight;
   });
@@ -192,6 +193,7 @@ function updateScrollBtn() {
     elScrollBtn.hidden = true;
     elScrollBadge.hidden = true;
     hasNewWhileScrolled = false;
+    isUserScrolling = false; // 回到底部了，解除用户滑动锁
   } else {
     elScrollBtn.hidden = false;
   }
@@ -1008,18 +1010,26 @@ function bind() {
   });
 
   elMessages.addEventListener('scroll', function () {
-    // 如果代码是在自动滚动，忽略此次事件（可选）
-    stickToBottom = nearBottom();
+    var isAtBottom = nearBottom();
+    // 只有真正滑到底部，才允许重置 stickToBottom
+    if (isAtBottom) {
+      stickToBottom = true;
+      isUserScrolling = false; // 到底了，解除锁定
+    } else if (isUserScrolling) {
+      stickToBottom = false;
+    }
     updateScrollBtn();
   });
 
-  // 核心修复：只要用户手指触碰（手机端）或滚动滚轮（电脑端），立刻解除底部的强制跟随
+  // 只要手指触碰或滚动滚轮，立刻上锁，禁止任何流式拽回
   elMessages.addEventListener('touchstart', function () {
+    isUserScrolling = true;
     stickToBottom = false;
     updateScrollBtn();
   }, { passive: true });
   
   elMessages.addEventListener('wheel', function () {
+    isUserScrolling = true;
     stickToBottom = false;
     updateScrollBtn();
   }, { passive: true });
