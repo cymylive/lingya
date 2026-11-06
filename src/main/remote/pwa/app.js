@@ -953,22 +953,7 @@ async function doConnect() {
     elConnect.disabled = false;
     elConnect.textContent = '连接';
     return;
-  }
-  
-  elConnect.disabled = false;
-  elConnect.textContent = '连接';
-  addHistory(addr || location.origin, tok);
-  enterApp();
-}
-  elConnect.disabled = false;
-  elConnect.textContent = '连接';
-  // 保存历史记录
-  addHistory(addr || location.origin, tok);
-  // 进入应用
-  enterApp();
-}
-
-function enterApp() {
+  function enterApp() {
   elLogin.hidden = true;
   elLogin.style.display = 'none';
   elApp.hidden = false;
@@ -1356,3 +1341,5 @@ if (document.readyState === 'loading') {
 
 })();
 
+
+})();
