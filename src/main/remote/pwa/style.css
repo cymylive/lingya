@@ -222,6 +222,17 @@ html.light .login-error { background: #fef2f2; color: #991b1b; border: 1px solid
 /* 项目卡片样式 */
 
 /* 项目级归档动作按钮 */
+
+.project-add-session {
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 8px;
+  font-weight: bold;
+  font-size: 18px;
+  line-height: 1;
+}
+.project-add-session:hover { color: var(--text); }
+
 .project-actions {
   color: var(--text-dim);
   cursor: pointer;

@@ -289,6 +289,14 @@ function handleWsMessage(ws, raw) {
     return;
   }
 
+
+  if (msg.type === 'action-new-session-in-project') {
+    if (typeof deps.onActionNewSessionInProject === 'function') {
+      try { deps.onActionNewSessionInProject(msg.profileId, msg.projectDir); } catch (_) {}
+    }
+    return;
+  }
+
   if (msg.type === 'action-init-project') {
     if (typeof deps.onActionInitProject === 'function') {
       try { deps.onActionInitProject(msg.profileId, msg.projectName); } catch (_) {}

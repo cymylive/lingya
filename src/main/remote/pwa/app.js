@@ -568,6 +568,7 @@ function onSessionsData(msg) {
     html += '<div class="project-header">' +
             '<div class="project-title">📁 ' + escapeHtml(pName) + '</div>' +
             '<div class="project-actions" data-pdir="' + escapeHtml(pDir) + '" data-arch="' + projArchived + '">⋮</div>' +
+            '<div class="project-add-session" data-pdir="' + escapeHtml(pDir) + '" title="在该项目下新建会话">+</div>' +
             '<div class="todo-chevron" style="margin-left:8px;">▾</div>' +
             '</div>';
     
@@ -598,6 +599,26 @@ function onSessionsData(msg) {
     h.addEventListener('click', function(e) {
       e.stopPropagation();
       h.parentNode.classList.toggle('open');
+    });
+  });
+
+
+  list.querySelectorAll('.project-add-session').forEach(function(el) {
+    el.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var pDir = el.getAttribute('data-pdir');
+      if (confirm('确定要在项目 [' + pDir.split(/[\\\\/]/).pop() + '] 下新建会话吗？')) {
+        send({ type: 'action-new-session-in-project', profileId: currentProfileId, projectDir: pDir });
+        var d = $('sidebar-drawer'); if(d) d.classList.remove('open');
+        var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
+        elMessages.innerHTML = '';
+        if (!elEmpty) {
+          elEmpty = document.createElement('div');
+          elEmpty.className = 'empty-state';
+          elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在新建项目会话...</p>';
+          elMessages.appendChild(elEmpty);
+        }
+      }
     });
   });
 
