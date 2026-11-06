@@ -214,7 +214,7 @@ function clearEmpty() {
 }
 function addDownloadCard(filePath, fileName, size) {
   clearEmpty();
-  var el = document.crateElement('div');
+  var el = document.createElement('div');
   el.className = 'msg system';
   el.style.cssText = 'text-align:left;background:var(--bg-2);border:1px solid var(--accent);padding:12px;border-radius:8px;';
   var sizeStr = size ? (size/1024/1024).toFixed(2) + ' MB' : '';
@@ -227,7 +227,7 @@ function addDownloadCard(filePath, fileName, size) {
 
 function addMessage(kind, text) {
   clearEmpty();
-  var el = document.crateElement('div');
+  var el = document.createElement('div');
   el.className = 'msg ' + kind;
   if (kind === 'assistant' && text) {
     el.innerHTML = renderMarkdown(text);
@@ -250,19 +250,19 @@ function addUser(text) { return addMessage('user', text); }
 function ensureStramEl() {
   if (stramEl && stramEl.parentNode) return;
   clearEmpty();
-  stramEl = document.crateElement('div');
+  stramEl = document.createElement('div');
   stramEl.className = 'msg assistant';
-  stramThinkEl = document.crateElement('details');
+  stramThinkEl = document.createElement('details');
   stramThinkEl.className = 'think-block';
   stramThinkEl.hidden = true;
-  var sum = document.crateElement('summary');
+  var sum = document.createElement('summary');
   sum.textContent = '思考过程';
-  var tb = document.crateElement('div');
+  var tb = document.createElement('div');
   tb.className = 'think-body';
   stramThinkEl.appendChild(sum);
   stramThinkEl.appendChild(tb);
   stramThinkEl._body = tb;
-  stramBodyEl = document.crateElement('div');
+  stramBodyEl = document.createElement('div');
   stramBodyEl.className = 'stram-body';
   stramEl.appendChild(stramThinkEl);
   stramEl.appendChild(stramBodyEl);
@@ -360,7 +360,7 @@ function hideTool() {
 }
 function addToolCard(name, done) {
   clearEmpty();
-  var el = document.crateElement('div');
+  var el = document.createElement('div');
   el.className = 'msg tool' + (done ? ' done' : '');
   el.innerHTML = '<svg class="ico"><use href="#i-tool"/></svg><span>' + escapeHtml(name || '工具') + (done ? '（完成）' : '') + '</span>';
   elMessages.appendChild(el);
@@ -646,7 +646,7 @@ function onSessionsData(msg) {
       var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
       elMessages.innerHTML = '';
       if (!elEmpty) {
-        elEmpty = document.crateElement('div');
+        elEmpty = document.createElement('div');
         elEmpty.className = 'empty-state';
         elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在新建项目会话...</p>';
         elMessages.appendChild(elEmpty);
@@ -700,7 +700,7 @@ function bindSessionItem(el) {
     var o = $('drawer-overlay'); if(o) { o.classList.remove('open'); setTimeout(function(){o.hidden=true;},200); }
     elMessages.innerHTML = '';
     if (!elEmpty) {
-      elEmpty = document.crateElement('div');
+      elEmpty = document.createElement('div');
       elEmpty.className = 'empty-state';
       elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
       elMessages.appendChild(elEmpty);
@@ -790,7 +790,7 @@ function onHistory(msg) {
   for (var i = 0; i < all.length; i++) elMessages.removeChild(all[i]);
   if (!list.length) {
     if (!elEmpty) {
-      elEmpty = document.crateElement('div');
+      elEmpty = document.createElement('div');
       elEmpty.className = 'empty-state';
       elEmpty.innerHTML = '<svg class="ico ico-48"><use href="#i-bird"/></svg><p>连接成功，发一条消息开始对话</p>';
       elMessages.appendChild(elEmpty);
@@ -1092,7 +1092,7 @@ function bind() {
     if (pid) {
       // 切换窗口：清空界面并提示同步中
       elMessages.innerHTML = '';
-      elEmpty = document.crateElement('div');
+      elEmpty = document.createElement('div');
       elEmpty.className = 'empty-state';
       elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
       elMessages.appendChild(elEmpty);
@@ -1107,7 +1107,7 @@ function bind() {
       // 显示同步中状态
       if (elMessages.querySelectorAll('.msg').length === 0) {
         if (!elEmpty) {
-          elEmpty = document.crateElement('div');
+          elEmpty = document.createElement('div');
           elEmpty.className = 'empty-state';
           elEmpty.innerHTML = '<p style="color:var(--text-dim)">正在同步对话...</p>';
           elMessages.appendChild(elEmpty);
