@@ -153,11 +153,61 @@ function handleRequest(req, res) {
   // API / WS 需鉴权
   if (url.pathname.startsWith('/api/') || url.pathname === '/ws') {
     if (!verifyToken(req)) { res.writeHead(401); res.end('unauthorized'); return; }
+    
     if (url.pathname === '/api/ping') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       return;
     }
+
+    // 文件上传路由（流式接收，不限大小）
+    if (url.pathname === '/api/upload' && req.method === 'POST') {
+      const originalName = req.headers['x-file-name'] || 'upload.bin';
+      // 解码文件名并过滤非法字符
+      let safeName = decodeURIComponent(originalName).replace(/[\\/:*?"<>|]/g, '_');
+      const uploadDir = require('path').join(require('os').tmpdir(), 'lingya-remote-uploads');
+      if (!require('fs').existsSync(uploadDir)) require('fs').mkdirSync(uploadDir, { recursive: true });
+      
+      const targetPath = require('path').join(uploadDir, Date.now() + '_' + safeName);
+      const writeStream = require('fs').createWriteStream(targetPath);
+      
+      req.pipe(writeStream);
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, filePath: targetPath, fileName: safeName }));
+        if (typeof deps.onFileUploaded === 'function') {
+          deps.onFileUploaded(targetPath, safeName);
+        }
+      });
+      req.on('error', (err) => {
+        res.writeHead(500); res.end('upload failed');
+      });
+      return;
+    }
+
+    // 文件下载路由
+    if (url.pathname === '/api/download' && req.method === 'GET') {
+      const filePath = url.searchParams.get('file');
+      if (!filePath) { res.writeHead(400); res.end('file required'); return; }
+      
+      // 安全校验：防止路径穿越
+      const fs = require('fs');
+      const path = require('path');
+      const resolved = path.resolve(filePath);
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        res.writeHead(404); res.end('not found'); return;
+      }
+      
+      const fileName = path.basename(resolved);
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': 'attachment; filename="' + encodeURIComponent(fileName) + '"',
+        'Content-Length': fs.statSync(resolved).size
+      });
+      fs.createReadStream(resolved).pipe(res);
+      return;
+    }
+
     res.writeHead(404); res.end('not found');
     return;
   }

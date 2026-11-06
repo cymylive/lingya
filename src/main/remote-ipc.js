@@ -49,6 +49,13 @@ async function startService() {
       onActionImport: (pid, srcId) => manager.onActionImport(pid, srcId),
       onActionSwitchSession: (pid, session) => manager.onActionSwitchSession(pid, session),
       onActionDeleteSession: (pid, sid, ws) => manager.onActionDeleteSession(pid, sid, ws),
+      onFileUploaded: (filePath, fileName) => {
+        // 手机上传文件成功后，通知目标窗口的 AI 页面，把文件路径插进去
+        const ctx = manager.getTargetContext();
+        if (ctx && ctx.view && !ctx.view.webContents.isDestroyed()) {
+          ctx.view.webContents.send('remote-file-uploaded', { filePath, fileName });
+        }
+      },
     },
   });
   if (!r.ok) return { ok: false, error: r.error };
@@ -172,6 +179,10 @@ function registerRemoteIpc() {
   });
 
   ipcMain.handle('remote-list-clients', async () => ({ success: true, clients: server.listClients() }));
+
+  ipcMain.handle('remote-send-file', async (event, { filePath }) => {
+    return manager.sendFileToPhone(filePath);
+  });
 
   ipcMain.handle('remote-kick-all', async () => {
     try { server.kickAll(); } catch (_) {}

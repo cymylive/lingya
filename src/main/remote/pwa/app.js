@@ -202,6 +202,19 @@ function clearEmpty() {
   if (elEmpty && elEmpty.parentNode) elEmpty.parentNode.removeChild(elEmpty);
   elEmpty = null;
 }
+function addDownloadCard(filePath, fileName, size) {
+  clearEmpty();
+  var el = document.createElement('div');
+  el.className = 'msg system';
+  el.style.cssText = 'text-align:left;background:var(--bg-2);border:1px solid var(--accent);padding:12px;border-radius:8px;';
+  var sizeStr = size ? (size/1024/1024).toFixed(2) + ' MB' : '';
+  el.innerHTML = '<div style="font-weight:600;color:var(--accent);margin-bottom:8px;">📁 电脑发送了一个文件</div>' +
+                 '<div style="font-size:13px;word-break:break-all;margin-bottom:12px;">' + escapeHtml(fileName) + ' <span style="color:var(--text-dim);">(' + sizeStr + ')</span></div>' +
+                 '<a href="' + baseUrl() + '/api/download?file=' + encodeURIComponent(filePath) + '&token=' + getToken() + '" target="_blank" style="display:inline-block;padding:8px 16px;background:var(--accent);color:#052e2b;text-decoration:none;border-radius:4px;font-size:13px;font-weight:600;">点击下载</a>';
+  elMessages.appendChild(el);
+  if (stickToBottom) scrollToBottom(true);
+}
+
 function addMessage(kind, text) {
   clearEmpty();
   var el = document.createElement('div');
@@ -489,6 +502,10 @@ function handleServerMessage(msg) {
       var num = msg.context;
       tt.textContent = (num > 1000 ? (num / 1000).toFixed(1) + 'k' : num) + ' tk';
     }
+    return;
+  }
+  if (t === 'file-download') {
+    addDownloadCard(msg.filePath, msg.fileName, msg.size);
     return;
   }
   if (t === 'todo-update') {
@@ -1070,6 +1087,44 @@ function bind() {
   elDisconnect.addEventListener('click', function () {
     if (confirm('确定断开连接？')) disconnect();
   });
+
+  var elAttach = $('btn-attach');
+  var elFileUpload = $('file-upload');
+  if (elAttach && elFileUpload) {
+    elAttach.addEventListener('click', function() { elFileUpload.click(); });
+    elFileUpload.addEventListener('change', async function() {
+      if (!this.files || this.files.length === 0) return;
+      var files = Array.from(this.files);
+      this.value = ''; // 清空允许重复上传
+      
+      for (var i = 0; i < files.length; i++) {
+        var file = files[i];
+        addSystem('⏳ 正在上传: ' + file.name + ' (' + (file.size/1024/1024).toFixed(2) + ' MB)');
+        
+        try {
+          var base = baseUrl().replace(/\/+$/, '');
+          var res = await fetch(base + '/api/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + getToken(),
+              'X-File-Name': encodeURIComponent(file.name)
+            },
+            body: file
+          });
+          if (res.ok) {
+            var json = await res.json();
+            addSystem('✅ 上传成功: ' + file.name);
+            // 通知电脑端将文件插入输入框
+            send({ type: 'file-uploaded-notify', filePath: json.filePath, fileName: json.fileName });
+          } else {
+            addError('上传失败: ' + file.name);
+          }
+        } catch (err) {
+          addError('上传异常: ' + err.message);
+        }
+      }
+    });
+  }
 
   elSend.addEventListener('click', sendText);
   elStop.addEventListener('click', function() {
