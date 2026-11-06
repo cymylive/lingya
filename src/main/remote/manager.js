@@ -35,6 +35,7 @@ let busyWatchdogTimer = null;
 let targetProfileId = '';
 
 const busyMarks = new Map();
+const recentlyStopped = new Map(); // 记录刚点过停止的时间，用于屏蔽延迟上报的假忙态
 const streamStates = new Map();
 
 function getStreamState(pid) {
@@ -219,6 +220,11 @@ function broadcastAiEvent(webContentsId, kind, data) {
   if (kind === 'task-state') {
     const s = getStreamState(pid);
     if (p.visible) {
+      // 刚停止 3 秒内，网页端发来的 visible: true 都是假信号，直接忽略
+      const stopTime = recentlyStopped.get(pid);
+      if (stopTime && Date.now() - stopTime < 3000) {
+        return;
+      }
       markBusy(webContentsId);
       if (!s.active) {
         s.active = true; s.sent = ''; s.think = ''; s.thinkSent = ''; s.toolCount = 0;
@@ -304,8 +310,15 @@ function onUserMessage(text, profileId) {
   const wcId = ctx.view.webContents.id;
   const pid = String(ctx.profileId || '');
   if (isBusy(wcId)) {
-    broadcast({ type: 'sys', profileId: pid, keepBusy: true, text: 'AI 正在执行任务，请等本轮结束后再发消息' });
-    return;
+    const stopTime = recentlyStopped.get(pid);
+    // 如果刚刚停止不到 3 秒，强行放行，不让延迟的假忙态卡住用户
+    if (!stopTime || Date.now() - stopTime > 3000) {
+      broadcast({ type: 'sys', profileId: pid, keepBusy: true, text: 'AI 正在执行任务，请等本轮结束后再发消息' });
+      return;
+    }
+    // 放行前把底层状态再次清理
+    clearBusy(wcId);
+    try { require('../generation-state').clear(wcId); } catch (_) {}
   }
   markBusy(wcId);
   try {
@@ -328,13 +341,11 @@ function onStop(profileId) {
   try {
     ctx.view.webContents.send('lingya-stop-task', {});
     clearBusy(wcId);
+    recentlyStopped.set(pid, Date.now()); // 打上时间戳
     
-    // 核心修复：强行清空底层 generationState，防止网页端心跳延迟导致手机发不出消息
     try {
       const gs = require('../generation-state');
-      if (gs && typeof gs.clear === 'function') {
-        gs.clear(wcId);
-      }
+      if (gs && typeof gs.clear === 'function') gs.clear(wcId);
     } catch (_) {}
 
     stopStreamForProfile(pid, 'user');
