@@ -376,9 +376,7 @@ html.light #btn-theme .ico-moon { display: inline; }
   font-size: 13px;
   transition: max-height 0.3s ease;
 }
-.todo-panel.collapsed {
-  max-height: 36px; /* 仅容纳头部高度 */
-}
+
 .todo-header {
   padding: 8px 12px;
   background: var(--bg-3);
@@ -663,4 +661,13 @@ html.light .msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #
   .login-card { padding: 24px 20px; }
   .topbar { padding: 8px 10px; }
   .msg { max-width: 92%; }
+}
+
+/* AI 计划面板折叠样式 */
+.todo-panel.collapsed {
+  max-height: 38px;
+  overflow: hidden;
+}
+.todo-panel.collapsed #todo-chevron {
+  transform: rotate(-90deg);
 }

@@ -703,16 +703,18 @@ function renderTodoPanel(todos) {
   var panel = $('todo-panel');
   var list = $('todo-list');
   var prog = $('todo-progress');
-  if (!panel || !list || !prog) return;
+  var currentText = $('todo-current');
+  if (!panel || !list || !prog || !currentText) return;
 
-  // 如果没有计划，隐藏
   if (!todos || todos.length === 0) {
     panel.hidden = true;
     return;
   }
 
   var done = 0;
-  var html = '';
+  var inProgressText = '';
+  var htmlStr = '';
+  
   for (var i = 0; i < todos.length; i++) {
     var t = todos[i] || {};
     var status = t.status || 'pending';
@@ -720,17 +722,31 @@ function renderTodoPanel(todos) {
     
     var icon = '○';
     var cls = '';
-    if (status === 'completed') { icon = '✅'; cls = 'done'; }
-    else if (status === 'in_progress') { icon = '⏳'; cls = 'in-progress'; }
+    if (status === 'completed') { 
+      icon = '✅'; cls = 'done'; 
+    } else if (status === 'in_progress') { 
+      icon = '⏳'; cls = 'in-progress'; 
+      if (!inProgressText) inProgressText = t.content || '';
+    }
     
-    html += '<div class="todo-item ' + cls + '">' +
+    htmlStr += '<div class="todo-item ' + cls + '">' +
             '<span class="todo-icon">' + icon + '</span>' +
             '<span>' + escapeHtml(t.content || '') + '</span>' +
             '</div>';
   }
   
-  list.innerHTML = html;
+  list.innerHTML = htmlStr;
   prog.textContent = done + '/' + todos.length;
+  
+  if (done === todos.length) {
+    currentText.textContent = '所有任务已完成 ✅';
+  } else if (inProgressText) {
+    currentText.textContent = '正在执行：' + inProgressText;
+  } else {
+    var firstPending = todos.find(function(x) { return x.status !== 'completed'; });
+    currentText.textContent = firstPending ? ('准备执行：' + (firstPending.content || '')) : 'AI 计划执行中';
+  }
+  
   panel.hidden = false;
 }
 
